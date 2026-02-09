@@ -1,50 +1,104 @@
-# Welcome to your Expo app 👋
+# Loan Tracker - iOS Style Glassmorphism App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A modern, beautiful loan tracking application built with Expo Router featuring dark glassmorphism UI inspired by premium finance apps.
 
-## Get started
+## Features
 
-1. Install dependencies
+- 📊 **Dashboard** - View total outstanding loans, upcoming EMI, and quick summaries
+- 💰 **Loan Management** - Add, view, and delete loans with detailed information
+- 📈 **Loan Analytics** - Beautiful graphs showing principal vs interest breakdown
+- 📉 **Payment Progress** - Visual progress bars and payment tracking
+- 📝 **Payment History** - Track and record EMI payments
+- 🎨 **Premium UI** - Dark glassmorphism design with blur effects and smooth gradients
+- 💾 **Local Storage** - All data stored locally using AsyncStorage
+- 🧮 **Auto-calculation** - Remaining balance calculated based on start date
 
-   ```bash
-   npm install
-   ```
+## Tech Stack
 
-2. Start the app
+- **Expo Router** - File-based routing
+- **expo-blur** - Glassmorphism blur effects
+- **expo-linear-gradient** - Beautiful gradient backgrounds
+- **AsyncStorage** - Local data persistence
+- **React Native** - Cross-platform mobile development
 
-   ```bash
-   npx expo start
-   ```
+## App Structure
 
-In the output, you'll find options to open the app in a
+```
+app/
+  ├── index.js       → Dashboard screen
+  ├── loans.js       → List of all loans
+  ├── add-loan.js    → Form to add new loan
+  ├── loan-detail.js → Detailed view with graphs
+  ├── history.js     → Payment history screen
+  └── _layout.tsx    → Root navigation layout
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+utils/
+  └── storage.js     → AsyncStorage helper functions
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Design Features
 
-## Learn more
+- **30px rounded corners** on all glass cards
+- **Soft border glow** with rgba(255, 255, 255, 0.1)
+- **Clean iOS spacing** and typography
+- **Dark gradient background** (#0a0a0a → #1a1a2e → #16213e)
+- **Blur intensity** optimized for readability
 
-To learn more about developing your project with Expo, look at the following resources:
+## Running the App
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+# Start the development server
+npx expo start
 
-## Join the community
+# Run on iOS
+npx expo start --ios
 
-Join our community of developers creating universal apps.
+# Run on Android
+npx expo start --android
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+# Run on Web
+npx expo start --web
+```
+
+## Usage
+
+### Adding a Loan
+1. Navigate to Dashboard
+2. Tap "Add New Loan"
+3. Fill in loan details:
+   - Loan Name (e.g., Home Loan)
+   - Principal Amount
+   - Interest Rate (%)
+   - EMI Amount
+   - Start Date
+   - Tenure (months)
+4. Tap "Save Loan"
+
+### Viewing Loans
+- Tap "View All Loans" from Dashboard
+- Long-press any loan card to delete
+
+### Recording Payments
+1. Navigate to "Payment History"
+2. Tap "+ Add"
+3. Select loan and enter amount
+4. Tap "Record Payment"
+
+## Data Storage
+
+All data is stored locally on the device using AsyncStorage:
+- Loans are stored under `@loans` key
+- Payments are stored under `@payments` key
+
+## Future Enhancements
+
+- [ ] EMI calculator
+- [ ] Payment reminders/notifications
+- [ ] Charts and analytics
+- [ ] Export data to CSV
+- [ ] Cloud sync
+- [ ] Multiple currency support
+
+## License
+
+MIT
