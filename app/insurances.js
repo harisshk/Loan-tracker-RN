@@ -131,11 +131,7 @@ export default function Insurances() {
                 tint="light"
                 style={styles.card}
               >
-                <TouchableOpacity
-                  style={styles.cardContent}
-                  onLongPress={() => handleDelete(ins.id, ins.name)}
-                  activeOpacity={0.7}
-                >
+                <View style={styles.cardContent}>
                   <View style={styles.cardHeader}>
                     <Text style={styles.name}>{ins.name}</Text>
                     <Text style={styles.amount}>
@@ -161,10 +157,36 @@ export default function Insurances() {
 
                   <View style={styles.startDateContainer}>
                     <Text style={styles.startDateLabel}>
-                      Base Date: {formatDate(ins.startDate)} (Long press to delete)
+                      Base Date: {formatDate(ins.startDate)}
                     </Text>
                   </View>
-                </TouchableOpacity>
+
+                  {/* Action buttons */}
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={styles.editBtn}
+                      onPress={() => router.push({
+                        pathname: '/edit-insurance',
+                        params: {
+                          id: ins.id,
+                          name: ins.name,
+                          premiumAmount: ins.premiumAmount,
+                          frequency: ins.frequency,
+                          startDate: ins.startDate,
+                        },
+                      })}
+                    >
+                      <Text style={styles.editBtnText}>✏️ Edit</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      onPress={() => handleDelete(ins.id, ins.name)}
+                    >
+                      <Text style={styles.deleteBtnText}>🗑️ Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </BlurView>
             );
           })
@@ -191,8 +213,13 @@ const styles = StyleSheet.create({
   detailLabel: { fontSize: 14, color: 'rgba(15, 23, 42, 0.6)' },
   detailValue: { fontSize: 16, fontWeight: '600', color: '#0f172a' },
   dueDate: { color: '#f59e0b' },
-  startDateContainer: { paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.1)' },
-  startDateLabel: { fontSize: 12, color: 'rgba(15, 23, 42, 0.4)' },
+  startDateContainer: { paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.05)' },
+  startDateLabel: { fontSize: 12, color: 'rgba(15, 23, 42, 0.4)', marginBottom: 12 },
+  actionRow: { flexDirection: 'row', gap: 10 },
+  editBtn: { flex: 1, backgroundColor: 'rgba(37, 99, 235, 0.08)', borderRadius: 12, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(37, 99, 235, 0.2)' },
+  editBtnText: { fontSize: 14, fontWeight: '600', color: '#2563eb' },
+  deleteBtn: { flex: 1, backgroundColor: 'rgba(239, 68, 68, 0.08)', borderRadius: 12, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.2)' },
+  deleteBtnText: { fontSize: 14, fontWeight: '600', color: '#ef4444' },
   emptyCard: { borderRadius: 30, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.08)' },
   emptyContent: { padding: 48, alignItems: 'center' },
   emptyText: { fontSize: 20, fontWeight: '600', color: '#0f172a', marginBottom: 8 },

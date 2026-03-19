@@ -23,6 +23,7 @@ export default function RootLayout() {
         <Stack.Screen name="insurances" />
         <Stack.Screen name="add-loan" />
         <Stack.Screen name="add-insurance" />
+        <Stack.Screen name="edit-insurance" />
         <Stack.Screen name="edit-loan" />
         <Stack.Screen name="history" />
         <Stack.Screen name="loan-detail" />

@@ -79,6 +79,25 @@ export const deleteInsurance = async (id) => {
   }
 };
 
+export const updateInsurance = async (id, updates) => {
+  try {
+    const insurances = await getInsurances();
+    const idx = insurances.findIndex(i => i.id === id);
+    if (idx === -1) throw new Error('Insurance not found');
+    insurances[idx] = { ...insurances[idx], ...updates };
+    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(insurances));
+
+    // Refresh notifications
+    const loans = await getLoans();
+    await refreshAllNotifications(loans, insurances);
+
+    return insurances[idx];
+  } catch (e) {
+    console.error('Error updating insurance:', e);
+    throw e;
+  }
+};
+
 // Loan operations
 export const getLoans = async () => {
   try {

@@ -230,8 +230,16 @@ export default function Dashboard() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.carouselContent}
             >
-              {insurances.map((ins) => {
-                const nextDue = calculateInsuranceNextDueDate(ins.startDate, ins.frequency);
+              {insurances
+                .map(ins => ({ ...ins, nextDue: calculateInsuranceNextDueDate(ins.startDate, ins.frequency) }))
+                .sort((a, b) => {
+                  if (!a.nextDue && !b.nextDue) return 0;
+                  if (!a.nextDue) return 1;
+                  if (!b.nextDue) return -1;
+                  return a.nextDue.getTime() - b.nextDue.getTime();
+                })
+                .map((ins) => {
+                const nextDue = ins.nextDue;
                 
                 return (
                   <TouchableOpacity
