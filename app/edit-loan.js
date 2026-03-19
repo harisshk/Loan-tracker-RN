@@ -71,7 +71,7 @@ export default function EditLoan() {
 
   return (
     <LinearGradient
-      colors={['#0a0a0a', '#1a1a2e', '#16213e']}
+      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
       <KeyboardAvoidingView
@@ -91,7 +91,7 @@ export default function EditLoan() {
           </View>
 
           {/* Form */}
-          <BlurView intensity={20} tint="dark" style={styles.formCard}>
+          <BlurView intensity={20} tint="light" style={styles.formCard}>
             <View style={styles.formContent}>
               {/* Loan Name */}
               <View style={styles.inputGroup}>
@@ -99,7 +99,7 @@ export default function EditLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., Home Loan, Car Loan"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   value={formData.loanName}
                   onChangeText={(value) => handleInputChange('loanName', value)}
                 />
@@ -111,7 +111,7 @@ export default function EditLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., 500000"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="numeric"
                   value={formData.principal}
                   onChangeText={(value) => handleInputChange('principal', value)}
@@ -124,7 +124,7 @@ export default function EditLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., 8.5"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="decimal-pad"
                   value={formData.interest}
                   onChangeText={(value) => handleInputChange('interest', value)}
@@ -137,7 +137,7 @@ export default function EditLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., 15000"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="numeric"
                   value={formData.emiAmount}
                   onChangeText={(value) => handleInputChange('emiAmount', value)}
@@ -150,7 +150,7 @@ export default function EditLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="2026-01-01"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   value={formData.startDate}
                   onChangeText={(value) => handleInputChange('startDate', value)}
                 />
@@ -162,7 +162,7 @@ export default function EditLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., 60"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="numeric"
                   value={formData.tenure}
                   onChangeText={(value) => handleInputChange('tenure', value)}
@@ -173,7 +173,7 @@ export default function EditLoan() {
 
           {/* Save Button */}
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            <BlurView intensity={25} tint="dark" style={styles.saveBlur}>
+            <BlurView intensity={25} tint="light" style={styles.saveBlur}>
               <Text style={styles.saveButtonText}>Update Loan</Text>
             </BlurView>
           </TouchableOpacity>
@@ -201,20 +201,20 @@ const styles = StyleSheet.create({
   backButton: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
     marginBottom: 12,
   },
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   formCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   formContent: {
     padding: 24,
@@ -226,33 +226,33 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: 'rgba(15, 23, 42, 0.8)',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     borderRadius: 16,
     padding: 16,
     fontSize: 16,
-    color: '#ffffff',
+    color: '#0f172a',
   },
   saveButton: {
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   saveBlur: {
     padding: 18,
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
   },
   saveButtonText: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
   },
 });

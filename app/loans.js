@@ -118,7 +118,7 @@ export default function Loans() {
 
   return (
     <LinearGradient
-      colors={['#0a0a0a', '#1a1a2e', '#16213e']}
+      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
       <ScrollView
@@ -137,7 +137,7 @@ export default function Loans() {
 
         {/* Loans List */}
         {loans.length === 0 ? (
-          <BlurView intensity={15} tint="dark" style={styles.emptyCard}>
+          <BlurView intensity={15} tint="light" style={styles.emptyCard}>
             <View style={styles.emptyContent}>
               <Text style={styles.emptyText}>No loans yet</Text>
               <Text style={styles.emptySubtext}>
@@ -170,7 +170,7 @@ export default function Loans() {
               <BlurView
                 key={loan.id}
                 intensity={20}
-                tint="dark"
+                tint="light"
                 style={styles.loanCard}
               >
                 <TouchableOpacity
@@ -257,19 +257,19 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   addButton: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
   },
   loanCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   cardContent: {
     padding: 24,
@@ -280,13 +280,13 @@ const styles = StyleSheet.create({
   loanName: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 8,
   },
   loanAmount: {
     fontSize: 32,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
   },
   loanDetails: {
     gap: 12,
@@ -299,15 +299,15 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
   },
   detailValue: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   dueDate: {
-    color: '#fbbf24',
+    color: '#f59e0b',
   },
   startDateContainer: {
     paddingTop: 16,
@@ -316,13 +316,13 @@ const styles = StyleSheet.create({
   },
   startDateLabel: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'rgba(15, 23, 42, 0.4)',
   },
   emptyCard: {
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   emptyContent: {
     padding: 48,
@@ -331,12 +331,12 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     textAlign: 'center',
   },
 });

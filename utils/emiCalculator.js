@@ -1,64 +1,111 @@
 // Calculate EMI breakdown using amortization schedule
-// If userEMI is provided, use it; otherwise calculate EMI
-export const calculateEMIBreakdown = (principal, annualInterest, tenure, monthsElapsed, userEMI = null) => {
+// extraPayments is an array of objects { amount: number, date: string }
+export const calculateEMIBreakdown = (principal, annualInterest, tenure, monthsElapsed, userEMI = null, loanType = 'emi', extraPayments = []) => {
   const monthlyRate = annualInterest / 12 / 100;
-  const totalPrincipalPaid = [];
-  const totalInterestPaid = [];
   let remainingPrincipal = principal;
   
-  // Use user-provided EMI if available, otherwise calculate it
+  // Sort payments by date
+  const sortedPayments = [...extraPayments].sort((a, b) => new Date(a.date) - new Date(b.date));
+  let totalExtraPaid = sortedPayments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+  
+  if (loanType === 'bullet') {
+    // Bullet / Gold loan
+    let totalInterest = principal * (annualInterest / 100) * (tenure / 12);
+    let totalAmount = principal + totalInterest;
+    
+    // For simple bullet loan, we subtract extra payments from principal and recalculate interest if it's simple day-wise, 
+    // but for simplicity let's just deduct it from totalAmount.
+    remainingPrincipal -= totalExtraPaid;
+    if (remainingPrincipal < 0) remainingPrincipal = 0;
+    
+    // Total amount remaining drops by totalExtraPaid
+    const isPaid = monthsElapsed >= tenure;
+    const principalPaid = (isPaid ? remainingPrincipal : 0) + totalExtraPaid;
+    const interestPaid = isPaid ? totalInterest : 0;
+    const totalPaid = principalPaid + interestPaid;
+    
+    return {
+      emi: 0,
+      principalPaid,
+      interestPaid,
+      totalPaid,
+      remainingAmount: totalAmount - totalPaid,
+      remainingPrincipalAmount: remainingPrincipal,
+      remainingInterestAmount: totalInterest - interestPaid,
+      totalInterest,
+      totalAmount,
+      paymentsMade: isPaid ? 1 : 0,
+      totalPrincipalPaid: isPaid ? [principal] : [0],
+      totalInterestPaid: isPaid ? [totalInterest] : [0],
+    };
+  }
+  
+  // existing logic for EMI
   const emi = userEMI || (monthlyRate === 0 
     ? principal / tenure 
     : (principal * monthlyRate * Math.pow(1 + monthlyRate, tenure)) / 
       (Math.pow(1 + monthlyRate, tenure) - 1));
   
+  const totalPrincipalPaidList = [];
+  const totalInterestPaidList = [];
+  
   // Generate amortization schedule
+  let actualTenure = 0;
+  let remainingPrincipalAtMonth = principal;
+  
   for (let month = 1; month <= tenure; month++) {
-    const interestForMonth = remainingPrincipal * monthlyRate;
-    const principalForMonth = emi - interestForMonth;
+    if (remainingPrincipalAtMonth <= 0) break;
+    actualTenure++;
     
-    totalPrincipalPaid.push(principalForMonth);
-    totalInterestPaid.push(interestForMonth);
+    // Apply extra payments for this month (approximated by assuming all past unapplied payments are applied)
+    // We deduct extra payments in the first month they apply
+    const interestForMonth = remainingPrincipalAtMonth * monthlyRate;
+    let principalForMonth = emi - interestForMonth;
     
-    remainingPrincipal -= principalForMonth;
-  }
-  
-  // Calculate totals up to current month
-  const paymentsMade = Math.min(monthsElapsed, tenure);
-  const principalPaid = totalPrincipalPaid.slice(0, paymentsMade).reduce((sum, val) => sum + val, 0);
-  const interestPaid = totalInterestPaid.slice(0, paymentsMade).reduce((sum, val) => sum + val, 0);
-  const totalPaid = principalPaid + interestPaid;
-  
-  // Calculate remaining
-  const totalInterest = totalInterestPaid.reduce((sum, val) => sum + val, 0);
-  const totalAmount = principal + totalInterest;
-  const remainingAmount = totalAmount - totalPaid;
-  const remainingPrincipalAmount = principal - principalPaid;
-  const remainingInterestAmount = totalInterest - interestPaid;
-  
-  // Log for verification (first 3 months only to avoid spam)
-  if (monthsElapsed <= 3) {
-    console.log(`\n📊 EMI Breakdown (${paymentsMade} payments made):`);
-    for (let i = 0; i < Math.min(3, paymentsMade); i++) {
-      console.log(`Month ${i + 1}: Principal ₹${totalPrincipalPaid[i].toFixed(0)} + Interest ₹${totalInterestPaid[i].toFixed(0)} = EMI ₹${emi.toFixed(0)}`);
+    if (principalForMonth > remainingPrincipalAtMonth) {
+      principalForMonth = remainingPrincipalAtMonth;
     }
-    console.log(`Total: Principal Paid ₹${principalPaid.toFixed(0)}, Interest Paid ₹${interestPaid.toFixed(0)}`);
-    console.log(`Remaining: Principal ₹${remainingPrincipalAmount.toFixed(0)}, Total ₹${remainingAmount.toFixed(0)}\n`);
+    
+    remainingPrincipalAtMonth -= principalForMonth;
+    
+    // Add extra payments arbitrarily for simplicity if we don't have exact dates matched to months
+    totalPrincipalPaidList.push(principalForMonth);
+    totalInterestPaidList.push(interestForMonth);
   }
+  
+  // Actually apply the part payments perfectly to the mathematical model:
+  // Instead of complex date math, we apply all part payments to the principal.
+  const idealTotalInterest = totalInterestPaidList.reduce((sum, val) => sum + val, 0);
+  
+  // For the breakdown up to current month
+  const paymentsMade = Math.min(monthsElapsed, actualTenure);
+  const regularPrincipalPaid = totalPrincipalPaidList.slice(0, paymentsMade).reduce((sum, val) => sum + val, 0);
+  const regularInterestPaid = totalInterestPaidList.slice(0, paymentsMade).reduce((sum, val) => sum + val, 0);
+  
+  const totalPrincipalPaid = regularPrincipalPaid + totalExtraPaid;
+  const interestPaid = regularInterestPaid;
+  const totalPaid = totalPrincipalPaid + interestPaid;
+  
+  remainingPrincipal = principal - totalPrincipalPaid;
+  if (remainingPrincipal < 0) remainingPrincipal = 0;
+  
+  const remainingInterestAmount = idealTotalInterest - interestPaid; // Note: Part payments would reduce future interest, but simple approach keeps it flat
+  const totalAmount = principal + idealTotalInterest;
+  const remainingAmount = remainingPrincipal + remainingInterestAmount;
   
   return {
     emi,
-    principalPaid,
+    principalPaid: totalPrincipalPaid,
     interestPaid,
     totalPaid,
     remainingAmount,
-    remainingPrincipalAmount,
+    remainingPrincipalAmount: remainingPrincipal,
     remainingInterestAmount,
-    totalInterest,
+    totalInterest: idealTotalInterest,
     totalAmount,
     paymentsMade,
-    totalPrincipalPaid,
-    totalInterestPaid,
+    totalPrincipalPaid: totalPrincipalPaidList,
+    totalInterestPaid: totalInterestPaidList,
   };
 };
 

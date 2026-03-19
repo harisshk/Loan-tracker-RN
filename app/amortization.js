@@ -10,6 +10,9 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { Alert } from 'react-native';
 
 export default function AmortizationSchedule() {
   const router = useRouter();
@@ -89,9 +92,30 @@ export default function AmortizationSchedule() {
     setTimeout(() => setRefreshing(false), 500);
   };
 
+  const handleExportCSV = async () => {
+    try {
+      let csvContent = `Month,Date,Principal (Rs),Interest (Rs),EMI (Rs),Remaining Balance (Rs),Status\n`;
+      schedule.forEach((row) => {
+        csvContent += `${row.month},${formatDate(row.date)},${row.principal.toFixed(2)},${row.interest.toFixed(2)},${row.emi.toFixed(2)},${row.remainingPrincipal.toFixed(2)},${row.isPaid ? 'Paid' : 'Pending'}\n`;
+      });
+      
+      const fileUri = FileSystem.documentDirectory + `Loan_Schedule_${loan.loanName.replace(/[^a-zA-Z0-9]/g, '_')}.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: 'utf8' });
+      
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri);
+      } else {
+        Alert.alert('Success', `File saved to ${fileUri}`);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to export schedule');
+      console.error(error);
+    }
+  };
+
   return (
     <LinearGradient
-      colors={['#0a0a0a', '#1a1a2e', '#16213e']}
+      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
       <ScrollView
@@ -100,7 +124,7 @@ export default function AmortizationSchedule() {
           <RefreshControl 
             refreshing={refreshing} 
             onRefresh={onRefresh}
-            tintColor="#4ade80"
+            tintColor="#10b981"
           />
         }
       >
@@ -114,7 +138,7 @@ export default function AmortizationSchedule() {
         </View>
 
         {/* Summary Card */}
-        <BlurView intensity={20} tint="dark" style={styles.summaryCard}>
+        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
           <View style={styles.cardContent}>
             <View style={styles.summaryRow}>
               <View style={styles.summaryItem}>
@@ -125,7 +149,7 @@ export default function AmortizationSchedule() {
               </View>
               <View style={styles.summaryItem}>
                 <Text style={styles.summaryLabel}>Payments Made</Text>
-                <Text style={[styles.summaryValue, { color: '#4ade80' }]}>
+                <Text style={[styles.summaryValue, { color: '#10b981' }]}>
                   {monthsElapsed} / {loan.tenure}
                 </Text>
               </View>
@@ -133,8 +157,14 @@ export default function AmortizationSchedule() {
           </View>
         </BlurView>
 
+        <TouchableOpacity style={styles.exportButton} onPress={handleExportCSV}>
+          <BlurView intensity={25} tint="light" style={styles.exportBlur}>
+            <Text style={styles.exportButtonText}>📥 Export to CSV / Excel</Text>
+          </BlurView>
+        </TouchableOpacity>
+
         {/* Schedule Table Header */}
-        <BlurView intensity={25} tint="dark" style={styles.tableHeader}>
+        <BlurView intensity={25} tint="light" style={styles.tableHeader}>
           <View style={styles.tableRow}>
             <Text style={[styles.tableHeaderText, styles.colMonth]}>Month</Text>
             <Text style={[styles.tableHeaderText, styles.colAmount]}>Principal</Text>
@@ -149,7 +179,7 @@ export default function AmortizationSchedule() {
           <BlurView
             key={row.month}
             intensity={row.isPaid ? 18 : 12}
-            tint="dark"
+            tint="light"
             style={[
               styles.tableRowContainer,
               row.isPaid && styles.paidRow,
@@ -157,9 +187,14 @@ export default function AmortizationSchedule() {
             ]}
           >
             <View style={styles.tableRow}>
-              <View style={styles.colMonth}>
-                <Text style={styles.monthText}>{row.month}</Text>
-                {row.isPaid && <Text style={styles.checkMark}>✓</Text>}
+              <View style={[styles.colMonth, { flexDirection: 'column', alignItems: 'flex-start', gap: 2 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Text style={styles.monthText}>{row.month}</Text>
+                  {row.isPaid && <Text style={styles.checkMark}>✓</Text>}
+                </View>
+                <Text style={{ fontSize: 10, color: 'rgba(15, 23, 42, 0.6)' }}>
+                  {formatDate(row.date)}
+                </Text>
               </View>
               <Text style={[styles.tableText, styles.colAmount, styles.principalText]}>
                 {formatCurrency(row.principal)}
@@ -196,25 +231,25 @@ const styles = StyleSheet.create({
   backButton: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
     marginBottom: 12,
   },
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 4,
   },
   headerSubtitle: {
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
   },
   summaryCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   cardContent: {
     padding: 20,
@@ -228,7 +263,7 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 6,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -236,14 +271,31 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
+  },
+  exportButton: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+    marginBottom: 24,
+  },
+  exportBlur: {
+    padding: 16,
+    alignItems: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+  },
+  exportButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#38bdf8',
   },
   tableHeader: {
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 2,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderColor: 'rgba(0, 0, 0, 0.12)',
   },
   tableRow: {
     flexDirection: 'row',
@@ -256,11 +308,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 1,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: 'rgba(0, 0, 0, 0.04)',
   },
   paidRow: {
-    borderColor: 'rgba(74, 222, 128, 0.15)',
-    backgroundColor: 'rgba(74, 222, 128, 0.02)',
+    borderColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(16, 185, 129, 0.02)',
   },
   lastRow: {
     marginBottom: 20,
@@ -274,11 +326,11 @@ const styles = StyleSheet.create({
   },
   tableText: {
     fontSize: 13,
-    color: '#ffffff',
+    color: '#0f172a',
     fontWeight: '500',
   },
   colMonth: {
-    width: 60,
+    width: 75,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -294,20 +346,20 @@ const styles = StyleSheet.create({
   monthText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   checkMark: {
     fontSize: 10,
-    color: '#4ade80',
+    color: '#10b981',
   },
   principalText: {
-    color: '#4ade80',
+    color: '#10b981',
   },
   interestText: {
-    color: '#fbbf24',
+    color: '#f59e0b',
   },
   balanceText: {
-    color: '#ef4444',
+    color: '#e11d48',
     fontWeight: '600',
   },
 });

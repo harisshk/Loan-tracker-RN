@@ -20,6 +20,7 @@ export default function AddLoan() {
   const router = useRouter();
   const [formData, setFormData] = useState({
     loanName: '',
+    loanType: 'emi',
     principal: '',
     interest: '',
     emiAmount: '',
@@ -37,26 +38,33 @@ export default function AddLoan() {
     const tenure = parseInt(formData.tenure);
 
     if (principal > 0 && annualInterest >= 0 && tenure > 0) {
-      const monthlyRate = annualInterest / 12 / 100;
-      let emi;
-      
-      if (monthlyRate === 0) {
-        emi = principal / tenure;
+      if (formData.loanType === 'bullet') {
+        setCalculatedEMI('');
+        if (formData.emiAmount !== '0') {
+          setFormData(prev => ({ ...prev, emiAmount: '0' }));
+        }
       } else {
-        emi = (principal * monthlyRate * Math.pow(1 + monthlyRate, tenure)) / 
-              (Math.pow(1 + monthlyRate, tenure) - 1);
-      }
-      
-      setCalculatedEMI(Math.round(emi).toString());
-      
-      // Auto-fill EMI if it's empty
-      if (!formData.emiAmount) {
-        setFormData(prev => ({ ...prev, emiAmount: Math.round(emi).toString() }));
+        const monthlyRate = annualInterest / 12 / 100;
+        let emi;
+        
+        if (monthlyRate === 0) {
+          emi = principal / tenure;
+        } else {
+          emi = (principal * monthlyRate * Math.pow(1 + monthlyRate, tenure)) / 
+                (Math.pow(1 + monthlyRate, tenure) - 1);
+        }
+        
+        setCalculatedEMI(Math.round(emi).toString());
+        
+        // Auto-fill EMI if it's empty
+        if (!formData.emiAmount || formData.emiAmount === '0') {
+          setFormData(prev => ({ ...prev, emiAmount: Math.round(emi).toString() }));
+        }
       }
     } else {
       setCalculatedEMI('');
     }
-  }, [formData.principal, formData.interest, formData.tenure]);
+  }, [formData.principal, formData.interest, formData.tenure, formData.loanType]);
 
   const handleInputChange = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -99,7 +107,7 @@ export default function AddLoan() {
       Alert.alert('Error', 'Please enter valid interest rate');
       return false;
     }
-    if (!formData.emiAmount || parseFloat(formData.emiAmount) <= 0) {
+    if (formData.loanType === 'emi' && (!formData.emiAmount || parseFloat(formData.emiAmount) <= 0)) {
       Alert.alert('Error', 'Please enter valid EMI amount');
       return false;
     }
@@ -125,7 +133,7 @@ export default function AddLoan() {
 
   return (
     <LinearGradient
-      colors={['#0a0a0a', '#1a1a2e', '#16213e']}
+      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
       <KeyboardAvoidingView
@@ -145,7 +153,23 @@ export default function AddLoan() {
           </View>
 
           {/* Form */}
-          <BlurView intensity={20} tint="dark" style={styles.formCard}>
+          <BlurView intensity={20} tint="light" style={styles.formCard}>
+            {/* Loan Type Selector */}
+            <View style={{flexDirection: 'row', gap: 10, padding: 24, paddingBottom: 0}}>
+              <TouchableOpacity
+                style={[styles.typeButton, formData.loanType === 'emi' && styles.typeButtonActive]}
+                onPress={() => handleInputChange('loanType', 'emi')}
+              >
+                <Text style={[styles.typeButtonText, formData.loanType === 'emi' && styles.typeButtonTextActive]}>Regular EMI</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.typeButton, formData.loanType === 'bullet' && styles.typeButtonActive]}
+                onPress={() => handleInputChange('loanType', 'bullet')}
+              >
+                <Text style={[styles.typeButtonText, formData.loanType === 'bullet' && styles.typeButtonTextActive]}>Bullet / Gold</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.formContent}>
               {/* Loan Name */}
               <View style={styles.inputGroup}>
@@ -153,7 +177,7 @@ export default function AddLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., Home Loan, Car Loan"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   value={formData.loanName}
                   onChangeText={(value) => handleInputChange('loanName', value)}
                 />
@@ -165,7 +189,7 @@ export default function AddLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., 500000"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="numeric"
                   value={formData.principal}
                   onChangeText={(value) => handleInputChange('principal', value)}
@@ -178,7 +202,7 @@ export default function AddLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., 8.5"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="decimal-pad"
                   value={formData.interest}
                   onChangeText={(value) => handleInputChange('interest', value)}
@@ -186,32 +210,34 @@ export default function AddLoan() {
               </View>
 
               {/* EMI Amount */}
-              <View style={styles.inputGroup}>
-                <View style={styles.labelRow}>
-                  <Text style={styles.label}>EMI Amount (₹)</Text>
-                  {calculatedEMI && (
-                    <TouchableOpacity onPress={useCalculatedEMI} style={styles.calculatedBadge}>
-                      <Text style={styles.calculatedText}>
-                        Calculated: ₹{parseFloat(calculatedEMI).toLocaleString('en-IN')}
-                      </Text>
-                      <Text style={styles.useBadgeText}>Use →</Text>
-                    </TouchableOpacity>
+              {formData.loanType === 'emi' && (
+                <View style={styles.inputGroup}>
+                  <View style={styles.labelRow}>
+                    <Text style={styles.label}>EMI Amount (₹)</Text>
+                    {calculatedEMI && (
+                      <TouchableOpacity onPress={useCalculatedEMI} style={styles.calculatedBadge}>
+                        <Text style={styles.calculatedText}>
+                          Calculated: ₹{parseFloat(calculatedEMI).toLocaleString('en-IN')}
+                        </Text>
+                        <Text style={styles.useBadgeText}>Use →</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g., 15000"
+                    placeholderTextColor="rgba(15, 23, 42, 0.3)"
+                    keyboardType="numeric"
+                    value={formData.emiAmount}
+                    onChangeText={(value) => handleInputChange('emiAmount', value)}
+                  />
+                  {calculatedEMI && formData.emiAmount && formData.emiAmount !== calculatedEMI && (
+                    <Text style={styles.warningText}>
+                      ⚠️ Your EMI differs from calculated EMI
+                    </Text>
                   )}
                 </View>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 15000"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
-                  keyboardType="numeric"
-                  value={formData.emiAmount}
-                  onChangeText={(value) => handleInputChange('emiAmount', value)}
-                />
-                {calculatedEMI && formData.emiAmount && formData.emiAmount !== calculatedEMI && (
-                  <Text style={styles.warningText}>
-                    ⚠️ Your EMI differs from calculated EMI
-                  </Text>
-                )}
-              </View>
+              )}
 
               {/* Start Date */}
               <View style={styles.inputGroup}>
@@ -240,7 +266,7 @@ export default function AddLoan() {
                 <TextInput
                   style={styles.input}
                   placeholder="e.g., 60"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="numeric"
                   value={formData.tenure}
                   onChangeText={(value) => handleInputChange('tenure', value)}
@@ -251,7 +277,7 @@ export default function AddLoan() {
 
           {/* Save Button */}
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            <BlurView intensity={25} tint="dark" style={styles.saveBlur}>
+            <BlurView intensity={25} tint="light" style={styles.saveBlur}>
               <Text style={styles.saveButtonText}>Save Loan</Text>
             </BlurView>
           </TouchableOpacity>
@@ -279,20 +305,20 @@ const styles = StyleSheet.create({
   backButton: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
     marginBottom: 12,
   },
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   formCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   formContent: {
     padding: 24,
@@ -310,14 +336,14 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: 'rgba(15, 23, 42, 0.8)',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   calculatedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 222, 128, 0.15)',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -326,53 +352,72 @@ const styles = StyleSheet.create({
   calculatedText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
   },
   useBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
   },
   warningText: {
     fontSize: 12,
-    color: '#fbbf24',
+    color: '#f59e0b',
     marginTop: 4,
   },
   input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     borderRadius: 16,
     padding: 16,
     fontSize: 16,
-    color: '#ffffff',
+    color: '#0f172a',
   },
   dateButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     borderRadius: 16,
     padding: 16,
   },
   dateButtonText: {
     fontSize: 16,
-    color: '#ffffff',
+    color: '#0f172a',
     fontWeight: '500',
   },
   saveButton: {
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   saveBlur: {
     padding: 18,
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
   },
   saveButtonText: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
+  },
+  typeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  typeButtonActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: '#10b981',
+  },
+  typeButtonText: {
+    color: 'rgba(15, 23, 42, 0.6)',
+    fontWeight: '600',
+  },
+  typeButtonTextActive: {
+    color: '#10b981',
   },
 });

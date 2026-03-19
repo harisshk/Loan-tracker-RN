@@ -14,19 +14,20 @@ export default function RootLayout() {
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#0a0a0a' },
+          contentStyle: { backgroundColor: '#f8fafc' },
         }}
       >
         <Stack.Screen name="index" />
         <Stack.Screen name="loans" />
         <Stack.Screen name="add-loan" />
+        <Stack.Screen name="add-insurance" />
         <Stack.Screen name="edit-loan" />
         <Stack.Screen name="history" />
         <Stack.Screen name="loan-detail" />
         <Stack.Screen name="amortization" />
         <Stack.Screen name="sync" />
       </Stack>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
     </>
   );
 }

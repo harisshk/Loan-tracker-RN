@@ -10,12 +10,13 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { getLoans, calculateLoanStats } from '../utils/storage';
+import { getLoans, calculateLoanStats, getPayments } from '../utils/storage';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
 
 export default function Dashboard() {
   const router = useRouter();
   const [loans, setLoans] = useState([]);
+  const [payments, setPayments] = useState([]);
   const [stats, setStats] = useState({
     totalOutstanding: 0,
     totalOutstandingPr: 0,
@@ -26,13 +27,18 @@ export default function Dashboard() {
     totalPrincipalPending: 0,
     totalInterestPending: 0,
     pendingLoans: 0,
+    nextDueDate: null,
+    nextPaymentAmount: 0,
+    nextPaymentLoanName: '',
   });
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = async () => {
     const loansData = await getLoans();
+    const paymentsData = await getPayments();
     setLoans(loansData);
-    const calculatedStats = calculateLoanStats(loansData);
+    setPayments(paymentsData);
+    const calculatedStats = calculateLoanStats(loansData, paymentsData);
     setStats(calculatedStats);
   };
 
@@ -91,10 +97,12 @@ export default function Dashboard() {
     
     monthsElapsed = Math.max(0, monthsElapsed);
     
-    const breakdown = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emiAmount);
+    const extraPayments = payments.filter(p => p.loanId === loan.id);
+    const breakdown = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emiAmount, loan.loanType || 'emi', extraPayments);
     const progress = principal > 0 ? breakdown.principalPaid / principal : 0;
     
     return {
+      loanType: loan.loanType || 'emi',
       principalPaid: breakdown.principalPaid,
       principalPending: breakdown.remainingPrincipalAmount,
       progress: progress,
@@ -105,7 +113,7 @@ export default function Dashboard() {
 
   return (
     <LinearGradient
-      colors={['#0a0a0a', '#1a1a2e', '#16213e']}
+      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
       <ScrollView
@@ -124,7 +132,7 @@ export default function Dashboard() {
             style={styles.addButton}
             onPress={() => router.push('/add-loan')}
           >
-            <BlurView intensity={30} tint="dark" style={styles.addButtonBlur}>
+            <BlurView intensity={30} tint="light" style={styles.addButtonBlur}>
               <Text style={styles.addButtonText}>+</Text>
             </BlurView>
           </TouchableOpacity>
@@ -158,9 +166,11 @@ export default function Dashboard() {
                       },
                     })}
                   >
-                    <BlurView intensity={20} tint="dark" style={styles.loanCarouselCard}>
+                    <BlurView intensity={20} tint="light" style={styles.loanCarouselCard}>
                       <View style={styles.loanCardContent}>
-                        <Text style={styles.loanCardName}>{loan.loanName}</Text>
+                        <Text style={styles.loanCardName}>
+                          {loan.loanName} {loanProgress.loanType === 'bullet' && <Text style={{fontSize: 12, color: '#f59e0b'}}>(Bullet)</Text>}
+                        </Text>
                         <Text style={styles.loanCardAmount}>
                           {formatCurrency(loanProgress.principalPending)}
                         </Text>
@@ -175,32 +185,6 @@ export default function Dashboard() {
                                 { width: `${loanProgress.progress * 100}%` },
                               ]}
                             />
-                          </View>
-                          <View style={styles.loanProgressLabels}>
-                            <View style={styles.progressLabelItem}>
-                              <View style={[styles.progressDot, { backgroundColor: '#4ade80' }]} />
-                              <Text style={styles.progressLabelText}>
-                                Paid Principal: {formatCurrency(loanProgress.principalPaid)}
-                              </Text>
-                            </View>
-                            <View style={styles.progressLabelItem}>
-                              <View style={[styles.progressDot, { backgroundColor: '#4ade80' }]} />
-                              <Text style={styles.progressLabelText}>
-                                Total Paid: {formatCurrency(loanProgress.totalPaid)}
-                              </Text>
-                            </View>
-                            <View style={styles.progressLabelItem}>
-                              <View style={[styles.progressDot, { backgroundColor: '#ef4444' }]} />
-                              <Text style={styles.progressLabelText}>
-                                Pending: {formatCurrency(loanProgress.principalPending)}
-                              </Text>
-                            </View>
-                            <View style={styles.progressLabelItem}>
-                              <View style={[styles.progressDot, { backgroundColor: '#ef4444' }]} />
-                              <Text style={styles.progressLabelText}>
-                                Pending Total: {formatCurrency(loanProgress.remaining)}
-                              </Text>
-                            </View>
                           </View>
                         </View>
                         
@@ -217,7 +201,7 @@ export default function Dashboard() {
         )}
 
         {/* Total Outstanding Card */}
-        <BlurView intensity={20} tint="dark" style={styles.mainCard}>
+        <BlurView intensity={20} tint="light" style={styles.mainCard}>
           <View style={styles.cardContent}>
             <Text style={styles.mainCardLabel}>Total Outstanding Principal</Text>
             <Text style={styles.mainCardAmount}>
@@ -243,42 +227,61 @@ export default function Dashboard() {
           </View>
         </BlurView>
 
-        {/* Global Statistics Breakdown */}
-        <View style={styles.summaryRow}>
-          <BlurView intensity={15} tint="dark" style={styles.summaryCard}>
+        {/* Next Upcoming Payment Card */}
+        {stats.nextDueDate && (
+          <BlurView intensity={20} tint="light" style={[styles.mainCard, { borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
             <View style={styles.cardContent}>
-              <Text style={styles.summaryLabel}>Principal Paid</Text>
-              <Text style={styles.summaryAmount}>
-                {formatCurrency(stats.totalPrincipalPaid)}
+              <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+                <Text style={styles.mainCardLabel}>Next Upcoming Payment</Text>
+                <Text style={[styles.loanCardLabel, {marginBottom: 8, color: '#10b981'}]}>
+                  {formatDate(stats.nextDueDate)}
+                </Text>
+              </View>
+              <Text style={styles.mainCardAmount}>
+                {formatCurrency(stats.nextPaymentAmount)}
               </Text>
-              <Text style={styles.summarySubLabel}>
-                Int: {formatCurrency(stats.totalInterestPaid)}
-              </Text>
-              <Text style={styles.summarySubLabelActive}>
-                Total: {formatCurrency(stats.totalPaid)}
+              <Text style={styles.statLabelMini}>
+                For: {stats.nextPaymentLoanName}
               </Text>
             </View>
           </BlurView>
-
-          <BlurView intensity={15} tint="dark" style={styles.summaryCard}>
-            <View style={styles.cardContent}>
-              <Text style={styles.summaryLabel}>Active Loans</Text>
-              <Text style={styles.summaryAmount}>{stats.pendingLoans}</Text>
-              <Text style={styles.summarySubLabel}>
-                In progress
-              </Text>
-            </View>
-          </BlurView>
-        </View>
+        )}
 
         {/* Quick Actions */}
         <View style={styles.actionsContainer}>
 
           <TouchableOpacity
             style={styles.actionButton}
+            onPress={() => router.push('/add-insurance')}
+          >
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#10b981' }]}>🛡️ Add Insurance</Text>
+            </BlurView>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push('/history')}
+          >
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>📖 Extra Payments Log</Text>
+            </BlurView>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push('/calendar')}
+          >
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#38bdf8' }]}>📅 Calendar View</Text>
+            </BlurView>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
             onPress={() => router.push('/loans')}
           >
-            <BlurView intensity={20} tint="dark" style={styles.actionBlur}>
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
               <Text style={styles.actionButtonText}>View All Loans</Text>
             </BlurView>
           </TouchableOpacity>
@@ -287,8 +290,8 @@ export default function Dashboard() {
             style={styles.actionButton}
             onPress={() => router.push('/sync')}
           >
-            <BlurView intensity={20} tint="dark" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#4ade80' }]}>☁️ Cloud Backup & Sync</Text>
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#10b981' }]}>💾 Export & Import</Text>
             </BlurView>
           </TouchableOpacity>
         </View>
@@ -314,12 +317,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 4,
   },
   headerSubtitle: {
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
   },
   addButton: {
     width: 56,
@@ -327,19 +330,19 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(74, 222, 128, 0.3)',
+    borderColor: 'rgba(16, 185, 129, 0.3)',
   },
   addButtonBlur: {
     width: '100%',
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 222, 128, 0.15)',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
   },
   addButtonText: {
     fontSize: 32,
     fontWeight: '300',
-    color: '#4ade80',
+    color: '#10b981',
     lineHeight: 32,
   },
   mainCard: {
@@ -347,14 +350,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   cardContent: {
     padding: 24,
   },
   mainCardLabel: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 8,
     textTransform: 'uppercase',
     letterSpacing: 1,
@@ -362,7 +365,7 @@ const styles = StyleSheet.create({
   mainCardAmount: {
     fontSize: 42,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 20,
   },
   emiRow: {
@@ -375,12 +378,12 @@ const styles = StyleSheet.create({
   },
   emiLabel: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
   },
   emiAmount: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -392,11 +395,11 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   summaryLabel: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 8,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -404,22 +407,22 @@ const styles = StyleSheet.create({
   summaryAmount: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   summarySubLabel: {
     fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'rgba(15, 23, 42, 0.4)',
     marginTop: 4,
   },
   summarySubLabelActive: {
     fontSize: 11,
-    color: '#4ade80',
+    color: '#10b981',
     marginTop: 2,
     fontWeight: '600',
   },
   dividerSmall: {
     height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     marginVertical: 12,
   },
   statRow: {
@@ -432,14 +435,14 @@ const styles = StyleSheet.create({
   },
   statLabelMini: {
     fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: 'rgba(15, 23, 42, 0.5)',
     marginBottom: 4,
     textTransform: 'uppercase',
   },
   statValueMini: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   actionsContainer: {
     gap: 12,
@@ -448,7 +451,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   actionBlur: {
     padding: 18,
@@ -457,7 +460,7 @@ const styles = StyleSheet.create({
   actionButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   carouselContainer: {
     marginBottom: 24,
@@ -465,7 +468,7 @@ const styles = StyleSheet.create({
   carouselTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 16,
   },
   carouselContent: {
@@ -477,7 +480,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   loanCardContent: {
     padding: 20,
@@ -485,18 +488,18 @@ const styles = StyleSheet.create({
   loanCardName: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 12,
   },
   loanCardAmount: {
     fontSize: 32,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
     marginBottom: 4,
   },
   loanCardLabel: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 16,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -506,14 +509,14 @@ const styles = StyleSheet.create({
   },
   loanProgressBar: {
     height: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.3)',
+    backgroundColor: 'rgba(225, 29, 72, 0.3)',
     borderRadius: 4,
     overflow: 'hidden',
     marginBottom: 12,
   },
   loanProgressFill: {
     height: '100%',
-    backgroundColor: '#4ade80',
+    backgroundColor: '#10b981',
     borderRadius: 4,
   },
   loanProgressLabels: {
@@ -536,7 +539,7 @@ const styles = StyleSheet.create({
   loanCardProgress: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
     textAlign: 'center',
     marginTop: 8,
   },

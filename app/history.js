@@ -90,7 +90,7 @@ export default function History() {
 
   return (
     <LinearGradient
-      colors={['#0a0a0a', '#1a1a2e', '#16213e']}
+      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
       <ScrollView
@@ -110,7 +110,7 @@ export default function History() {
         </View>
 
         {/* Total Paid Summary */}
-        <BlurView intensity={20} tint="dark" style={styles.summaryCard}>
+        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
           <View style={styles.cardContent}>
             <Text style={styles.summaryLabel}>Total Paid</Text>
             <Text style={styles.summaryAmount}>
@@ -124,7 +124,7 @@ export default function History() {
 
         {/* Add Payment Form */}
         {showAddPayment && (
-          <BlurView intensity={20} tint="dark" style={styles.formCard}>
+          <BlurView intensity={20} tint="light" style={styles.formCard}>
             <View style={styles.formContent}>
               <Text style={styles.formTitle}>Record Payment</Text>
 
@@ -162,7 +162,7 @@ export default function History() {
                 <TextInput
                   style={styles.input}
                   placeholder="Enter amount"
-                  placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   keyboardType="numeric"
                   value={newPayment.amount}
                   onChangeText={(value) =>
@@ -182,7 +182,7 @@ export default function History() {
         <Text style={styles.sectionTitle}>Recent Payments</Text>
 
         {payments.length === 0 ? (
-          <BlurView intensity={15} tint="dark" style={styles.emptyCard}>
+          <BlurView intensity={15} tint="light" style={styles.emptyCard}>
             <View style={styles.emptyContent}>
               <Text style={styles.emptyText}>No payments recorded</Text>
               <Text style={styles.emptySubtext}>
@@ -195,7 +195,7 @@ export default function History() {
             <BlurView
               key={payment.id}
               intensity={15}
-              tint="dark"
+              tint="light"
               style={styles.paymentCard}
             >
               <View style={styles.paymentContent}>
@@ -234,26 +234,26 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   addButton: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
   },
   summaryCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   cardContent: {
     padding: 24,
   },
   summaryLabel: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 8,
     textTransform: 'uppercase',
     letterSpacing: 1,
@@ -261,19 +261,19 @@ const styles = StyleSheet.create({
   summaryAmount: {
     fontSize: 38,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
     marginBottom: 8,
   },
   summarySubtext: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: 'rgba(15, 23, 42, 0.5)',
   },
   formCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   formContent: {
     padding: 24,
@@ -282,7 +282,7 @@ const styles = StyleSheet.create({
   formTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 8,
   },
   inputGroup: {
@@ -291,7 +291,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: 'rgba(15, 23, 42, 0.8)',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -303,48 +303,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   loanOptionSelected: {
-    backgroundColor: 'rgba(74, 222, 128, 0.2)',
-    borderColor: '#4ade80',
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: '#10b981',
   },
   loanOptionText: {
     fontSize: 14,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
   },
   loanOptionTextSelected: {
-    color: '#4ade80',
+    color: '#10b981',
   },
   input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     borderRadius: 16,
     padding: 16,
     fontSize: 16,
-    color: '#ffffff',
+    color: '#0f172a',
   },
   submitButton: {
-    backgroundColor: 'rgba(74, 222, 128, 0.2)',
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
     borderRadius: 20,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#4ade80',
+    borderColor: '#10b981',
   },
   submitButtonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 16,
   },
   paymentCard: {
@@ -352,7 +352,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   paymentContent: {
     flexDirection: 'row',
@@ -366,23 +366,23 @@ const styles = StyleSheet.create({
   paymentLoanName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 4,
   },
   paymentDate: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: 'rgba(15, 23, 42, 0.5)',
   },
   paymentAmount: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
   },
   emptyCard: {
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   emptyContent: {
     padding: 48,
@@ -391,12 +391,12 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     textAlign: 'center',
   },
 });

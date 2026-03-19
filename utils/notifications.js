@@ -85,3 +85,65 @@ export async function scheduleEMIReminder(loan) {
 export async function cancelAllLoanNotifications() {
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
+
+// Schedule notification for insurance
+export async function scheduleInsuranceReminder(insurance) {
+  if (!insurance.startDate || !insurance.premiumAmount) return;
+
+  const startDate = new Date(insurance.startDate);
+  const dueDay = startDate.getDate();
+  let baseMonth = startDate.getMonth() + 1; // 1-12
+  
+  // Create yearly triggers based on frequency
+  let targetMonths = [];
+  
+  switch (insurance.frequency) {
+    case 'yearly':
+      targetMonths = [baseMonth];
+      break;
+    case 'half-yearly':
+      targetMonths = [baseMonth, (baseMonth + 6 > 12) ? baseMonth - 6 : baseMonth + 6];
+      break;
+    case 'quarterly':
+      targetMonths = [
+        baseMonth,
+        (baseMonth + 3 > 12) ? baseMonth - 9 : baseMonth + 3,
+        (baseMonth + 6 > 12) ? baseMonth - 6 : baseMonth + 6,
+        (baseMonth + 9 > 12) ? baseMonth - 3 : baseMonth + 9,
+      ];
+      break;
+    case 'monthly':
+      // Handled natively by Expo with just "day"
+      break;
+    default:
+      targetMonths = [baseMonth];
+  }
+
+  // Ensure day is realistic (e.g. 28)
+  let targetDay = dueDay - 1;
+  if (targetDay <= 0) targetDay = 28;
+
+  if (insurance.frequency === 'monthly') {
+    const trigger = { day: targetDay, hour: 10, minute: 0, repeats: true };
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "🛡️ Insurance Premium Due!",
+        body: `Your ${insurance.name} premium of ₹${parseFloat(insurance.premiumAmount).toLocaleString('en-IN')} is due tomorrow!`,
+      },
+      trigger,
+    });
+  } else {
+    // Schedule multiple yearly notifications
+    for (const month of targetMonths) {
+      const trigger = { month: month, day: targetDay, hour: 10, minute: 0, repeats: true };
+      
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "🛡️ Insurance Premium Due!",
+          body: `Your ${insurance.frequency} ${insurance.name} premium of ₹${parseFloat(insurance.premiumAmount).toLocaleString('en-IN')} is due tomorrow!`,
+        },
+        trigger,
+      });
+    }
+  }
+}

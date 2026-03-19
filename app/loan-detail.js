@@ -13,6 +13,7 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BarChart, ProgressChart } from 'react-native-chart-kit';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
+import { getPayments } from '../utils/storage';
 
 const { width } = Dimensions.get('window');
 
@@ -20,7 +21,19 @@ export default function LoanDetail() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [refreshing, setRefreshing] = useState(false);
+  const [extraPayments, setExtraPayments] = useState([]);
+  const [loading, setLoading] = useState(true);
   
+  React.useEffect(() => {
+    loadPayments();
+  }, [params.id]);
+
+  const loadPayments = async () => {
+    const allP = await getPayments();
+    setExtraPayments(allP.filter(p => p.loanId === params.id));
+    setLoading(false);
+  };
+
   // Parse loan data from params
   const loan = {
     loanName: params.loanName,
@@ -60,7 +73,9 @@ export default function LoanDetail() {
     loan.interest,
     loan.tenure,
     monthsElapsed,
-    loan.emiAmount  // Use user's EMI amount instead of recalculating
+    loan.emiAmount,
+    params.loanType || 'emi',
+    extraPayments
   );
 
   // Log calculation details for verification
@@ -94,29 +109,25 @@ export default function LoanDetail() {
 
   const progress = loan.tenure > 0 ? breakdown.paymentsMade / loan.tenure : 0;
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    // Simulate recalculation (data is already recalculated on each render)
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 500);
+    await loadPayments();
+    setRefreshing(false);
   };
 
-  // Chart data for Total Loan Breakdown
-  const totalBreakdownData = {
-    labels: ['Principal', 'Interest'],
-    datasets: [
-      {
-        data: [loan.principal, breakdown.totalInterest],
-      },
-    ],
-  };
+  if (loading) {
+    return (
+      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      </LinearGradient>
+    );
+  }
+
 
   // Progress chart data
   const progressData = {
     labels: ['Paid', 'Remaining'],
     data: [progress, 1 - progress],
-    colors: ['#4ade80', '#ef4444'],
+    colors: ['#10b981', '#e11d48'],
   };
 
   const chartConfig = {
@@ -124,14 +135,14 @@ export default function LoanDetail() {
     backgroundGradientFrom: 'rgba(255, 255, 255, 0.05)',
     backgroundGradientTo: 'rgba(255, 255, 255, 0.05)',
     decimalPlaces: 0,
-    color: (opacity = 1) => `rgba(74, 222, 128, ${opacity})`,
+    color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
     labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity * 0.8})`,
     style: {
       borderRadius: 30,
     },
     propsForBackgroundLines: {
       strokeDasharray: '',
-      stroke: 'rgba(255, 255, 255, 0.1)',
+      stroke: 'rgba(0, 0, 0, 0.05)',
       strokeWidth: 1,
     },
     propsForLabels: {
@@ -145,7 +156,7 @@ export default function LoanDetail() {
     backgroundGradientFrom: 'rgba(255, 255, 255, 0.05)',
     backgroundGradientTo: 'rgba(255, 255, 255, 0.05)',
     color: (opacity = 1, index) => {
-      const colors = ['rgba(74, 222, 128, 1)', 'rgba(239, 68, 68, 1)'];
+      const colors = ['rgba(16, 185, 129, 1)', 'rgba(225, 29, 72, 1)'];
       return colors[index] || colors[0];
     },
     labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity * 0.8})`,
@@ -157,7 +168,7 @@ export default function LoanDetail() {
 
   return (
     <LinearGradient
-      colors={['#0a0a0a', '#1a1a2e', '#16213e']}
+      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
       <ScrollView 
@@ -166,7 +177,7 @@ export default function LoanDetail() {
           <RefreshControl 
             refreshing={refreshing} 
             onRefresh={onRefresh}
-            tintColor="#4ade80"
+            tintColor="#10b981"
           />
         }
       >
@@ -197,7 +208,7 @@ export default function LoanDetail() {
         </View>
 
         {/* Loan Summary Card */}
-        <BlurView intensity={20} tint="dark" style={styles.summaryCard}>
+        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
           <View style={styles.cardContent}>
             <Text style={styles.summaryLabel}>Total Loan Amount</Text>
             <Text style={styles.summaryAmount}>
@@ -221,10 +232,10 @@ export default function LoanDetail() {
         </BlurView>
 
         {/* Amount Paid Breakdown */}
-        <BlurView intensity={20} tint="dark" style={styles.summaryCard}>
+        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
           <View style={styles.cardContent}>
             <Text style={styles.summaryLabel}>Total Paid Till Now</Text>
-            <Text style={[styles.summaryAmount, { color: '#4ade80' }]}>
+            <Text style={[styles.summaryAmount, { color: '#10b981' }]}>
               {formatCurrency(breakdown.totalPaid)}
             </Text>
             <View style={styles.summaryRow}>
@@ -244,66 +255,9 @@ export default function LoanDetail() {
           </View>
         </BlurView>
 
-        {/* Total Loan Breakdown Chart */}
-        <BlurView intensity={20} tint="dark" style={styles.chartCard}>
-          <View style={styles.cardContent}>
-            <Text style={styles.chartTitle}>Total Loan Breakdown</Text>
-            <Text style={styles.chartSubtitle}>
-              Principal vs Interest in total loan
-            </Text>
-            <View style={styles.chartContainer}>
-              <BarChart
-                data={totalBreakdownData}
-                width={width - 88}
-                height={220}
-                chartConfig={chartConfig}
-                style={styles.chart}
-                showValuesOnTopOfBars
-                fromZero
-                yAxisLabel="₹"
-                yAxisSuffix=""
-              />
-            </View>
-          </View>
-        </BlurView>
-
-        {/* Paid Amount Breakdown Chart */}
-        <BlurView intensity={20} tint="dark" style={styles.chartCard}>
-          <View style={styles.cardContent}>
-            <Text style={styles.chartTitle}>Amount Paid Breakdown</Text>
-            <Text style={styles.chartSubtitle}>
-              How your {breakdown.paymentsMade} EMI payments were split
-            </Text>
-            <View style={styles.chartContainer}>
-              <BarChart
-                data={{
-                  labels: ['Principal', 'Interest', 'Total'],
-                  datasets: [{
-                    data: [
-                      breakdown.principalPaid,
-                      breakdown.interestPaid,
-                      breakdown.totalPaid
-                    ],
-                  }],
-                }}
-                width={width - 88}
-                height={220}
-                chartConfig={{
-                  ...chartConfig,
-                  color: (opacity = 1) => `rgba(74, 222, 128, ${opacity})`,
-                }}
-                style={styles.chart}
-                showValuesOnTopOfBars
-                fromZero
-                yAxisLabel="₹"
-                yAxisSuffix=""
-              />
-            </View>
-          </View>
-        </BlurView>
 
         {/* Payment Progress */}
-        <BlurView intensity={20} tint="dark" style={styles.chartCard}>
+        <BlurView intensity={20} tint="light" style={styles.chartCard}>
           <View style={styles.cardContent}>
             <Text style={styles.chartTitle}>Payment Progress</Text>
             <Text style={styles.chartSubtitle}>
@@ -325,12 +279,12 @@ export default function LoanDetail() {
 
             <View style={styles.progressStats}>
               <View style={styles.progressStatItem}>
-                <View style={[styles.statDot, { backgroundColor: '#4ade80' }]} />
+                <View style={[styles.statDot, { backgroundColor: '#10b981' }]} />
                 <Text style={styles.statLabel}>Paid</Text>
                 <Text style={styles.statValue}>{breakdown.paymentsMade} EMIs</Text>
               </View>
               <View style={styles.progressStatItem}>
-                <View style={[styles.statDot, { backgroundColor: '#ef4444' }]} />
+                <View style={[styles.statDot, { backgroundColor: '#e11d48' }]} />
                 <Text style={styles.statLabel}>Remaining</Text>
                 <Text style={styles.statValue}>
                   {loan.tenure - breakdown.paymentsMade} EMIs
@@ -341,7 +295,7 @@ export default function LoanDetail() {
         </BlurView>
 
         {/* EMI Details */}
-        <BlurView intensity={20} tint="dark" style={styles.detailsCard}>
+        <BlurView intensity={20} tint="light" style={styles.detailsCard}>
           <View style={styles.cardContent}>
             <Text style={styles.chartTitle}>EMI Details</Text>
             <View style={styles.detailsGrid}>
@@ -361,13 +315,13 @@ export default function LoanDetail() {
               </View>
               <View style={styles.detailItem}>
                 <Text style={styles.detailLabel}>Total Paid</Text>
-                <Text style={[styles.detailValue, { color: '#4ade80' }]}>
+                <Text style={[styles.detailValue, { color: '#10b981' }]}>
                   {formatCurrency(breakdown.totalPaid)}
                 </Text>
               </View>
               <View style={styles.detailItem}>
                 <Text style={styles.detailLabel}>Remaining Balance</Text>
-                <Text style={[styles.detailValue, { color: '#ef4444' }]}>
+                <Text style={[styles.detailValue, { color: '#e11d48' }]}>
                   {formatCurrency(breakdown.remainingAmount)}
                 </Text>
               </View>
@@ -390,7 +344,7 @@ export default function LoanDetail() {
             },
           })}
         >
-          <BlurView intensity={25} tint="dark" style={styles.scheduleBlur}>
+          <BlurView intensity={25} tint="light" style={styles.scheduleBlur}>
             <Text style={styles.scheduleButtonText}>
               📊 View Payment Schedule
             </Text>
@@ -425,31 +379,31 @@ const styles = StyleSheet.create({
   backButton: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
   },
   editButton: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#4ade80',
+    color: '#10b981',
   },
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   summaryCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   cardContent: {
     padding: 24,
   },
   summaryLabel: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 8,
     textTransform: 'uppercase',
     letterSpacing: 1,
@@ -457,7 +411,7 @@ const styles = StyleSheet.create({
   summaryAmount: {
     fontSize: 42,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 20,
   },
   summaryRow: {
@@ -467,40 +421,40 @@ const styles = StyleSheet.create({
   summaryItem: {
     flex: 1,
     padding: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   summaryItemLabel: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 6,
   },
   summaryItemValue: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
   },
   interestValue: {
-    color: '#fbbf24',
+    color: '#f59e0b',
   },
   chartCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   chartTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
     marginBottom: 4,
   },
   chartSubtitle: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 20,
   },
   chartContainer: {
@@ -515,19 +469,19 @@ const styles = StyleSheet.create({
   },
   progressBar: {
     height: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: '#ffffff',
     borderRadius: 6,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#4ade80',
+    backgroundColor: '#10b981',
     borderRadius: 6,
   },
   progressText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
     textAlign: 'center',
     marginTop: 12,
   },
@@ -539,10 +493,10 @@ const styles = StyleSheet.create({
   progressStatItem: {
     flex: 1,
     padding: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   statDot: {
     width: 8,
@@ -552,20 +506,20 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
     marginBottom: 6,
   },
   statValue: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   detailsCard: {
     borderRadius: 30,
     overflow: 'hidden',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   detailsGrid: {
     gap: 12,
@@ -581,33 +535,33 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
   },
   detailValue: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   scheduleButton: {
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     marginTop: 8,
   },
   scheduleBlur: {
     padding: 20,
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 222, 128, 0.05)',
+    backgroundColor: 'rgba(16, 185, 129, 0.05)',
   },
   scheduleButtonText: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#4ade80',
+    color: '#10b981',
     marginBottom: 4,
   },
   scheduleButtonSubtext: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(15, 23, 42, 0.6)',
   },
 });
