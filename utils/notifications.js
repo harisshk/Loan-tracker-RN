@@ -63,6 +63,7 @@ export async function scheduleEMIReminder(loan) {
   }
 
   const trigger = {
+    type: 'calendar',
     day: targetDay,
     hour: 15,
     minute: 0,
@@ -124,7 +125,7 @@ export async function scheduleInsuranceReminder(insurance) {
   if (targetDay <= 0) targetDay = 28;
 
   if (insurance.frequency === 'monthly') {
-    const trigger = { day: targetDay, hour: 10, minute: 0, repeats: true };
+    const trigger = { type: 'calendar', day: targetDay, hour: 10, minute: 0, repeats: true };
     await Notifications.scheduleNotificationAsync({
       content: {
         title: "🛡️ Insurance Premium Due!",
@@ -135,7 +136,7 @@ export async function scheduleInsuranceReminder(insurance) {
   } else {
     // Schedule multiple yearly notifications
     for (const month of targetMonths) {
-      const trigger = { month: month, day: targetDay, hour: 10, minute: 0, repeats: true };
+      const trigger = { type: 'calendar', month: month, day: targetDay, hour: 10, minute: 0, repeats: true };
       
       await Notifications.scheduleNotificationAsync({
         content: {

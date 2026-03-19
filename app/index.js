@@ -10,13 +10,14 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { getLoans, calculateLoanStats, getPayments } from '../utils/storage';
+import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../utils/storage';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
 
 export default function Dashboard() {
   const router = useRouter();
   const [loans, setLoans] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [insurances, setInsurances] = useState([]);
   const [stats, setStats] = useState({
     totalOutstanding: 0,
     totalOutstandingPr: 0,
@@ -36,9 +37,11 @@ export default function Dashboard() {
   const loadData = async () => {
     const loansData = await getLoans();
     const paymentsData = await getPayments();
+    const insurancesData = await getInsurances();
     setLoans(loansData);
     setPayments(paymentsData);
-    const calculatedStats = calculateLoanStats(loansData, paymentsData);
+    setInsurances(insurancesData);
+    const calculatedStats = calculateLoanStats(loansData, paymentsData, insurancesData);
     setStats(calculatedStats);
   };
 
@@ -109,6 +112,24 @@ export default function Dashboard() {
       totalPaid: breakdown.totalPaid,
       remaining: breakdown.remainingAmount,
     };
+  };
+
+  const calculateInsuranceNextDueDate = (startDate, frequency) => {
+    if (!startDate) return null;
+    const start = new Date(startDate);
+    const today = new Date();
+    
+    let stepMonths = 12;
+    if (frequency === 'yearly') stepMonths = 12;
+    else if (frequency === 'half-yearly') stepMonths = 6;
+    else if (frequency === 'quarterly') stepMonths = 3;
+    else if (frequency === 'monthly') stepMonths = 1;
+    
+    let nextDue = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    while (nextDue < today) {
+      nextDue.setMonth(nextDue.getMonth() + stepMonths);
+    }
+    return nextDue;
   };
 
   return (
@@ -200,6 +221,47 @@ export default function Dashboard() {
           </View>
         )}
 
+        {/* Insurances Cards Carousel */}
+        {insurances.length > 0 && (
+          <View style={styles.carouselContainer}>
+            <Text style={styles.carouselTitle}>Your Insurances</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.carouselContent}
+            >
+              {insurances.map((ins) => {
+                const nextDue = calculateInsuranceNextDueDate(ins.startDate, ins.frequency);
+                
+                return (
+                  <TouchableOpacity
+                    key={ins.id}
+                    onPress={() => router.push('/insurances')}
+                  >
+                    <BlurView intensity={20} tint="light" style={styles.loanCarouselCard}>
+                      <View style={styles.loanCardContent}>
+                        <Text style={styles.loanCardName}>{ins.name}</Text>
+                        <Text style={styles.loanCardAmount}>
+                          {formatCurrency(ins.premiumAmount)}
+                        </Text>
+                        <Text style={styles.loanCardLabel}>
+                          {ins.frequency.charAt(0).toUpperCase() + ins.frequency.slice(1)} Premium
+                        </Text>
+                        
+                        <View style={[styles.dividerSmall, {backgroundColor: 'rgba(0,0,0,0.1)'}]} />
+                        
+                        <Text style={styles.loanCardProgress}>
+                          Next Due: {nextDue ? formatDate(nextDue) : 'N/A'}
+                        </Text>
+                      </View>
+                    </BlurView>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Total Outstanding Card */}
         <BlurView intensity={20} tint="light" style={styles.mainCard}>
           <View style={styles.cardContent}>
@@ -219,9 +281,21 @@ export default function Dashboard() {
               </View>
             </View>
             <View style={styles.emiRow}>
-              <Text style={styles.emiLabel}>Upcoming EMI</Text>
+              <View>
+                <Text style={styles.emiLabel}>This Month EMI Total</Text>
+                <Text style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.4)' }}>Loan payments only</Text>
+              </View>
+              <Text style={[styles.emiAmount, { color: '#f59e0b' }]}>
+                {formatCurrency(stats.thisMonthEMIAmount || 0)}
+              </Text>
+            </View>
+            <View style={styles.emiRow}>
+              <View>
+                <Text style={styles.emiLabel}>Total Due This Month</Text>
+                <Text style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.4)' }}>{stats.thisMonthDueCount || 0} Payments (inc. Insurances)</Text>
+              </View>
               <Text style={styles.emiAmount}>
-                {formatCurrency(stats.upcomingEMI)}
+                {formatCurrency(stats.thisMonthDueAmount || 0)}
               </Text>
             </View>
           </View>
@@ -249,7 +323,6 @@ export default function Dashboard() {
 
         {/* Quick Actions */}
         <View style={styles.actionsContainer}>
-
           <TouchableOpacity
             style={styles.actionButton}
             onPress={() => router.push('/add-insurance')}
@@ -267,6 +340,15 @@ export default function Dashboard() {
               <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>📖 Extra Payments Log</Text>
             </BlurView>
           </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push('/insurances')}
+          >
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>🛡️ View Insurances</Text>
+            </BlurView>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.actionButton}
@@ -282,7 +364,7 @@ export default function Dashboard() {
             onPress={() => router.push('/loans')}
           >
             <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={styles.actionButtonText}>View All Loans</Text>
+              <Text style={styles.actionButtonText}>💰 View All Loans</Text>
             </BlurView>
           </TouchableOpacity>
 
@@ -445,22 +527,28 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   actionsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
   actionButton: {
-    borderRadius: 30,
+    width: '48%',
+    borderRadius: 20,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   actionBlur: {
-    padding: 18,
+    padding: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    height: 80,
   },
   actionButtonText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#0f172a',
+    textAlign: 'center',
   },
   carouselContainer: {
     marginBottom: 24,

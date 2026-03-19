@@ -1,18 +1,29 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { calculateEMIBreakdown } from './emiCalculator';
-import { scheduleEMIReminder, cancelAllLoanNotifications } from './notifications';
+import { scheduleEMIReminder, cancelAllLoanNotifications, scheduleInsuranceReminder } from './notifications';
 
 const LOANS_KEY = '@loans';
 const PAYMENTS_KEY = '@payments';
 const INSURANCES_KEY = '@insurances';
 
 // Helper to refresh all notifications
-const refreshAllNotifications = async (loans) => {
+const refreshAllNotifications = async (loans, insurances = []) => {
   try {
     await cancelAllLoanNotifications();
-    for (const loan of loans) {
-      if (loan.startDate && loan.emiAmount) {
-        await scheduleEMIReminder(loan);
+    
+    if (loans) {
+      for (const loan of loans) {
+        if (loan.startDate && loan.emiAmount) {
+          await scheduleEMIReminder(loan);
+        }
+      }
+    }
+    
+    if (insurances) {
+      for (const ins of insurances) {
+        if (ins.startDate && ins.premiumAmount) {
+          await scheduleInsuranceReminder(ins);
+        }
       }
     }
   } catch (e) {
@@ -41,6 +52,11 @@ export const saveInsurance = async (insurance) => {
     };
     insurances.push(newIns);
     await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(insurances));
+    
+    // Refresh notifications
+    const loans = await getLoans();
+    await refreshAllNotifications(loans, insurances);
+    
     return newIns;
   } catch (e) {
     console.error('Error saving insurance:', e);
@@ -53,6 +69,10 @@ export const deleteInsurance = async (id) => {
     const insurances = await getInsurances();
     const filtered = insurances.filter(i => i.id !== id);
     await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(filtered));
+    
+    // Refresh notifications
+    const loans = await getLoans();
+    await refreshAllNotifications(loans, filtered);
   } catch (e) {
     console.error('Error deleting insurance:', e);
     throw e;
@@ -81,8 +101,8 @@ export const saveLoan = async (loan) => {
     loans.push(newLoan);
     await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(loans));
     
-    // Refresh notifications
-    await refreshAllNotifications(loans);
+    const insurances = await getInsurances();
+    await refreshAllNotifications(loans, insurances);
     
     return newLoan;
   } catch (e) {
@@ -108,8 +128,8 @@ export const updateLoan = async (loanId, updatedData) => {
     
     await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(loans));
     
-    // Refresh notifications
-    await refreshAllNotifications(loans);
+    const insurances = await getInsurances();
+    await refreshAllNotifications(loans, insurances);
     
     return loans[loanIndex];
   } catch (e) {
@@ -124,8 +144,8 @@ export const deleteLoan = async (loanId) => {
     const filteredLoans = loans.filter(loan => loan.id !== loanId);
     await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(filteredLoans));
     
-    // Refresh notifications
-    await refreshAllNotifications(filteredLoans);
+    const insurances = await getInsurances();
+    await refreshAllNotifications(filteredLoans, insurances);
   } catch (e) {
     console.error('Error deleting loan:', e);
     throw e;
@@ -161,7 +181,7 @@ export const addPayment = async (payment) => {
 };
 
 // Calculate loan statistics
-export const calculateLoanStats = (loans, payments = []) => {
+export const calculateLoanStats = (loans, payments = [], insurances = []) => {
   let totalOutstanding = 0;
   let totalOutstandingPr = 0;
   let totalPaid = 0;
@@ -173,9 +193,15 @@ export const calculateLoanStats = (loans, payments = []) => {
   let nextDueDate = null;
   let nextPaymentAmount = 0;
   let nextPaymentLoanName = '';
+  
+  let thisMonthDueAmount = 0;
+  let thisMonthDueCount = 0;
+  let thisMonthEMIAmount = 0;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const currentMonth = today.getMonth();
+  const currentYear = today.getFullYear();
 
   loans.forEach(loan => {
     const principal = parseFloat(loan.principal) || 0;
@@ -230,6 +256,12 @@ export const calculateLoanStats = (loans, payments = []) => {
            nextDue.setMonth(nextDue.getMonth() + 1);
         }
         
+        if (nextDue.getMonth() === currentMonth && nextDue.getFullYear() === currentYear && nextDue >= today) {
+          thisMonthDueAmount += emiAmount;
+          thisMonthDueCount += 1;
+          thisMonthEMIAmount += emiAmount;
+        }
+
         if (!nextDueDate || nextDue < nextDueDate) {
           nextDueDate = nextDue;
           nextPaymentAmount = emiAmount;
@@ -240,7 +272,12 @@ export const calculateLoanStats = (loans, payments = []) => {
       } else if (loanType === 'bullet') {
         const startDate = new Date(loan.startDate);
         const nextDue = new Date(startDate.getFullYear(), startDate.getMonth() + tenure, startDate.getDate());
-        
+        if (nextDue.getMonth() === currentMonth && nextDue.getFullYear() === currentYear && nextDue >= today) {
+          thisMonthDueAmount += breakdown.totalAmount;
+          thisMonthDueCount += 1;
+          thisMonthEMIAmount += breakdown.totalAmount;
+        }
+
         if (!nextDueDate || nextDue < nextDueDate) {
           nextDueDate = nextDue;
           nextPaymentAmount = breakdown.totalAmount;
@@ -248,6 +285,40 @@ export const calculateLoanStats = (loans, payments = []) => {
         }
       }
     }
+  });
+
+  insurances.forEach(ins => {
+    const principal = parseFloat(ins.premiumAmount) || 0;
+    const startDate = new Date(ins.startDate);
+    const freq = ins.frequency; 
+    let stepMonths = 12;
+    if (freq === 'yearly') stepMonths = 12;
+    else if (freq === 'half-yearly') stepMonths = 6;
+    else if (freq === 'quarterly') stepMonths = 3;
+    else if (freq === 'monthly') stepMonths = 1;
+    
+    // Find next premium
+    let nextDue = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    while (nextDue < today) {
+      nextDue.setMonth(nextDue.getMonth() + stepMonths);
+    }
+    
+    // Add to next payment logic
+    if (!nextDueDate || nextDue < nextDueDate) {
+      nextDueDate = nextDue;
+      nextPaymentAmount = principal;
+      nextPaymentLoanName = ins.name;
+    } else if (nextDueDate && nextDue.getTime() === nextDueDate.getTime()) {
+      nextPaymentAmount += principal;
+    }
+    
+    // Add to this month due
+    if (nextDue.getMonth() === currentMonth && nextDue.getFullYear() === currentYear && nextDue >= today) {
+      thisMonthDueAmount += principal;
+      thisMonthDueCount += 1;
+    }
+    
+    // Add to abstract outstanding just for 1 year conceptually? Or we skip adding prep to outstanding.
   });
 
   return {
@@ -263,6 +334,9 @@ export const calculateLoanStats = (loans, payments = []) => {
     nextPaymentAmount,
     nextPaymentLoanName,
     pendingLoans: loans.length,
+    thisMonthDueAmount,
+    thisMonthDueCount,
+    thisMonthEMIAmount,
   };
 };
 
@@ -285,8 +359,6 @@ export const importAllData = async (jsonString) => {
     const data = JSON.parse(jsonString);
     if (data.loans) {
       await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(data.loans));
-      // Refresh notifications for the imported loans
-      await refreshAllNotifications(data.loans);
     }
     if (data.payments) {
       await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(data.payments));
@@ -294,6 +366,12 @@ export const importAllData = async (jsonString) => {
     if (data.insurances) {
       await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(data.insurances));
     }
+    
+    // Refresh notifications for all imported data
+    const finalLoans = data.loans || [];
+    const finalInsurances = data.insurances || [];
+    await refreshAllNotifications(finalLoans, finalInsurances);
+    
     return true;
   } catch (e) {
     console.error('Error importing data:', e);

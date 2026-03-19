@@ -34,11 +34,11 @@ export default function AddInsurance() {
 
     try {
       const newInsurance = await saveInsurance(formData);
-      await scheduleInsuranceReminder(newInsurance);
       Alert.alert('Success', 'Insurance policy saved successfully', [
         { text: 'OK', onPress: () => router.back() }
       ]);
     } catch (e) {
+      console.error(e);
       Alert.alert('Error', 'Failed to save insurance policy');
     }
   };

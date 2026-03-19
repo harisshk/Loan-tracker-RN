@@ -19,8 +19,15 @@ export default function CalendarScreen() {
   const [payments, setPayments] = useState([]);
   const [insurances, setInsurances] = useState([]);
 
-  // Default to current month
-  const todayDateString = new Date().toISOString().split('T')[0];
+  const toLocalISOString = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  // Default to current month using local timezone
+  const todayDateString = toLocalISOString(new Date());
   const [selectedDate, setSelectedDate] = useState(todayDateString);
   const [currentMonthStr, setCurrentMonthStr] = useState(todayDateString.slice(0, 7)); // e.g. "2023-01"
   
@@ -61,7 +68,7 @@ export default function CalendarScreen() {
       if (loanType === 'emi') {
         for (let m = 0; m < tenure; m++) {
           const due = new Date(startDate.getFullYear(), startDate.getMonth() + m, startDate.getDate());
-          const dateStr = due.toISOString().split('T')[0];
+          const dateStr = toLocalISOString(due);
           
           const isPaid = m < monthsElapsed;
           
@@ -77,7 +84,7 @@ export default function CalendarScreen() {
         }
       } else if (loanType === 'bullet') {
         const maturityDate = new Date(startDate.getFullYear(), startDate.getMonth() + tenure, startDate.getDate());
-        const dateStr = maturityDate.toISOString().split('T')[0];
+        const dateStr = toLocalISOString(maturityDate);
         
         const isPaid = breakdown.paymentsMade > 0 || breakdown.remainingAmount <= 0;
         
@@ -109,7 +116,7 @@ export default function CalendarScreen() {
       
       for (let m = 0; m <= monthsToProject; m += stepMonths) {
         const due = new Date(startDate.getFullYear(), startDate.getMonth() + m, startDate.getDate());
-        const dateStr = due.toISOString().split('T')[0];
+        const dateStr = toLocalISOString(due);
         
         // Very basic "isPaid" logic: if the due date is in the past, assume paid. (User can log actual payments later if built)
         const isPaid = due < today;
@@ -146,14 +153,14 @@ export default function CalendarScreen() {
     const marks = {};
     Object.keys(scheduleMap).forEach((date) => {
       const dayItems = scheduleMap[date];
-      // If there is any item not paid, mark pending (orange), otherwise paid (green)
       const hasPending = dayItems.some(i => !i.isPaid);
-      const dotColor = hasPending ? '#f59e0b' : '#10b981';
       
-      marks[date] = {
-        marked: true,
-        dotColor: dotColor,
-      };
+      if (hasPending) {
+        marks[date] = {
+          marked: true,
+          dotColor: '#f59e0b',
+        };
+      }
     });
     
     // Highlight currently selected date lightly
@@ -230,7 +237,7 @@ export default function CalendarScreen() {
             </BlurView>
           ) : (
             monthItems.map((item, index) => {
-              const isSelectedDay = item.date.toISOString().split('T')[0] === selectedDate;
+              const isSelectedDay = toLocalISOString(item.date) === selectedDate;
               return (
                 <BlurView 
                   key={index} 

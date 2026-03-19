@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { registerForPushNotificationsAsync } from '../utils/notifications';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function RootLayout() {
   useEffect(() => {
@@ -10,7 +11,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }}>
       <Stack
         screenOptions={{
           headerShown: false,
@@ -19,6 +20,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" />
         <Stack.Screen name="loans" />
+        <Stack.Screen name="insurances" />
         <Stack.Screen name="add-loan" />
         <Stack.Screen name="add-insurance" />
         <Stack.Screen name="edit-loan" />
@@ -28,6 +30,6 @@ export default function RootLayout() {
         <Stack.Screen name="sync" />
       </Stack>
       <StatusBar style="dark" />
-    </>
+    </SafeAreaView>
   );
 }
