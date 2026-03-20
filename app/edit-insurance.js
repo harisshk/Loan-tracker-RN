@@ -23,6 +23,7 @@ export default function EditInsurance() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [formData, setFormData] = useState({
     name: params.name || '',
+    insuranceType: params.insuranceType || 'life',
     premiumAmount: params.premiumAmount || '',
     frequency: params.frequency || 'yearly',
     startDate: params.startDate || new Date().toISOString().split('T')[0],
@@ -33,6 +34,14 @@ export default function EditInsurance() {
     { id: 'half-yearly', label: 'Half-Yearly' },
     { id: 'quarterly', label: 'Quarterly' },
     { id: 'monthly', label: 'Monthly' },
+  ];
+
+  const insuranceTypes = [
+    { id: 'life',     label: '❤️ Life' },
+    { id: 'health',   label: '🏥 Health' },
+    { id: 'vehicle',  label: '🚗 Vehicle' },
+    { id: 'property', label: '🏠 Property' },
+    { id: 'other',    label: '📋 Other' },
   ];
 
   const handleSave = async () => {
@@ -76,6 +85,28 @@ export default function EditInsurance() {
                   value={formData.name}
                   onChangeText={(text) => setFormData({ ...formData, name: text })}
                 />
+              </View>
+
+              {/* Insurance Type */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Insurance Type *</Text>
+                <View style={styles.typeSelectorRow}>
+                  {insuranceTypes.map((t) => (
+                    <TouchableOpacity
+                      key={t.id}
+                      style={[
+                        styles.typeButton,
+                        formData.insuranceType === t.id && styles.typeButtonActive,
+                      ]}
+                      onPress={() => setFormData({ ...formData, insuranceType: t.id })}
+                    >
+                      <Text style={[
+                        styles.typeButtonText,
+                        formData.insuranceType === t.id && styles.typeButtonTextActive,
+                      ]}>{t.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
 
               {/* Premium Amount */}

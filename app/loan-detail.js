@@ -35,6 +35,7 @@ export default function LoanDetail() {
   };
 
   // Parse loan data from params
+  const loanType = params.loanType || 'emi';
   const loan = {
     loanName: params.loanName,
     principal: parseFloat(params.principal) || 0,
@@ -42,6 +43,7 @@ export default function LoanDetail() {
     emiAmount: parseFloat(params.emiAmount) || 0,
     tenure: parseInt(params.tenure) || 0,
     startDate: params.startDate,
+    loanType,
   };
 
   const formatCurrency = (amount) => {
@@ -256,103 +258,143 @@ export default function LoanDetail() {
         </BlurView>
 
 
-        {/* Payment Progress */}
-        <BlurView intensity={20} tint="light" style={styles.chartCard}>
-          <View style={styles.cardContent}>
-            <Text style={styles.chartTitle}>Payment Progress</Text>
-            <Text style={styles.chartSubtitle}>
-              {breakdown.paymentsMade} of {loan.tenure} EMIs completed
-            </Text>
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBar}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    { width: `${progress * 100}%` },
-                  ]}
-                />
-              </View>
-              <Text style={styles.progressText}>
-                {Math.round(progress * 100)}% Complete
+        {/* Payment Progress — EMI loans only */}
+        {loanType !== 'bullet' && (
+          <BlurView intensity={20} tint="light" style={styles.chartCard}>
+            <View style={styles.cardContent}>
+              <Text style={styles.chartTitle}>Payment Progress</Text>
+              <Text style={styles.chartSubtitle}>
+                {breakdown.paymentsMade} of {loan.tenure} EMIs completed
               </Text>
-            </View>
-
-            <View style={styles.progressStats}>
-              <View style={styles.progressStatItem}>
-                <View style={[styles.statDot, { backgroundColor: '#10b981' }]} />
-                <Text style={styles.statLabel}>Paid</Text>
-                <Text style={styles.statValue}>{breakdown.paymentsMade} EMIs</Text>
-              </View>
-              <View style={styles.progressStatItem}>
-                <View style={[styles.statDot, { backgroundColor: '#e11d48' }]} />
-                <Text style={styles.statLabel}>Remaining</Text>
-                <Text style={styles.statValue}>
-                  {loan.tenure - breakdown.paymentsMade} EMIs
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${progress * 100}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressText}>
+                  {Math.round(progress * 100)}% Complete
                 </Text>
               </View>
+              <View style={styles.progressStats}>
+                <View style={styles.progressStatItem}>
+                  <View style={[styles.statDot, { backgroundColor: '#10b981' }]} />
+                  <Text style={styles.statLabel}>Paid</Text>
+                  <Text style={styles.statValue}>{breakdown.paymentsMade} EMIs</Text>
+                </View>
+                <View style={styles.progressStatItem}>
+                  <View style={[styles.statDot, { backgroundColor: '#e11d48' }]} />
+                  <Text style={styles.statLabel}>Remaining</Text>
+                  <Text style={styles.statValue}>
+                    {loan.tenure - breakdown.paymentsMade} EMIs
+                  </Text>
+                </View>
+              </View>
             </View>
-          </View>
-        </BlurView>
+          </BlurView>
+        )}
 
-        {/* EMI Details */}
+        {/* Loan Details */}
         <BlurView intensity={20} tint="light" style={styles.detailsCard}>
           <View style={styles.cardContent}>
-            <Text style={styles.chartTitle}>EMI Details</Text>
+            <Text style={styles.chartTitle}>{loanType === 'bullet' ? 'Bullet Loan Details' : 'EMI Details'}</Text>
             <View style={styles.detailsGrid}>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Monthly EMI</Text>
-                <Text style={styles.detailValue}>
-                  {formatCurrency(loan.emiAmount)}
-                </Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Interest Rate</Text>
-                <Text style={styles.detailValue}>{loan.interest}% p.a.</Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Tenure</Text>
-                <Text style={styles.detailValue}>{loan.tenure} months</Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Total Paid</Text>
-                <Text style={[styles.detailValue, { color: '#10b981' }]}>
-                  {formatCurrency(breakdown.totalPaid)}
-                </Text>
-              </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Remaining Balance</Text>
-                <Text style={[styles.detailValue, { color: '#e11d48' }]}>
-                  {formatCurrency(breakdown.remainingAmount)}
-                </Text>
-              </View>
+              {loanType === 'bullet' ? (
+                <>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Loan Type</Text>
+                    <Text style={[styles.detailValue, { color: '#f59e0b' }]}>Bullet / Gold</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Interest Rate</Text>
+                    <Text style={styles.detailValue}>{loan.interest}% p.a.</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Tenure</Text>
+                    <Text style={styles.detailValue}>{loan.tenure} months</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Lump Sum Due at Maturity</Text>
+                    <Text style={[styles.detailValue, { color: '#e11d48' }]}>
+                      {formatCurrency(breakdown.totalAmount)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Extra Payments Made</Text>
+                    <Text style={[styles.detailValue, { color: '#10b981' }]}>
+                      {formatCurrency(breakdown.principalPaid)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Remaining Balance</Text>
+                    <Text style={[styles.detailValue, { color: '#e11d48' }]}>
+                      {formatCurrency(breakdown.remainingAmount)}
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Monthly EMI</Text>
+                    <Text style={styles.detailValue}>
+                      {formatCurrency(loan.emiAmount)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Interest Rate</Text>
+                    <Text style={styles.detailValue}>{loan.interest}% p.a.</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Tenure</Text>
+                    <Text style={styles.detailValue}>{loan.tenure} months</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Total Paid</Text>
+                    <Text style={[styles.detailValue, { color: '#10b981' }]}>
+                      {formatCurrency(breakdown.totalPaid)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Remaining Balance</Text>
+                    <Text style={[styles.detailValue, { color: '#e11d48' }]}>
+                      {formatCurrency(breakdown.remainingAmount)}
+                    </Text>
+                  </View>
+                </>
+              )}
             </View>
           </View>
         </BlurView>
 
-        {/* View Schedule Button */}
-        <TouchableOpacity
-          style={styles.scheduleButton}
-          onPress={() => router.push({
-            pathname: '/amortization',
-            params: {
-              loanName: loan.loanName,
-              principal: loan.principal,
-              interest: loan.interest,
-              emiAmount: loan.emiAmount,
-              tenure: loan.tenure,
-              startDate: loan.startDate,
-            },
-          })}
-        >
-          <BlurView intensity={25} tint="light" style={styles.scheduleBlur}>
-            <Text style={styles.scheduleButtonText}>
-              📊 View Payment Schedule
-            </Text>
-            <Text style={styles.scheduleButtonSubtext}>
-              See month-by-month breakdown
-            </Text>
-          </BlurView>
-        </TouchableOpacity>
+        {/* View Schedule Button — EMI loans only */}
+        {loanType !== 'bullet' && (
+          <TouchableOpacity
+            style={styles.scheduleButton}
+            onPress={() => router.push({
+              pathname: '/amortization',
+              params: {
+                loanName: loan.loanName,
+                principal: loan.principal,
+                interest: loan.interest,
+                emiAmount: loan.emiAmount,
+                tenure: loan.tenure,
+                startDate: loan.startDate,
+              },
+            })}
+          >
+            <BlurView intensity={25} tint="light" style={styles.scheduleBlur}>
+              <Text style={styles.scheduleButtonText}>
+                📊 View Payment Schedule
+              </Text>
+              <Text style={styles.scheduleButtonSubtext}>
+                See month-by-month breakdown
+              </Text>
+            </BlurView>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </LinearGradient>
   );

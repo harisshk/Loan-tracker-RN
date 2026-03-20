@@ -100,8 +100,9 @@ export default function Insurances() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-             <Text style={styles.backButton}>← Back</Text>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButtonWrap}>
+            <Text style={styles.backArrow}>←</Text>
+            <Text style={styles.backLabel}>Back</Text>
           </TouchableOpacity>
           <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
             <Text style={styles.headerTitle}>All Insurances</Text>
@@ -134,6 +135,16 @@ export default function Insurances() {
                 <View style={styles.cardContent}>
                   <View style={styles.cardHeader}>
                     <Text style={styles.name}>{ins.name}</Text>
+                    {ins.insuranceType && (
+                      <View style={styles.typeBadge}>
+                        <Text style={styles.typeBadgeText}>
+                          {ins.insuranceType === 'life' ? '❤️ Life' :
+                           ins.insuranceType === 'health' ? '🏥 Health' :
+                           ins.insuranceType === 'vehicle' ? '🚗 Vehicle' :
+                           ins.insuranceType === 'property' ? '🏠 Property' : '📋 Other'}
+                        </Text>
+                      </View>
+                    )}
                     <Text style={styles.amount}>
                       {formatCurrency(ins.premiumAmount)}
                     </Text>
@@ -170,6 +181,7 @@ export default function Insurances() {
                         params: {
                           id: ins.id,
                           name: ins.name,
+                          insuranceType: ins.insuranceType || 'life',
                           premiumAmount: ins.premiumAmount,
                           frequency: ins.frequency,
                           startDate: ins.startDate,
@@ -200,7 +212,9 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 40 },
   header: { marginBottom: 24 },
-  backButton: { fontSize: 16, fontWeight: '600', color: '#10b981', marginBottom: 12 },
+  backButtonWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 12 },
+  backArrow: { fontSize: 18, fontWeight: '600', color: '#10b981', lineHeight: 22 },
+  backLabel: { fontSize: 16, fontWeight: '600', color: '#10b981', lineHeight: 22 },
   headerTitle: { fontSize: 34, fontWeight: '700', color: '#0f172a' },
   addButton: { fontSize: 18, fontWeight: '600', color: '#10b981' },
   card: { borderRadius: 30, overflow: 'hidden', marginBottom: 16, borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.08)' },
@@ -224,4 +238,6 @@ const styles = StyleSheet.create({
   emptyContent: { padding: 48, alignItems: 'center' },
   emptyText: { fontSize: 20, fontWeight: '600', color: '#0f172a', marginBottom: 8 },
   emptySubtext: { fontSize: 14, color: 'rgba(15, 23, 42, 0.6)', textAlign: 'center' },
+  typeBadge: { backgroundColor: 'rgba(37, 99, 235, 0.1)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  typeBadgeText: { fontSize: 11, fontWeight: '700', color: '#2563eb' },
 });

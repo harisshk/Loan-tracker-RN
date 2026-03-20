@@ -9,34 +9,57 @@ export const calculateEMIBreakdown = (principal, annualInterest, tenure, monthsE
   let totalExtraPaid = sortedPayments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
   
   if (loanType === 'bullet') {
-    // Bullet / Gold loan
-    let totalInterest = principal * (annualInterest / 100) * (tenure / 12);
-    let totalAmount = principal + totalInterest;
-    
-    // For simple bullet loan, we subtract extra payments from principal and recalculate interest if it's simple day-wise, 
-    // but for simplicity let's just deduct it from totalAmount.
-    remainingPrincipal -= totalExtraPaid;
-    if (remainingPrincipal < 0) remainingPrincipal = 0;
-    
-    // Total amount remaining drops by totalExtraPaid
-    const isPaid = monthsElapsed >= tenure;
-    const principalPaid = (isPaid ? remainingPrincipal : 0) + totalExtraPaid;
-    const interestPaid = isPaid ? totalInterest : 0;
+    // Bullet / Gold loan — NO monthly EMI.
+    // Interest accrues on the full principal for the entire tenure.
+    // The entire (principal + interest) is paid in ONE lump sum at maturity.
+    const totalInterest = principal * (annualInterest / 100) * (tenure / 12);
+    const totalAmount = principal + totalInterest;
+
+    // Extra/part payments reduce the outstanding principal (e.g. user pays off some early)
+    const extraPaid = Math.min(totalExtraPaid, principal);
+    remainingPrincipal = Math.max(0, principal - extraPaid);
+
+    // The loan is fully settled only when the term has elapsed (maturity reached)
+    const isMatured = monthsElapsed >= tenure;
+
+    // Recalculate interest on remaining principal if part-paid early (simple)
+    const effectiveTotalInterest = remainingPrincipal * (annualInterest / 100) * (tenure / 12);
+    const effectiveTotalAmount = remainingPrincipal + effectiveTotalInterest;
+
+    let principalPaid, interestPaid;
+    if (isMatured) {
+      // Full settlement at maturity
+      principalPaid = principal; // original principal is cleared
+      interestPaid = effectiveTotalInterest;
+    } else {
+      // Only the extra/part payments count as principal paid during the term
+      principalPaid = extraPaid;
+      interestPaid = 0; // interest is paid all at once at maturity
+    }
+
     const totalPaid = principalPaid + interestPaid;
-    
+    const remainingAmount = isMatured ? 0 : effectiveTotalAmount;
+    const remainingInterestAmount = isMatured ? 0 : effectiveTotalInterest;
+
+    // Progress: time elapsed through loan period (0 to 1)
+    const timeProgress = Math.min(monthsElapsed / tenure, 1);
+
     return {
       emi: 0,
       principalPaid,
       interestPaid,
       totalPaid,
-      remainingAmount: totalAmount - totalPaid,
-      remainingPrincipalAmount: remainingPrincipal,
-      remainingInterestAmount: totalInterest - interestPaid,
-      totalInterest,
-      totalAmount,
-      paymentsMade: isPaid ? 1 : 0,
-      totalPrincipalPaid: isPaid ? [principal] : [0],
-      totalInterestPaid: isPaid ? [totalInterest] : [0],
+      remainingAmount,
+      remainingPrincipalAmount: isMatured ? 0 : remainingPrincipal,
+      remainingInterestAmount,
+      totalInterest: effectiveTotalInterest,
+      totalAmount: effectiveTotalAmount,
+      // paymentsMade for bullet = 0 until matured, then 1
+      paymentsMade: isMatured ? 1 : 0,
+      timeProgress,           // 0.0 – 1.0 how far through the term
+      isMatured,
+      totalPrincipalPaid: isMatured ? [principal] : [0],
+      totalInterestPaid: isMatured ? [effectiveTotalInterest] : [0],
     };
   }
   

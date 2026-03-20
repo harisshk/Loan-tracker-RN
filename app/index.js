@@ -184,6 +184,7 @@ export default function Dashboard() {
                         emiAmount: loan.emiAmount,
                         tenure: loan.tenure,
                         startDate: loan.startDate,
+                        loanType: loan.loanType || 'emi',
                       },
                     })}
                   >
@@ -195,7 +196,9 @@ export default function Dashboard() {
                         <Text style={styles.loanCardAmount}>
                           {formatCurrency(loanProgress.principalPending)}
                         </Text>
-                        <Text style={styles.loanCardLabel}>Remaining</Text>
+                        <Text style={styles.loanCardLabel}>
+                          {loanProgress.loanType === 'bullet' ? 'Lump Sum Remaining' : 'Remaining'}
+                        </Text>
                         
                         {/* Progress Bar */}
                         <View style={styles.loanProgressContainer}>
@@ -209,9 +212,19 @@ export default function Dashboard() {
                           </View>
                         </View>
                         
-                        <Text style={styles.loanCardProgress}>
-                          {Math.round(loanProgress.progress * 100)}% Principal Paid
-                        </Text>
+                        {loanProgress.loanType === 'bullet' ? (
+                          <Text style={[styles.loanCardProgress, {color: '#f59e0b'}]}>
+                            Matures: {(() => {
+                              const m = new Date(loan.startDate);
+                              m.setMonth(m.getMonth() + parseInt(loan.tenure));
+                              return formatDate(m);
+                            })()}
+                          </Text>
+                        ) : (
+                          <Text style={styles.loanCardProgress}>
+                            {Math.round(loanProgress.progress * 100)}% Principal Paid
+                          </Text>
+                        )}
                       </View>
                     </BlurView>
                   </TouchableOpacity>
@@ -333,28 +346,10 @@ export default function Dashboard() {
         <View style={styles.actionsContainer}>
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => router.push('/add-insurance')}
+            onPress={() => router.push('/analytics')}
           >
             <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#10b981' }]}>🛡️ Add Insurance</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/history')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>📖 Extra Payments Log</Text>
-            </BlurView>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/insurances')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>🛡️ View Insurances</Text>
+              <Text style={[styles.actionButtonText, { color: '#a78bfa' }]}>📊 Analytics</Text>
             </BlurView>
           </TouchableOpacity>
 
@@ -373,6 +368,33 @@ export default function Dashboard() {
           >
             <BlurView intensity={20} tint="light" style={styles.actionBlur}>
               <Text style={styles.actionButtonText}>💰 View All Loans</Text>
+            </BlurView>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push('/insurances')}
+          >
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>🛡️ View Insurances</Text>
+            </BlurView>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push('/history')}
+          >
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>📖 Extra Payments Log</Text>
+            </BlurView>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => router.push('/add-insurance')}
+          >
+            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
+              <Text style={[styles.actionButtonText, { color: '#10b981' }]}>🛡️ Add Insurance</Text>
             </BlurView>
           </TouchableOpacity>
 

@@ -185,44 +185,77 @@ export default function Loans() {
                       emiAmount: loan.emiAmount,
                       tenure: loan.tenure,
                       startDate: loan.startDate,
+                      loanType: loan.loanType || 'emi',
                     },
                   })}
                   onLongPress={() => handleDeleteLoan(loan.id, loan.loanName)}
                   activeOpacity={0.7}
                 >
+                  {/* Loan card contents */}
                   <View style={styles.loanHeader}>
-                    <Text style={styles.loanName}>{loan.loanName}</Text>
+                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8}}>
+                      <Text style={styles.loanName}>{loan.loanName}</Text>
+                      {loan.loanType === 'bullet' && (
+                        <View style={{backgroundColor: 'rgba(245, 158, 11, 0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8}}>
+                          <Text style={{fontSize: 10, fontWeight: '700', color: '#f59e0b'}}>BULLET</Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={styles.loanAmount}>
                       {formatCurrency(remaining)}
                     </Text>
                   </View>
 
                   <View style={styles.loanDetails}>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>EMI Amount</Text>
-                      <Text style={styles.detailValue}>
-                        {formatCurrency(loan.emiAmount)}
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Interest Rate</Text>
-                      <Text style={styles.detailValue}>{loan.interest}%</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Progress</Text>
-                      <Text style={styles.detailValue}>
-                        {paymentsMade} / {loan.tenure} EMIs
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Next Due</Text>
-                      <Text style={[styles.detailValue, styles.dueDate]}>
-                        {nextDue ? formatDate(nextDue) : 'Completed'}
-                      </Text>
-                    </View>
+                    {loan.loanType === 'bullet' ? (
+                      <>
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>Lump Sum Due</Text>
+                          <Text style={[styles.detailValue, {color: '#f59e0b'}]}>
+                            {formatCurrency(remaining)}
+                          </Text>
+                        </View>
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>Interest Rate</Text>
+                          <Text style={styles.detailValue}>{loan.interest}%</Text>
+                        </View>
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>Matures On</Text>
+                          <Text style={[styles.detailValue, styles.dueDate]}>
+                            {(() => {
+                              const m = new Date(loan.startDate);
+                              m.setMonth(m.getMonth() + parseInt(loan.tenure));
+                              return formatDate(m);
+                            })()}
+                          </Text>
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>EMI Amount</Text>
+                          <Text style={styles.detailValue}>
+                            {formatCurrency(loan.emiAmount)}
+                          </Text>
+                        </View>
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>Interest Rate</Text>
+                          <Text style={styles.detailValue}>{loan.interest}%</Text>
+                        </View>
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>Progress</Text>
+                          <Text style={styles.detailValue}>
+                            {paymentsMade} / {loan.tenure} EMIs
+                          </Text>
+                        </View>
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>Next Due</Text>
+                          <Text style={[styles.detailValue, styles.dueDate]}>
+                            {nextDue ? formatDate(nextDue) : 'Completed'}
+                          </Text>
+                        </View>
+                      </>
+                    )}
                   </View>
 
                   <View style={styles.startDateContainer}>

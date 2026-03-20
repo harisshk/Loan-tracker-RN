@@ -21,6 +21,7 @@ export default function AddInsurance() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
+    insuranceType: 'life',
     premiumAmount: '',
     frequency: 'yearly',
     startDate: new Date().toISOString().split('T')[0],
@@ -50,6 +51,14 @@ export default function AddInsurance() {
     { id: 'monthly', label: 'Monthly' }
   ];
 
+  const insuranceTypes = [
+    { id: 'life',     label: '❤️ Life' },
+    { id: 'health',   label: '🏥 Health' },
+    { id: 'vehicle',  label: '🚗 Vehicle' },
+    { id: 'property', label: '🏠 Property' },
+    { id: 'other',    label: '📋 Other' },
+  ];
+
   return (
     <LinearGradient
       colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
@@ -76,6 +85,28 @@ export default function AddInsurance() {
                 value={formData.name}
                 onChangeText={(text) => setFormData({ ...formData, name: text })}
               />
+            </View>
+
+            {/* Insurance Type */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Insurance Type *</Text>
+              <View style={styles.typeSelectorRow}>
+                {insuranceTypes.map((t) => (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={[
+                      styles.typeButton,
+                      formData.insuranceType === t.id && styles.typeButtonActive
+                    ]}
+                    onPress={() => setFormData({ ...formData, insuranceType: t.id })}
+                  >
+                    <Text style={[
+                      styles.typeButtonText,
+                      formData.insuranceType === t.id && styles.typeButtonTextActive
+                    ]}>{t.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
 
             {/* Premium Amount */}
