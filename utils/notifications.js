@@ -1,8 +1,7 @@
 import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 
-// Configure notification behavior
+// Configure how notifications appear when the app is in foreground
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -11,140 +10,117 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// Request permissions
+// Request local notification permissions (no remote push token needed)
 export async function registerForPushNotificationsAsync() {
-  let token;
-
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
       name: 'default',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#FF231F7C',
+      lightColor: '#10b981',
     });
   }
 
-  if (Device.isDevice) {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    if (finalStatus !== 'granted') {
-      console.log('Failed to get push token for push notification!');
-      return;
-    }
-    token = (await Notifications.getExpoPushTokenAsync()).data;
-  } else {
-    console.log('Must use physical device for Push Notifications');
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
   }
 
-  return token;
+  if (finalStatus !== 'granted') {
+    console.log('Notification permission not granted.');
+    return null;
+  }
+
+  return 'local-only'; // No remote token needed
 }
 
-// Schedule notification for a loan
+// Schedule a monthly local notification for an EMI loan
 export async function scheduleEMIReminder(loan) {
   if (!loan.startDate || !loan.emiAmount) return;
 
   const startDate = new Date(loan.startDate);
   const dueDay = startDate.getDate();
-  
-  // Notification should be on the previous day
-  // If due day is 1st, previous day is end of previous month. 
-  // However, local notifications based on day of month are easier to logic.
-  // We want to trigger every month on (dueDay - 1) at 15:00 (3 PM)
-  
+
   let targetDay = dueDay - 1;
-  if (targetDay === 0) {
-    // Handling edge case: If EMI is on 1st, notify on 30th/31st is tricky with simple recurring triggers.
-    // For simplicity, we'll use day 30 or 28 etc, but standard local triggers prefer specific day numbers.
-    targetDay = 28; // Safer fallback for simplicity in this version
+  if (targetDay <= 0) targetDay = 28; // Safe fallback for 1st-of-month due dates
+
+  try {
+    const identifier = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '💰 EMI Reminder',
+        body: `Your EMI for ${loan.loanName} of ₹${parseFloat(loan.emiAmount).toLocaleString('en-IN')} is due tomorrow!`,
+        data: { loanId: loan.id },
+      },
+      trigger: {
+        type: 'calendar',
+        day: targetDay,
+        hour: 15,
+        minute: 0,
+        repeats: true,
+      },
+    });
+    return identifier;
+  } catch (e) {
+    console.warn('EMI reminder scheduling failed:', e.message);
   }
-
-  const trigger = {
-    type: 'calendar',
-    day: targetDay,
-    hour: 15,
-    minute: 0,
-    repeats: true,
-  };
-
-  const identifier = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "💰 EMI Reminder",
-      body: `Your EMI for ${loan.loanName} of ₹${parseFloat(loan.emiAmount).toLocaleString('en-IN')} is due tomorrow!`,
-      data: { loanId: loan.id },
-    },
-    trigger,
-  });
-
-  return identifier;
 }
 
-// Cancel all notifications for a specific loan (useful when deleting/updating)
+// Cancel all scheduled notifications (call before rescheduling)
 export async function cancelAllLoanNotifications() {
-  await Notifications.cancelAllScheduledNotificationsAsync();
+  try {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+  } catch (e) {
+    console.warn('Could not cancel notifications:', e.message);
+  }
 }
 
-// Schedule notification for insurance
+// Schedule local notifications for an insurance policy
 export async function scheduleInsuranceReminder(insurance) {
   if (!insurance.startDate || !insurance.premiumAmount) return;
 
   const startDate = new Date(insurance.startDate);
   const dueDay = startDate.getDate();
-  let baseMonth = startDate.getMonth() + 1; // 1-12
-  
-  // Create yearly triggers based on frequency
-  let targetMonths = [];
-  
-  switch (insurance.frequency) {
-    case 'yearly':
-      targetMonths = [baseMonth];
-      break;
-    case 'half-yearly':
-      targetMonths = [baseMonth, (baseMonth + 6 > 12) ? baseMonth - 6 : baseMonth + 6];
-      break;
-    case 'quarterly':
-      targetMonths = [
-        baseMonth,
-        (baseMonth + 3 > 12) ? baseMonth - 9 : baseMonth + 3,
-        (baseMonth + 6 > 12) ? baseMonth - 6 : baseMonth + 6,
-        (baseMonth + 9 > 12) ? baseMonth - 3 : baseMonth + 9,
-      ];
-      break;
-    case 'monthly':
-      // Handled natively by Expo with just "day"
-      break;
-    default:
-      targetMonths = [baseMonth];
-  }
+  const baseMonth = startDate.getMonth() + 1; // 1–12
 
-  // Ensure day is realistic (e.g. 28)
   let targetDay = dueDay - 1;
   if (targetDay <= 0) targetDay = 28;
 
-  if (insurance.frequency === 'monthly') {
-    const trigger = { type: 'calendar', day: targetDay, hour: 10, minute: 0, repeats: true };
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "🛡️ Insurance Premium Due!",
-        body: `Your ${insurance.name} premium of ₹${parseFloat(insurance.premiumAmount).toLocaleString('en-IN')} is due tomorrow!`,
-      },
-      trigger,
-    });
-  } else {
-    // Schedule multiple yearly notifications
-    for (const month of targetMonths) {
-      const trigger = { type: 'calendar', month: month, day: targetDay, hour: 10, minute: 0, repeats: true };
-      
+  const body = `Your ${insurance.frequency} ${insurance.name} premium of ₹${parseFloat(insurance.premiumAmount).toLocaleString('en-IN')} is due tomorrow!`;
+
+  try {
+    if (insurance.frequency === 'monthly') {
       await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "🛡️ Insurance Premium Due!",
-          body: `Your ${insurance.frequency} ${insurance.name} premium of ₹${parseFloat(insurance.premiumAmount).toLocaleString('en-IN')} is due tomorrow!`,
-        },
-        trigger,
+        content: { title: '🛡️ Insurance Premium Due!', body },
+        trigger: { type: 'calendar', day: targetDay, hour: 10, minute: 0, repeats: true },
       });
+    } else {
+      // Build the list of months for this frequency
+      let targetMonths = [];
+      switch (insurance.frequency) {
+        case 'yearly':
+          targetMonths = [baseMonth];
+          break;
+        case 'half-yearly':
+          targetMonths = [baseMonth, ((baseMonth + 5) % 12) + 1];
+          break;
+        case 'quarterly':
+          targetMonths = [0, 3, 6, 9].map(offset => ((baseMonth - 1 + offset) % 12) + 1);
+          break;
+        default:
+          targetMonths = [baseMonth];
+      }
+
+      for (const month of targetMonths) {
+        await Notifications.scheduleNotificationAsync({
+          content: { title: '🛡️ Insurance Premium Due!', body },
+          trigger: { type: 'calendar', month, day: targetDay, hour: 10, minute: 0, repeats: true },
+        });
+      }
     }
+  } catch (e) {
+    console.warn('Insurance reminder scheduling failed:', e.message);
   }
 }

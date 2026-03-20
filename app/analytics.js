@@ -62,7 +62,7 @@ export default function Analytics() {
   today.setHours(0, 0, 0, 0);
 
   // ── Per-loan breakdowns (all loans) ──────────────────────────────────────
-  const allBreakdowns = loans.map(loan => {
+  const allBreakdowns = loans.filter(l => l.status !== 'closed').map(loan => {
     const principal   = parseFloat(loan.principal)  || 0;
     const interest    = parseFloat(loan.interest)   || 0;
     const tenure      = parseInt(loan.tenure)        || 0;
@@ -93,11 +93,11 @@ export default function Analytics() {
   // ── Aggregates (filtered) ─────────────────────────────────────────────────
   const totalPrincipal     = filtered.reduce((s, x) => s + x.principal, 0);
   const totalInterestAll   = filtered.reduce((s, x) => s + x.bd.totalInterest, 0);
-  const totalOutstanding   = filtered.reduce((s, x) => s + x.bd.remainingAmount, 0);
+  const totalOutstanding   = filtered.reduce((s, x) => s + x.bd.remainingPrincipalAmount, 0);
   const totalPaidAll       = filtered.reduce((s, x) => s + x.bd.totalPaid, 0);
   const totalPrincipalPaid = filtered.reduce((s, x) => s + x.bd.principalPaid, 0);
   const totalInterestPaid  = filtered.reduce((s, x) => s + x.bd.interestPaid, 0);
-  const overallProgress    = totalPrincipal > 0 ? totalPrincipalPaid / totalPrincipal : 0;
+  const overallProgress    = totalPrincipal > 0 ? Math.min(1, totalPrincipalPaid / totalPrincipal) : 0;
 
   const weightedRate = totalPrincipal > 0
     ? filtered.reduce((s, x) => s + x.principal * (parseFloat(x.loan.interest) || 0), 0) / totalPrincipal
@@ -150,12 +150,12 @@ export default function Analytics() {
 
   // ── Loan-wise outstanding share ───────────────────────────────────────────
   const loanShares = filtered
-    .filter(x => x.bd.remainingAmount > 0)
+    .filter(x => x.bd.remainingPrincipalAmount > 0)
     .map(x => ({
       name: x.loan.loanName,
-      remaining: x.bd.remainingAmount,
+      remaining: x.bd.remainingPrincipalAmount,
       loanType: x.loanType,
-      share: totalOutstanding > 0 ? x.bd.remainingAmount / totalOutstanding : 0,
+      share: totalOutstanding > 0 ? x.bd.remainingPrincipalAmount / totalOutstanding : 0,
     }))
     .sort((a, b) => b.remaining - a.remaining);
 
@@ -252,28 +252,28 @@ export default function Analytics() {
         <View style={styles.summaryRow}>
           <BlurView intensity={20} tint="light" style={styles.summaryCard}>
             <View style={styles.summaryCardInner}>
-              <Text style={styles.summaryLabel}>Total Borrowed</Text>
-              <Text style={styles.summaryValue}>{fc(totalPrincipal)}</Text>
+              <Text style={styles.summaryLabel}>Outstanding (P)</Text>
+              <Text style={[styles.summaryValue, { color: '#e11d48' }]}>{fc(totalOutstanding)}</Text>
             </View>
           </BlurView>
           <BlurView intensity={20} tint="light" style={styles.summaryCard}>
             <View style={styles.summaryCardInner}>
-              <Text style={styles.summaryLabel}>Outstanding</Text>
-              <Text style={[styles.summaryValue, { color: '#e11d48' }]}>{fc(totalOutstanding)}</Text>
+              <Text style={styles.summaryLabel}>Outstanding (I)</Text>
+              <Text style={[styles.summaryValue, { color: '#f59e0b' }]}>{fc(totalInterestAll - totalInterestPaid)}</Text>
             </View>
           </BlurView>
         </View>
         <View style={styles.summaryRow}>
           <BlurView intensity={20} tint="light" style={styles.summaryCard}>
             <View style={styles.summaryCardInner}>
-              <Text style={styles.summaryLabel}>Total Paid</Text>
-              <Text style={[styles.summaryValue, { color: '#10b981' }]}>{fc(totalPaidAll)}</Text>
+              <Text style={styles.summaryLabel}>Total Borrowed</Text>
+              <Text style={styles.summaryValue}>{fc(totalPrincipal)}</Text>
             </View>
           </BlurView>
           <BlurView intensity={20} tint="light" style={styles.summaryCard}>
             <View style={styles.summaryCardInner}>
-              <Text style={styles.summaryLabel}>Avg. Rate</Text>
-              <Text style={[styles.summaryValue, { color: '#f59e0b' }]}>{weightedRate.toFixed(1)}% p.a.</Text>
+              <Text style={styles.summaryLabel}>Total Paid</Text>
+              <Text style={[styles.summaryValue, { color: '#10b981' }]}>{fc(totalPaidAll)}</Text>
             </View>
           </BlurView>
         </View>

@@ -13,7 +13,7 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BarChart, ProgressChart } from 'react-native-chart-kit';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
-import { getPayments } from '../utils/storage';
+import { getPayments, updateLoan, saveLoan, addPayment } from '../utils/storage';
 
 const { width } = Dimensions.get('window');
 
@@ -123,6 +123,39 @@ export default function LoanDetail() {
       </LinearGradient>
     );
   }
+
+  const handleCloseLoan = () => {
+    // Only pay the remaining balance to completely close the loan
+    router.push({
+      pathname: '/renew-loan',
+      params: {
+        id: params.id,
+        action: 'close',
+        loanName: loan.loanName,
+        remainingAmount: breakdown.remainingAmount, // Full P + I
+      }
+    });
+  };
+
+  const handleRenewLoan = () => {
+    // Pay interest, set new principal, set new interest
+    router.push({
+      pathname: '/renew-loan',
+      params: {
+        id: params.id,
+        action: 'renew',
+        loanName: loan.loanName,
+        remainingInterest: breakdown.remainingInterestAmount,
+        oldPrincipal: loan.principal,
+        oldInterestRate: loan.interest,
+        oldMaturity: (() => {
+          const m = new Date(loan.startDate);
+          m.setMonth(m.getMonth() + parseInt(loan.tenure));
+          return m.toISOString().split('T')[0];
+        })(),
+      }
+    });
+  };
 
 
   // Progress chart data
@@ -369,6 +402,18 @@ export default function LoanDetail() {
           </View>
         </BlurView>
 
+        {/* ── Bullet Loan Action Buttons ── */}
+        {loanType === 'bullet' && params.status !== 'closed' && (
+          <View style={styles.bulletActions}>
+            <TouchableOpacity style={styles.actionBtnRenew} onPress={handleRenewLoan}>
+              <Text style={styles.actionBtnText}>🔄 Renew / Roll Over</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionBtnClose} onPress={handleCloseLoan}>
+              <Text style={styles.actionBtnText}>✅ Close Loan</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* View Schedule Button — EMI loans only */}
         {loanType !== 'bullet' && (
           <TouchableOpacity
@@ -605,5 +650,37 @@ const styles = StyleSheet.create({
   scheduleButtonSubtext: {
     fontSize: 13,
     color: 'rgba(15, 23, 42, 0.6)',
+  },
+  bulletActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  actionBtnRenew: {
+    flex: 1,
+    backgroundColor: '#38bdf8',
+    paddingVertical: 14,
+    borderRadius: 20,
+    alignItems: 'center',
+    shadowColor: '#38bdf8',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  actionBtnClose: {
+    flex: 1,
+    backgroundColor: '#10b981',
+    paddingVertical: 14,
+    borderRadius: 20,
+    alignItems: 'center',
+    shadowColor: '#10b981',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  actionBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

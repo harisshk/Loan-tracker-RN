@@ -15,31 +15,24 @@ export const calculateEMIBreakdown = (principal, annualInterest, tenure, monthsE
     const totalInterest = principal * (annualInterest / 100) * (tenure / 12);
     const totalAmount = principal + totalInterest;
 
-    // Extra/part payments reduce the outstanding principal (e.g. user pays off some early)
-    const extraPaid = Math.min(totalExtraPaid, principal);
-    remainingPrincipal = Math.max(0, principal - extraPaid);
-
-    // The loan is fully settled only when the term has elapsed (maturity reached)
-    const isMatured = monthsElapsed >= tenure;
-
-    // Recalculate interest on remaining principal if part-paid early (simple)
-    const effectiveTotalInterest = remainingPrincipal * (annualInterest / 100) * (tenure / 12);
-    const effectiveTotalAmount = remainingPrincipal + effectiveTotalInterest;
-
-    let principalPaid, interestPaid;
-    if (isMatured) {
-      // Full settlement at maturity
-      principalPaid = principal; // original principal is cleared
-      interestPaid = effectiveTotalInterest;
+    // Actual paid amounts are strictly based on the payments logged
+    const totalPaid = totalExtraPaid;
+    let principalPaid = 0;
+    let interestPaid = 0;
+    
+    // Usually bullet loans pay interest at maturity or during renewal
+    // If they logged payments, allocate them
+    if (totalPaid >= totalInterest) {
+      interestPaid = totalInterest;
+      principalPaid = totalPaid - totalInterest;
     } else {
-      // Only the extra/part payments count as principal paid during the term
-      principalPaid = extraPaid;
-      interestPaid = 0; // interest is paid all at once at maturity
+      interestPaid = totalPaid;
+      principalPaid = 0;
     }
 
-    const totalPaid = principalPaid + interestPaid;
-    const remainingAmount = isMatured ? 0 : effectiveTotalAmount;
-    const remainingInterestAmount = isMatured ? 0 : effectiveTotalInterest;
+    const remainingAmount = totalAmount - totalPaid;
+    const remainingInterestAmount = totalInterest - interestPaid;
+    remainingPrincipal = principal - principalPaid;
 
     // Progress: time elapsed through loan period (0 to 1)
     const timeProgress = Math.min(monthsElapsed / tenure, 1);
@@ -50,16 +43,16 @@ export const calculateEMIBreakdown = (principal, annualInterest, tenure, monthsE
       interestPaid,
       totalPaid,
       remainingAmount,
-      remainingPrincipalAmount: isMatured ? 0 : remainingPrincipal,
+      remainingPrincipalAmount: remainingPrincipal,
       remainingInterestAmount,
-      totalInterest: effectiveTotalInterest,
-      totalAmount: effectiveTotalAmount,
-      // paymentsMade for bullet = 0 until matured, then 1
-      paymentsMade: isMatured ? 1 : 0,
+      totalInterest: totalInterest,
+      totalAmount: totalAmount,
+      // paymentsMade for bullet = 0 until some payment is logged
+      paymentsMade: totalPaid > 0 ? 1 : 0,
       timeProgress,           // 0.0 – 1.0 how far through the term
-      isMatured,
-      totalPrincipalPaid: isMatured ? [principal] : [0],
-      totalInterestPaid: isMatured ? [effectiveTotalInterest] : [0],
+      isMatured: monthsElapsed >= tenure,
+      totalPrincipalPaid: [principalPaid],
+      totalInterestPaid: [interestPaid],
     };
   }
   
@@ -105,20 +98,23 @@ export const calculateEMIBreakdown = (principal, annualInterest, tenure, monthsE
   const regularPrincipalPaid = totalPrincipalPaidList.slice(0, paymentsMade).reduce((sum, val) => sum + val, 0);
   const regularInterestPaid = totalInterestPaidList.slice(0, paymentsMade).reduce((sum, val) => sum + val, 0);
   
-  const totalPrincipalPaid = regularPrincipalPaid + totalExtraPaid;
+  const cappedPrincipalPaid = Math.min(principal, regularPrincipalPaid + totalExtraPaid);
   const interestPaid = regularInterestPaid;
-  const totalPaid = totalPrincipalPaid + interestPaid;
+  const totalPaid = cappedPrincipalPaid + interestPaid;
   
-  remainingPrincipal = principal - totalPrincipalPaid;
-  if (remainingPrincipal < 0) remainingPrincipal = 0;
+  remainingPrincipal = principal - cappedPrincipalPaid;
   
-  const remainingInterestAmount = idealTotalInterest - interestPaid; // Note: Part payments would reduce future interest, but simple approach keeps it flat
+  let remainingInterestAmount = idealTotalInterest - interestPaid;
+  if (remainingPrincipal <= 0) {
+    remainingInterestAmount = 0;
+  }
+  
   const totalAmount = principal + idealTotalInterest;
   const remainingAmount = remainingPrincipal + remainingInterestAmount;
   
   return {
     emi,
-    principalPaid: totalPrincipalPaid,
+    principalPaid: cappedPrincipalPaid,
     interestPaid,
     totalPaid,
     remainingAmount,

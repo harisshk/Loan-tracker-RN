@@ -255,16 +255,18 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     const breakdown = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emiAmount, loanType, extraPayments);
     
     // Accumulate totals
-    totalOutstanding += breakdown.remainingAmount;
-    totalOutstandingPr += breakdown.remainingPrincipalAmount;
+    if (loan.status !== 'closed') {
+      totalOutstanding += breakdown.remainingAmount;
+      totalOutstandingPr += breakdown.remainingPrincipalAmount;
+      totalPrincipalPending += breakdown.remainingPrincipalAmount;
+      totalInterestPending += breakdown.remainingInterestAmount;
+    }
     totalPaid += breakdown.totalPaid;
     totalPrincipalPaid += breakdown.principalPaid;
     totalInterestPaid += breakdown.interestPaid;
-    totalPrincipalPending += breakdown.remainingPrincipalAmount;
-    totalInterestPending += breakdown.remainingInterestAmount;
     
-    // Only add to upcoming EMI if loan is still active
-    if (monthsElapsed < tenure) {
+    // Only add to upcoming EMI if loan is still active and not explicitly closed
+    if (monthsElapsed < tenure && loan.status !== 'closed') {
       if (loanType === 'emi') {
         upcomingEMI += emiAmount;  // Use user's EMI amount
         
@@ -352,7 +354,7 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     nextDueDate,
     nextPaymentAmount,
     nextPaymentLoanName,
-    pendingLoans: loans.length,
+    pendingLoans: loans.filter(l => l.status !== 'closed').length,
     thisMonthDueAmount,
     thisMonthDueCount,
     thisMonthEMIAmount,

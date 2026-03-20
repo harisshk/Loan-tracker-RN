@@ -171,7 +171,7 @@ export default function Loans() {
                 key={loan.id}
                 intensity={20}
                 tint="light"
-                style={styles.loanCard}
+                style={[styles.loanCard, loan.status === 'closed' && { opacity: 0.6 }]}
               >
                 <TouchableOpacity
                   style={styles.cardContent}

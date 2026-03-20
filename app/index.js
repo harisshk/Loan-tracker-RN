@@ -168,7 +168,7 @@ export default function Dashboard() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.carouselContent}
             >
-              {loans.map((loan) => {
+              {loans.filter(l => l.status !== 'closed').map((loan) => {
                 const loanProgress = calculateLoanProgress(loan);
                 
                 return (
@@ -185,6 +185,7 @@ export default function Dashboard() {
                         tenure: loan.tenure,
                         startDate: loan.startDate,
                         loanType: loan.loanType || 'emi',
+                        status: loan.status || 'active',
                       },
                     })}
                   >

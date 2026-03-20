@@ -30,7 +30,7 @@ export default function History() {
     const paymentsData = await getPayments();
     const loansData = await getLoans();
     setPayments(paymentsData.sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt)));
-    setLoans(loansData);
+    setLoans(loansData.filter(l => l.status !== 'closed'));
   };
 
   useEffect(() => {
