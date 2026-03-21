@@ -216,6 +216,8 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
   let thisMonthDueAmount = 0;
   let thisMonthDueCount = 0;
   let thisMonthEMIAmount = 0;
+  let thisMonthEMIPaid = 0;   // auto-EMIs whose due date has already passed this month
+  let thisMonthExtraPaid = 0; // extra/manual payments logged this month
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -283,6 +285,20 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
           thisMonthEMIAmount += emiAmount;
         }
 
+        // ── Auto-paid: EMI whose due date has already passed this month ──────
+        const emiDueThisMonth = new Date(currentYear, currentMonth, startDate.getDate());
+        const monthsFromStart =
+          (currentYear - startDate.getFullYear()) * 12 +
+          (currentMonth - startDate.getMonth());
+        if (
+          loan.status !== 'closed' &&
+          emiDueThisMonth <= today &&
+          monthsFromStart >= 1 &&
+          monthsFromStart <= (parseInt(loan.tenure) || 0)
+        ) {
+          thisMonthEMIPaid += emiAmount;
+        }
+
         if (!nextDueDate || nextDue < nextDueDate) {
           nextDueDate = nextDue;
           nextPaymentAmount = emiAmount;
@@ -305,6 +321,18 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
           nextPaymentLoanName = loan.loanName;
         }
       }
+    }
+  });
+
+  // ── Extra payments logged this month ────────────────────────────────────────
+  (payments || []).forEach(p => {
+    const pDate = new Date(p.paidAt || p.date);
+    if (
+      !isNaN(pDate) &&
+      pDate.getMonth() === currentMonth &&
+      pDate.getFullYear() === currentYear
+    ) {
+      thisMonthExtraPaid += parseFloat(p.amount) || 0;
     }
   });
 
@@ -358,6 +386,9 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     thisMonthDueAmount,
     thisMonthDueCount,
     thisMonthEMIAmount,
+    thisMonthEMIPaid,
+    thisMonthExtraPaid,
+    thisMonthTotalPaid: thisMonthEMIPaid + thisMonthExtraPaid,
   };
 };
 

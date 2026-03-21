@@ -29,6 +29,9 @@ export default function RootLayout() {
         <Stack.Screen name="loan-detail" />
         <Stack.Screen name="amortization" />
         <Stack.Screen name="sync" />
+        <Stack.Screen name="financial-plan" />
+        <Stack.Screen name="maturity-alerts" />
+        <Stack.Screen name="debt-free" />
       </Stack>
       <StatusBar style="dark" />
     </SafeAreaView>

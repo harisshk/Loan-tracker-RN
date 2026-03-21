@@ -356,14 +356,14 @@ export default function Analytics() {
                   {loanShares.map((ls, i) => (
                     <View key={i} style={styles.shareRow}>
                       <View style={styles.shareMeta}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <View style={[styles.dot, { backgroundColor: COLORS[i % COLORS.length] }]} />
-                          <Text style={styles.shareName} numberOfLines={1}>{ls.name}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 }}>
+                          <View style={[styles.dot, { backgroundColor: COLORS[i % COLORS.length], flexShrink: 0 }]} />
+                          <Text style={[styles.shareName, { flexShrink: 1 }]} numberOfLines={1}>{ls.name}</Text>
                           {ls.loanType === 'bullet' && (
-                            <View style={styles.bulletBadge}><Text style={styles.bulletBadgeText}>GOLD</Text></View>
+                            <View style={[styles.bulletBadge, { flexShrink: 0 }]}><Text style={styles.bulletBadgeText}>GOLD</Text></View>
                           )}
                         </View>
-                        <Text style={styles.shareAmount}>{fc(ls.remaining)}</Text>
+                        <Text style={[styles.shareAmount, { flexShrink: 0, minWidth: 80, textAlign: 'right' }]}>{fc(ls.remaining)}</Text>
                       </View>
                       <View style={styles.shareBarBg}>
                         <View style={[styles.shareBarFill, { width: `${ls.share * 100}%`, backgroundColor: COLORS[i % COLORS.length] }]} />

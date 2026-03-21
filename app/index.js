@@ -6,12 +6,30 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import SharedGroupPreferences from 'react-native-shared-group-preferences';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../utils/storage';
-import { calculateEMIBreakdown } from '../utils/emiCalculator';
+
+const { width } = Dimensions.get('window');
+
+const fc = (amount) => {
+  return `₹${parseFloat(amount || 0).toLocaleString('en-IN', {
+    maximumFractionDigits: 0,
+  })}`;
+};
+
+const fd = (date) => {
+  if (!date) return 'N/A';
+  return new Date(date).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+  });
+};
 
 export default function Dashboard() {
   const router = useRouter();
@@ -20,19 +38,27 @@ export default function Dashboard() {
   const [insurances, setInsurances] = useState([]);
   const [stats, setStats] = useState({
     totalOutstanding: 0,
-    totalOutstandingPr: 0,
-    upcomingEMI: 0,
-    totalPaid: 0,
-    totalPrincipalPaid: 0,
-    totalInterestPaid: 0,
     totalPrincipalPending: 0,
     totalInterestPending: 0,
-    pendingLoans: 0,
+    thisMonthEMIPaid: 0,
+    thisMonthExtraPaid: 0,
+    thisMonthTotalPaid: 0,
+    thisMonthDueAmount: 0,
+    thisMonthDueCount: 0,
     nextDueDate: null,
     nextPaymentAmount: 0,
     nextPaymentLoanName: '',
   });
   const [refreshing, setRefreshing] = useState(false);
+
+  const bulletUrgentCount = loans.filter(l => {
+    if (l.status === 'closed' || l.loanType !== 'bullet') return false;
+    const start   = new Date(l.startDate);
+    const tenure  = parseInt(l.tenure) || 0;
+    const maturity = new Date(start.getFullYear(), start.getMonth() + tenure, start.getDate());
+    const days = Math.ceil((maturity - new Date()) / 86400000);
+    return days >= 0 && days <= 90;
+  }).length;
 
   const loadData = async () => {
     const loansData = await getLoans();
@@ -41,20 +67,24 @@ export default function Dashboard() {
     setLoans(loansData);
     setPayments(paymentsData);
     setInsurances(insurancesData);
+    
     const calculatedStats = calculateLoanStats(loansData, paymentsData, insurancesData);
     setStats(calculatedStats);
+    
+    try {
+      const APP_GROUP = 'group.com.hkumardev.loanglass';
+      const toLakh = (v) => `₹${(v/100000).toFixed(2)}L`;
+      const toRupee = (v) => `₹${Math.round(v).toLocaleString('en-IN')}`;
+      const toDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', {day:'numeric', month:'short'}) : 'N/A';
+
+      await SharedGroupPreferences.setItem('widgetTotalOutstanding', toLakh(calculatedStats.totalOutstanding), APP_GROUP);
+      await SharedGroupPreferences.setItem('widgetNextDue', toRupee(calculatedStats.nextPaymentAmount), APP_GROUP);
+      await SharedGroupPreferences.setItem('widgetDueDate', toDate(calculatedStats.nextDueDate), APP_GROUP);
+    } catch (e) {}
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  // Reload data when screen comes into focus (after adding/editing loan)
-  useFocusEffect(
-    React.useCallback(() => {
-      loadData();
-    }, [])
-  );
+  useEffect(() => { loadData(); }, []);
+  useFocusEffect(React.useCallback(() => { loadData(); }, []));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -62,604 +92,270 @@ export default function Dashboard() {
     setRefreshing(false);
   };
 
-  const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount || 0).toLocaleString('en-IN', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    })}`;
-  };
+  // Quick Action Array for Grid
+  const QUICK_ACTIONS = [
+    { id: 'plan', title: 'Financial\nPlan', icon: 'trending-up', color: '#10b981', route: '/financial-plan' },
+    { id: 'maturity', title: 'Maturity\nAlerts', icon: 'timer-outline', color: bulletUrgentCount > 0 ? '#e11d48' : '#f59e0b', route: '/maturity-alerts', badge: bulletUrgentCount },
+    { id: 'debtfree', title: 'Debt-Free\nDate', icon: 'flag-outline', color: '#38bdf8', route: '/debt-free' },
+    { id: 'analytics', title: 'Analytics\nHub', icon: 'pie-chart-outline', color: '#a78bfa', route: '/analytics' },
+    { id: 'calendar', title: 'Payment\nCalendar', icon: 'calendar-outline', color: '#fb923c', route: '/calendar' },
+    { id: 'loans', title: 'All\nLoans', icon: 'wallet-outline', color: '#64748b', route: '/loans' },
+  ];
 
-  const formatDate = (date) => {
-    if (!date) return 'N/A';
-    return new Date(date).toLocaleDateString('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
-  };
-
-  const calculateLoanProgress = (loan) => {
-    const principal = parseFloat(loan.principal) || 0;
-    const interest = parseFloat(loan.interest) || 0;
-    const tenure = parseInt(loan.tenure) || 0;
-    const emiAmount = parseFloat(loan.emiAmount) || 0;
-    
-    if (!loan.startDate) return { principalPaid: 0, principalPending: principal, progress: 0 };
-    
-    const startDate = new Date(loan.startDate);
-    const today = new Date();
-    
-    // Calculate base months difference
-    let monthsElapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + 
-                        (today.getMonth() - startDate.getMonth());
-    
-    // If current day >= start day, we've completed this month's payment
-    if (today.getDate() >= startDate.getDate()) {
-      monthsElapsed += 1;
-    }
-    
-    monthsElapsed = Math.max(0, monthsElapsed);
-    
-    const extraPayments = payments.filter(p => p.loanId === loan.id);
-    const breakdown = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emiAmount, loan.loanType || 'emi', extraPayments);
-    const progress = principal > 0 ? breakdown.principalPaid / principal : 0;
-    
-    return {
-      loanType: loan.loanType || 'emi',
-      principalPaid: breakdown.principalPaid,
-      principalPending: breakdown.remainingPrincipalAmount,
-      progress: progress,
-      totalPaid: breakdown.totalPaid,
-      remaining: breakdown.remainingAmount,
-    };
-  };
-
-  const calculateInsuranceNextDueDate = (startDate, frequency) => {
-    if (!startDate) return null;
-    const start = new Date(startDate);
-    const today = new Date();
-    
-    let stepMonths = 12;
-    if (frequency === 'yearly') stepMonths = 12;
-    else if (frequency === 'half-yearly') stepMonths = 6;
-    else if (frequency === 'quarterly') stepMonths = 3;
-    else if (frequency === 'monthly') stepMonths = 1;
-    
-    let nextDue = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-    while (nextDue < today) {
-      nextDue.setMonth(nextDue.getMonth() + stepMonths);
-    }
-    return nextDue;
-  };
+  const SECONDARY_ACTIONS = [
+    { title: 'Add Insurance', icon: 'shield-checkmark', route: '/add-insurance' },
+    { title: 'Extra Payments Log', icon: 'receipt-outline', route: '/history' },
+    { title: 'Cloud Sync / Backup', icon: 'cloud-upload-outline', route: '/sync' },
+  ];
 
   return (
-    <LinearGradient
-      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
-      style={styles.container}
-    >
+    <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#10b981" />}
       >
-        {/* Header */}
-        <View style={styles.header}>
+        {/* Header Section */}
+        <View style={styles.headerRow}>
           <View>
-            <Text style={styles.headerTitle}>Loan Tracker</Text>
-            <Text style={styles.headerSubtitle}>Manage your finances</Text>
+            <Text style={styles.greeting}>Overview</Text>
+            <Text style={styles.dateLabel}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
           </View>
           <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => router.push('/add-loan')}
+            style={styles.addBtnWrap}
+            onPress={() => router.push('/add')}
+            activeOpacity={0.8}
           >
-            <BlurView intensity={30} tint="light" style={styles.addButtonBlur}>
-              <Text style={styles.addButtonText}>+</Text>
-            </BlurView>
+            <LinearGradient colors={['#10b981', '#059669']} style={styles.addBtnInside}>
+              <Ionicons name="add" size={26} color="#fff" />
+            </LinearGradient>
           </TouchableOpacity>
         </View>
 
-        {/* Loan Cards Carousel */}
-        {loans.length > 0 && (
-          <View style={styles.carouselContainer}>
-            <Text style={styles.carouselTitle}>Your Loans</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.carouselContent}
-            >
-              {loans.filter(l => l.status !== 'closed').map((loan) => {
-                const loanProgress = calculateLoanProgress(loan);
-                
-                return (
-                  <TouchableOpacity
-                    key={loan.id}
-                    onPress={() => router.push({
-                      pathname: '/loan-detail',
-                      params: {
-                        id: loan.id,
-                        loanName: loan.loanName,
-                        principal: loan.principal,
-                        interest: loan.interest,
-                        emiAmount: loan.emiAmount,
-                        tenure: loan.tenure,
-                        startDate: loan.startDate,
-                        loanType: loan.loanType || 'emi',
-                        status: loan.status || 'active',
-                      },
-                    })}
-                  >
-                    <BlurView intensity={20} tint="light" style={styles.loanCarouselCard}>
-                      <View style={styles.loanCardContent}>
-                        <Text style={styles.loanCardName}>
-                          {loan.loanName} {loanProgress.loanType === 'bullet' && <Text style={{fontSize: 12, color: '#f59e0b'}}>(Bullet)</Text>}
-                        </Text>
-                        <Text style={styles.loanCardAmount}>
-                          {formatCurrency(loanProgress.principalPending)}
-                        </Text>
-                        <Text style={styles.loanCardLabel}>
-                          {loanProgress.loanType === 'bullet' ? 'Lump Sum Remaining' : 'Remaining'}
-                        </Text>
-                        
-                        {/* Progress Bar */}
-                        <View style={styles.loanProgressContainer}>
-                          <View style={styles.loanProgressBar}>
-                            <View
-                              style={[
-                                styles.loanProgressFill,
-                                { width: `${loanProgress.progress * 100}%` },
-                              ]}
-                            />
-                          </View>
-                        </View>
-                        
-                        {loanProgress.loanType === 'bullet' ? (
-                          <Text style={[styles.loanCardProgress, {color: '#f59e0b'}]}>
-                            Matures: {(() => {
-                              const m = new Date(loan.startDate);
-                              m.setMonth(m.getMonth() + parseInt(loan.tenure));
-                              return formatDate(m);
-                            })()}
-                          </Text>
-                        ) : (
-                          <Text style={styles.loanCardProgress}>
-                            {Math.round(loanProgress.progress * 100)}% Principal Paid
-                          </Text>
-                        )}
-                      </View>
-                    </BlurView>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Insurances Cards Carousel */}
-        {insurances.length > 0 && (
-          <View style={styles.carouselContainer}>
-            <Text style={styles.carouselTitle}>Your Insurances</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.carouselContent}
-            >
-              {insurances
-                .map(ins => ({ ...ins, nextDue: calculateInsuranceNextDueDate(ins.startDate, ins.frequency) }))
-                .sort((a, b) => {
-                  if (!a.nextDue && !b.nextDue) return 0;
-                  if (!a.nextDue) return 1;
-                  if (!b.nextDue) return -1;
-                  return a.nextDue.getTime() - b.nextDue.getTime();
-                })
-                .map((ins) => {
-                const nextDue = ins.nextDue;
-                
-                return (
-                  <TouchableOpacity
-                    key={ins.id}
-                    onPress={() => router.push('/insurances')}
-                  >
-                    <BlurView intensity={20} tint="light" style={styles.loanCarouselCard}>
-                      <View style={styles.loanCardContent}>
-                        <Text style={styles.loanCardName}>{ins.name}</Text>
-                        <Text style={styles.loanCardAmount}>
-                          {formatCurrency(ins.premiumAmount)}
-                        </Text>
-                        <Text style={styles.loanCardLabel}>
-                          {ins.frequency.charAt(0).toUpperCase() + ins.frequency.slice(1)} Premium
-                        </Text>
-                        
-                        <View style={[styles.dividerSmall, {backgroundColor: 'rgba(0,0,0,0.1)'}]} />
-                        
-                        <Text style={styles.loanCardProgress}>
-                          Next Due: {nextDue ? formatDate(nextDue) : 'N/A'}
-                        </Text>
-                      </View>
-                    </BlurView>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Total Outstanding Card */}
-        <BlurView intensity={20} tint="light" style={styles.mainCard}>
-          <View style={styles.cardContent}>
-            <Text style={styles.mainCardLabel}>Total Outstanding Principal</Text>
-            <Text style={styles.mainCardAmount}>
-              {formatCurrency(stats.totalPrincipalPending)}
-            </Text>
-            <View style={styles.dividerSmall} />
-            <View style={styles.statRow}>
-              <View style={styles.statItem}>
-                <Text style={styles.statLabelMini}>Total Int. Pending</Text>
-                <Text style={styles.statValueMini}>{formatCurrency(stats.totalInterestPending)}</Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={styles.statLabelMini}>Total Payable</Text>
-                <Text style={styles.statValueMini}>{formatCurrency(stats.totalOutstanding)}</Text>
-              </View>
+        {/* Hero Card (Outstanding & Next Due) */}
+        <LinearGradient
+          colors={['#0f172a', '#1e293b']}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <View style={styles.heroGlow1} />
+          <View style={styles.heroGlow2} />
+          
+          <View style={styles.heroTopRow}>
+            <View>
+              <Text style={styles.heroSubtitle}>Total Outstanding</Text>
+              <Text style={styles.heroTitle}>{fc(stats.totalPrincipalPending)}</Text>
             </View>
-            <View style={styles.emiRow}>
-              <View>
-                <Text style={styles.emiLabel}>This Month EMI Total</Text>
-                <Text style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.4)' }}>Loan payments only</Text>
+
+            {/* Next Due Floating Box */}
+            {stats.nextDueDate && (
+              <View style={styles.heroNextDueBox}>
+                <Text style={styles.nextDueLabel}>NEXT EMI • {fd(stats.nextDueDate)}</Text>
+                <Text style={styles.nextDueAmount}>{fc(stats.nextPaymentAmount)}</Text>
               </View>
-              <Text style={[styles.emiAmount, { color: '#f59e0b' }]}>
-                {formatCurrency(stats.thisMonthEMIAmount || 0)}
-              </Text>
+            )}
+          </View>
+
+          <View style={styles.heroDivider} />
+
+          <View style={styles.heroBottomRow}>
+            <View style={styles.heroStatCol}>
+              <Text style={styles.heroStatLabel}>Int. Pending</Text>
+              <Text style={styles.heroStatValue}>{fc(stats.totalInterestPending)}</Text>
             </View>
-            <View style={styles.emiRow}>
-              <View>
-                <Text style={styles.emiLabel}>Total Due This Month</Text>
-                <Text style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.4)' }}>{stats.thisMonthDueCount || 0} Payments (inc. Insurances)</Text>
-              </View>
-              <Text style={styles.emiAmount}>
-                {formatCurrency(stats.thisMonthDueAmount || 0)}
-              </Text>
+            <View style={styles.heroStatCol}>
+              <Text style={styles.heroStatLabel}>Total Payable</Text>
+              <Text style={styles.heroStatValue}>{fc(stats.totalOutstanding)}</Text>
             </View>
           </View>
-        </BlurView>
+        </LinearGradient>
 
-        {/* Next Upcoming Payment Card */}
-        {stats.nextDueDate && (
-          <BlurView intensity={20} tint="light" style={[styles.mainCard, { borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
-            <View style={styles.cardContent}>
-              <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
-                <Text style={styles.mainCardLabel}>Next Upcoming Payment</Text>
-                <Text style={[styles.loanCardLabel, {marginBottom: 8, color: '#10b981'}]}>
-                  {formatDate(stats.nextDueDate)}
-                </Text>
+        {/* This Month Spending (Segmented view) */}
+        <View style={styles.monthSection}>
+          <Text style={styles.sectionTitle}>This Month's Activity</Text>
+          <BlurView intensity={30} tint="light" style={styles.monthCard}>
+            
+            {/* Payment Track */}
+            <View style={styles.trackTop}>
+              <View style={styles.trackCol}>
+                <View style={[styles.trackDot, { backgroundColor: '#10b981' }]} />
+                <Text style={styles.trackLabel}>EMI Paid</Text>
+                <Text style={styles.trackValue}>{fc(stats.thisMonthEMIPaid)}</Text>
               </View>
-              <Text style={styles.mainCardAmount}>
-                {formatCurrency(stats.nextPaymentAmount)}
-              </Text>
-              <Text style={styles.statLabelMini}>
-                For: {stats.nextPaymentLoanName}
-              </Text>
+              <View style={styles.trackCol}>
+                <View style={[styles.trackDot, { backgroundColor: '#8b5cf6' }]} />
+                <Text style={styles.trackLabel}>Extra Paid</Text>
+                <Text style={styles.trackValue}>{fc(stats.thisMonthExtraPaid)}</Text>
+              </View>
+              <View style={styles.trackCol}>
+                <View style={[styles.trackDot, { backgroundColor: '#f59e0b' }]} />
+                <Text style={styles.trackLabel}>Pending</Text>
+                <Text style={styles.trackValue}>{fc(Math.max(0, stats.thisMonthDueAmount - stats.thisMonthTotalPaid))}</Text>
+              </View>
+            </View>
+
+            <View style={styles.progressContainer}>
+              <View style={[styles.progressFill, { width: stats.thisMonthDueAmount > 0 ? `${Math.min(100, (stats.thisMonthEMIPaid / stats.thisMonthDueAmount) * 100)}%` : '0%', backgroundColor: '#10b981' }]} />
+              <View style={[styles.progressFill, { width: stats.thisMonthDueAmount > 0 ? `${Math.min(100, (stats.thisMonthExtraPaid / Math.max(1, stats.thisMonthDueAmount)) * 100)}%` : '0%', backgroundColor: '#8b5cf6' }]} />
+            </View>
+
+            <View style={styles.trackFooter}>
+              <Text style={styles.footerLabel}>Total Cleared: <Text style={{ color: '#10b981', fontWeight: 'bold' }}>{fc(stats.thisMonthTotalPaid)}</Text></Text>
+              <Text style={styles.footerLabel}>Target: <Text style={{ color: '#0f172a', fontWeight: 'bold' }}>{fc(stats.thisMonthDueAmount)}</Text></Text>
             </View>
           </BlurView>
+        </View>
+
+        {/* Quick Actions Grid */}
+        <View style={styles.gridSection}>
+          <Text style={styles.sectionTitle}>Quick Access</Text>
+          <View style={styles.gridContainer}>
+            {QUICK_ACTIONS.map((action) => (
+              <TouchableOpacity
+                key={action.id}
+                style={styles.gridBtnWrap}
+                onPress={() => router.push(action.route)}
+                activeOpacity={0.7}
+              >
+                <BlurView intensity={30} tint="light" style={styles.gridBtnFrame}>
+                  <View style={[styles.iconCircle, { backgroundColor: action.color + '18' }]}>
+                    <Ionicons name={action.icon} size={28} color={action.color} />
+                    {action.badge > 0 && (
+                      <View style={styles.badgeWrap}>
+                        <Text style={styles.badgeText}>{action.badge}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.gridBtnText}>{action.title}</Text>
+                </BlurView>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Insurances Carousel */}
+        {insurances.length > 0 && (
+          <View style={styles.insurancesSection}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Active Insurances</Text>
+              <TouchableOpacity onPress={() => router.push('/insurances')}>
+                <Text style={styles.seeAllText}>See All</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.insurancesScroll}>
+              {insurances.map(ins => (
+                <BlurView key={ins.id} intensity={40} tint="light" style={styles.insCard}>
+                  <View style={styles.insIconWrap}>
+                    <Ionicons name="shield-checkmark" size={20} color="#f59e0b" />
+                  </View>
+                  <Text style={styles.insName} numberOfLines={1}>{ins.name}</Text>
+                  <Text style={styles.insAmt}>{fc(ins.premiumAmount)}</Text>
+                  <View style={styles.insDueBox}>
+                    <Text style={styles.insDueLabel}>Due: {ins.nextDue ? fd(ins.nextDue) : 'N/A'}</Text>
+                  </View>
+                </BlurView>
+              ))}
+            </ScrollView>
+          </View>
         )}
 
-        {/* Quick Actions */}
-        <View style={styles.actionsContainer}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/analytics')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#a78bfa' }]}>📊 Analytics</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/calendar')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#38bdf8' }]}>📅 Calendar View</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/loans')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={styles.actionButtonText}>💰 View All Loans</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/insurances')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>🛡️ View Insurances</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/history')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#f59e0b' }]}>📖 Extra Payments Log</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/add-insurance')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#10b981' }]}>🛡️ Add Insurance</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => router.push('/sync')}
-          >
-            <BlurView intensity={20} tint="light" style={styles.actionBlur}>
-              <Text style={[styles.actionButtonText, { color: '#10b981' }]}>💾 Export & Import</Text>
-            </BlurView>
-          </TouchableOpacity>
+        {/* More Options / Secondary Actions */}
+        <View style={styles.secondarySection}>
+          <Text style={styles.sectionTitle}>More Tools</Text>
+          <BlurView intensity={30} tint="light" style={styles.secondaryCard}>
+            {SECONDARY_ACTIONS.map((act, i) => (
+              <TouchableOpacity
+                key={act.title}
+                style={[styles.secRow, i !== SECONDARY_ACTIONS.length - 1 && styles.secRowBorder]}
+                onPress={() => router.push(act.route)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.secIconWrap}>
+                  <Ionicons name={act.icon} size={20} color="#64748b" />
+                </View>
+                <Text style={styles.secTitle}>{act.title}</Text>
+                <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+              </TouchableOpacity>
+            ))}
+          </BlurView>
         </View>
+        
+        <View style={{ height: 40 }} />
       </ScrollView>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingTop: 60,
-  },
-  header: {
-    marginBottom: 30,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  headerTitle: {
-    fontSize: 34,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 16,
-    color: 'rgba(15, 23, 42, 0.6)',
-  },
-  addButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-  },
-  addButtonBlur: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-  },
-  addButtonText: {
-    fontSize: 32,
-    fontWeight: '300',
-    color: '#10b981',
-    lineHeight: 32,
-  },
-  mainCard: {
-    borderRadius: 30,
-    overflow: 'hidden',
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  cardContent: {
-    padding: 24,
-  },
-  mainCardLabel: {
-    fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.6)',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  mainCardAmount: {
-    fontSize: 42,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 20,
-  },
-  emiRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  emiLabel: {
-    fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.6)',
-  },
-  emiAmount: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#10b981',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 30,
-  },
-  summaryCard: {
-    flex: 1,
-    borderRadius: 30,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  summaryLabel: {
-    fontSize: 12,
-    color: 'rgba(15, 23, 42, 0.6)',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  summaryAmount: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  summarySubLabel: {
-    fontSize: 11,
-    color: 'rgba(15, 23, 42, 0.4)',
-    marginTop: 4,
-  },
-  summarySubLabelActive: {
-    fontSize: 11,
-    color: '#10b981',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  dividerSmall: {
-    height: 1,
-    backgroundColor: '#ffffff',
-    marginVertical: 12,
-  },
-  statRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  statItem: {
-    flex: 1,
-  },
-  statLabelMini: {
-    fontSize: 11,
-    color: 'rgba(15, 23, 42, 0.5)',
-    marginBottom: 4,
-    textTransform: 'uppercase',
-  },
-  statValueMini: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  actionButton: {
-    width: '48%',
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  actionBlur: {
-    padding: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 80,
-  },
-  actionButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-    textAlign: 'center',
-  },
-  carouselContainer: {
-    marginBottom: 24,
-  },
-  carouselTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 16,
-  },
-  carouselContent: {
-    gap: 12,
-    paddingRight: 20,
-  },
-  loanCarouselCard: {
-    width: 280,
-    borderRadius: 30,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  loanCardContent: {
-    padding: 20,
-  },
-  loanCardName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 12,
-  },
-  loanCardAmount: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#10b981',
-    marginBottom: 4,
-  },
-  loanCardLabel: {
-    fontSize: 12,
-    color: 'rgba(15, 23, 42, 0.6)',
-    marginBottom: 16,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  loanProgressContainer: {
-    marginBottom: 12,
-  },
-  loanProgressBar: {
-    height: 8,
-    backgroundColor: 'rgba(225, 29, 72, 0.3)',
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 12,
-  },
-  loanProgressFill: {
-    height: '100%',
-    backgroundColor: '#10b981',
-    borderRadius: 4,
-  },
-  loanProgressLabels: {
-    gap: 8,
-  },
-  progressLabelItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  progressDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  progressLabelText: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.7)',
-  },
-  loanCardProgress: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#10b981',
-    textAlign: 'center',
-    marginTop: 8,
-  },
+  container: { flex: 1 },
+  scrollContent: { paddingTop: 60, paddingBottom: 40 },
+  
+  // Header
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 24 },
+  greeting: { fontSize: 32, fontWeight: '800', color: '#0f172a', letterSpacing: -0.5 },
+  dateLabel: { fontSize: 13, color: '#64748b', fontWeight: '500', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.5 },
+  addBtnWrap: { shadowColor: '#10b981', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 10 },
+  addBtnInside: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center' },
+
+  // Hero Card
+  heroCard: { marginHorizontal: 20, borderRadius: 28, padding: 24, overflow: 'hidden', marginBottom: 26, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.2, shadowRadius: 14 },
+  heroGlow1: { position: 'absolute', top: -50, right: -20, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(56,189,248,0.2)', blurRadius: 40 },
+  heroGlow2: { position: 'absolute', bottom: -50, left: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(16,185,129,0.15)', blurRadius: 40 },
+  heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  heroSubtitle: { fontSize: 13, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
+  heroTitle: { fontSize: 38, fontWeight: '800', color: '#fff', letterSpacing: -1 },
+  heroNextDueBox: { backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, alignItems: 'flex-end', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  nextDueLabel: { fontSize: 10, color: 'rgba(255,255,255,0.6)', fontWeight: '700', marginBottom: 2 },
+  nextDueAmount: { fontSize: 18, fontWeight: '700', color: '#10b981' },
+  heroDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 20 },
+  heroBottomRow: { flexDirection: 'row', gap: 24 },
+  heroStatCol: { flex: 1 },
+  heroStatLabel: { fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 4 },
+  heroStatValue: { fontSize: 16, color: '#fff', fontWeight: '600' },
+
+  // Sections
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 14, paddingHorizontal: 20 },
+
+  // Month summary
+  monthSection: { marginBottom: 28 },
+  monthCard: { marginHorizontal: 20, borderRadius: 24, padding: 20, borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)', overflow: 'hidden' },
+  trackTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  trackCol: { alignItems: 'flex-start' },
+  trackDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 6 },
+  trackLabel: { fontSize: 11, color: '#64748b', marginBottom: 2, fontWeight: '500' },
+  trackValue: { fontSize: 16, color: '#0f172a', fontWeight: '700' },
+  progressContainer: { height: 8, backgroundColor: 'rgba(0,0,0,0.04)', borderRadius: 4, flexDirection: 'row', overflow: 'hidden', marginBottom: 14 },
+  progressFill: { height: '100%' },
+  trackFooter: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.04)', paddingTop: 12 },
+  footerLabel: { fontSize: 12, color: '#64748b' },
+
+  // Grid
+  gridSection: { marginBottom: 28 },
+  gridContainer: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 15 },
+  gridBtnWrap: { width: '33.33%', padding: 5 },
+  gridBtnFrame: { paddingVertical: 18, paddingHorizontal: 10, borderRadius: 20, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)', backgroundColor: 'rgba(255,255,255,0.4)', overflow: 'hidden' },
+  iconCircle: { width: 50, height: 50, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  gridBtnText: { fontSize: 12, color: '#334155', fontWeight: '600', textAlign: 'center', lineHeight: 16 },
+  badgeWrap: { position: 'absolute', top: -4, right: -4, backgroundColor: '#e11d48', borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold', paddingHorizontal: 4 },
+
+  // Insurances Carousel
+  insurancesSection: { marginBottom: 28 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 20, marginBottom: 14 },
+  seeAllText: { fontSize: 13, fontWeight: '600', color: '#10b981' },
+  insurancesScroll: { paddingHorizontal: 20, gap: 12 },
+  insCard: { width: 140, padding: 16, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', backgroundColor: 'rgba(255,255,255,0.5)' },
+  insIconWrap: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(245,158,11,0.15)', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+  insName: { fontSize: 14, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  insAmt: { fontSize: 16, fontWeight: '700', color: '#f59e0b', marginBottom: 12 },
+  insDueBox: { backgroundColor: 'rgba(0,0,0,0.04)', paddingVertical: 6, borderRadius: 8, alignItems: 'center' },
+  insDueLabel: { fontSize: 10, fontWeight: '600', color: '#64748b' },
+
+  // Secondary Tools
+  secondarySection: { paddingHorizontal: 20, marginBottom: 20 },
+  secondaryCard: { borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)' },
+  secRow: { flexDirection: 'row', alignItems: 'center', padding: 16 },
+  secRowBorder: { borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.04)' },
+  secIconWrap: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.03)', justifyContent: 'center', alignItems: 'center', marginRight: 14 },
+  secTitle: { flex: 1, fontSize: 15, fontWeight: '600', color: '#334155' },
 });
