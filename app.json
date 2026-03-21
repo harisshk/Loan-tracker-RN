@@ -13,11 +13,6 @@
       "bundleIdentifier": "com.hkumardev.loanglass",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      },
-      "entitlements": {
-        "com.apple.security.application-groups": [
-          "group.com.hkumardev.loanglass"
-        ]
       }
     },
     "android": {
@@ -37,20 +32,6 @@
     },
     "plugins": [
       "expo-router",
-      [
-        "react-native-widget-extension",
-        {
-          "name": "LoanWidget",
-          "bundleIdentifier": "com.hkumardev.loanglass.widget",
-          "src": "./widget",
-          "module": "LoanWidget",
-          "entitlements": {
-            "com.apple.security.application-groups": [
-              "group.com.hkumardev.loanglass"
-            ]
-          }
-        }
-      ],
       [
         "expo-splash-screen",
         {

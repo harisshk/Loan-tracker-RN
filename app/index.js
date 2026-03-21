@@ -12,7 +12,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import SharedGroupPreferences from 'react-native-shared-group-preferences';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../utils/storage';
 
 const { width } = Dimensions.get('window');
@@ -70,17 +69,6 @@ export default function Dashboard() {
     
     const calculatedStats = calculateLoanStats(loansData, paymentsData, insurancesData);
     setStats(calculatedStats);
-    
-    try {
-      const APP_GROUP = 'group.com.hkumardev.loanglass';
-      const toLakh = (v) => `₹${(v/100000).toFixed(2)}L`;
-      const toRupee = (v) => `₹${Math.round(v).toLocaleString('en-IN')}`;
-      const toDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', {day:'numeric', month:'short'}) : 'N/A';
-
-      await SharedGroupPreferences.setItem('widgetTotalOutstanding', toLakh(calculatedStats.totalOutstanding), APP_GROUP);
-      await SharedGroupPreferences.setItem('widgetNextDue', toRupee(calculatedStats.nextPaymentAmount), APP_GROUP);
-      await SharedGroupPreferences.setItem('widgetDueDate', toDate(calculatedStats.nextDueDate), APP_GROUP);
-    } catch (e) {}
   };
 
   useEffect(() => { loadData(); }, []);
