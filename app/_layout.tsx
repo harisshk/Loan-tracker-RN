@@ -3,7 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { registerForPushNotificationsAsync } from '../utils/notifications';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function RootLayout() {
   useEffect(() => {
@@ -11,7 +11,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+    <SafeAreaProvider>
       <Stack
         screenOptions={{
           headerShown: false,
@@ -37,6 +37,6 @@ export default function RootLayout() {
         <Stack.Screen name="compare-loans" />
       </Stack>
       <StatusBar style="dark" />
-    </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
