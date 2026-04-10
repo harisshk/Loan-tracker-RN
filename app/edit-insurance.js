@@ -45,13 +45,15 @@ export default function EditInsurance() {
   ];
 
   const handleSave = async () => {
-    if (!formData.name || !formData.premiumAmount || !formData.startDate || !formData.frequency) {
-      Alert.alert('Error', 'Please fill all required fields');
+    const sanitizedAmount = String(formData.premiumAmount).replace(/,/g, '');
+    if (!formData.name || !sanitizedAmount || parseFloat(sanitizedAmount) <= 0 || !formData.startDate || !formData.frequency) {
+      Alert.alert('Error', 'Please fill all required fields with valid values');
       return;
     }
 
     try {
-      await updateInsurance(params.id, formData);
+      const dataToUpdate = { ...formData, premiumAmount: sanitizedAmount };
+      await updateInsurance(params.id, dataToUpdate);
       Alert.alert('Success', 'Insurance policy updated successfully', [
         { text: 'OK', onPress: () => router.back() },
       ]);
@@ -118,7 +120,7 @@ export default function EditInsurance() {
                   placeholderTextColor="rgba(15, 23, 42, 0.4)"
                   keyboardType="numeric"
                   value={formData.premiumAmount}
-                  onChangeText={(text) => setFormData({ ...formData, premiumAmount: text })}
+                  onChangeText={(text) => setFormData({ ...formData, premiumAmount: text.replace(/,/g, '') })}
                 />
               </View>
 

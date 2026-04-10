@@ -18,38 +18,47 @@ import { updateLoan } from '../utils/storage';
 export default function EditLoan() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  
+
+  const loanType = params.loanType || 'emi';
+  const isBullet = loanType === 'bullet';
+
   const [formData, setFormData] = useState({
     loanName: params.loanName || '',
-    principal: params.principal || '',
-    interest: params.interest || '',
-    emiAmount: params.emiAmount || '',
+    loanType,
+    principal: params.principal ? String(params.principal) : '',
+    interest: params.interest ? String(params.interest) : '',
+    emiAmount: params.emiAmount ? String(params.emiAmount) : '',
     startDate: params.startDate || new Date().toISOString().split('T')[0],
-    tenure: params.tenure || '',
+    tenure: params.tenure ? String(params.tenure) : '',
   });
 
   const handleInputChange = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    let sanitizedValue = value;
+    if (['principal', 'interest', 'emiAmount', 'tenure'].includes(field)) {
+      sanitizedValue = String(value || '').replace(/,/g, '');
+    }
+    setFormData((prev) => ({ ...prev, [field]: sanitizedValue }));
   };
 
   const validateForm = () => {
+    const parseSafe = (val) => parseFloat(String(val || '').replace(/,/g, ''));
     if (!formData.loanName.trim()) {
       Alert.alert('Error', 'Please enter loan name');
       return false;
     }
-    if (!formData.principal || parseFloat(formData.principal) <= 0) {
+    if (!formData.principal || parseSafe(formData.principal) <= 0) {
       Alert.alert('Error', 'Please enter valid principal amount');
       return false;
     }
-    if (!formData.interest || parseFloat(formData.interest) < 0) {
+    if (!formData.interest || parseSafe(formData.interest) < 0) {
       Alert.alert('Error', 'Please enter valid interest rate');
       return false;
     }
-    if (!formData.emiAmount || parseFloat(formData.emiAmount) <= 0) {
+    if (!isBullet && (!formData.emiAmount || parseSafe(formData.emiAmount) <= 0)) {
       Alert.alert('Error', 'Please enter valid EMI amount');
       return false;
     }
-    if (!formData.tenure || parseInt(formData.tenure) <= 0) {
+    if (!formData.tenure || parseInt(String(formData.tenure).replace(/,/g, '')) <= 0) {
       Alert.alert('Error', 'Please enter valid tenure');
       return false;
     }
@@ -60,7 +69,11 @@ export default function EditLoan() {
     if (!validateForm()) return;
 
     try {
-      await updateLoan(params.id, formData);
+      const dataToSave = { ...formData };
+      if (isBullet) {
+        dataToSave.emiAmount = '0';
+      }
+      await updateLoan(params.id, dataToSave);
       Alert.alert('Success', 'Loan updated successfully', [
         { text: 'OK', onPress: () => router.back() },
       ]);
@@ -87,7 +100,14 @@ export default function EditLoan() {
             <TouchableOpacity onPress={() => router.back()}>
               <Text style={styles.backButton}>← Back</Text>
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Edit Loan</Text>
+            <View style={styles.headerRow}>
+              <Text style={styles.headerTitle}>Edit Loan</Text>
+              <View style={[styles.typeBadge, isBullet ? styles.typeBadgeBullet : styles.typeBadgeEmi]}>
+                <Text style={[styles.typeBadgeText, isBullet ? styles.typeBadgeTextBullet : styles.typeBadgeTextEmi]}>
+                  {isBullet ? '🥇 Bullet / Gold' : '📅 Regular EMI'}
+                </Text>
+              </View>
+            </View>
           </View>
 
           {/* Form */}
@@ -131,18 +151,30 @@ export default function EditLoan() {
                 />
               </View>
 
-              {/* EMI Amount */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>EMI Amount (₹)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 15000"
-                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
-                  keyboardType="numeric"
-                  value={formData.emiAmount}
-                  onChangeText={(value) => handleInputChange('emiAmount', value)}
-                />
-              </View>
+              {/* EMI Amount — only for regular EMI loans */}
+              {!isBullet && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>EMI Amount (₹)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g., 15000"
+                    placeholderTextColor="rgba(15, 23, 42, 0.3)"
+                    keyboardType="numeric"
+                    value={formData.emiAmount}
+                    onChangeText={(value) => handleInputChange('emiAmount', value)}
+                  />
+                </View>
+              )}
+
+              {/* Bullet Loan Info Banner */}
+              {isBullet && (
+                <View style={styles.bulletInfoBanner}>
+                  <Text style={styles.bulletInfoIcon}>💡</Text>
+                  <Text style={styles.bulletInfoText}>
+                    Bullet / Gold loans are repaid in a lump sum at maturity — no monthly EMI required.
+                  </Text>
+                </View>
+              )}
 
               {/* Start Date */}
               <View style={styles.inputGroup}>
@@ -204,10 +236,41 @@ const styles = StyleSheet.create({
     color: '#10b981',
     marginBottom: 12,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
   headerTitle: {
     fontSize: 34,
     fontWeight: '700',
     color: '#0f172a',
+  },
+  typeBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  typeBadgeEmi: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderColor: '#10b981',
+  },
+  typeBadgeBullet: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: '#f59e0b',
+  },
+  typeBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  typeBadgeTextEmi: {
+    color: '#10b981',
+  },
+  typeBadgeTextBullet: {
+    color: '#d97706',
   },
   formCard: {
     borderRadius: 30,
@@ -238,6 +301,26 @@ const styles = StyleSheet.create({
     padding: 16,
     fontSize: 16,
     color: '#0f172a',
+  },
+  bulletInfoBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    borderRadius: 16,
+    padding: 16,
+  },
+  bulletInfoIcon: {
+    fontSize: 18,
+  },
+  bulletInfoText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#92400e',
+    lineHeight: 20,
+    fontWeight: '500',
   },
   saveButton: {
     borderRadius: 30,

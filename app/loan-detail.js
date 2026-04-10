@@ -13,7 +13,7 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BarChart, ProgressChart } from 'react-native-chart-kit';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
-import { getPayments, updateLoan, saveLoan, addPayment } from '../utils/storage';
+import { getPayments, updateLoan, saveLoan, addPayment, deletePayment } from '../utils/storage';
 
 const { width } = Dimensions.get('window');
 
@@ -137,6 +137,40 @@ export default function LoanDetail() {
     });
   };
 
+  const handleLogExtraPayment = () => {
+    Alert.prompt(
+      'Log Extra Payment',
+      'Enter the amount you paid towards the principal:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Save', 
+          onPress: async (amount) => {
+            if (!amount || isNaN(amount.replace(/,/g, ''))) {
+              Alert.alert('Error', 'Please enter a valid amount');
+              return;
+            }
+            try {
+              await addPayment({
+                loanId: params.id,
+                amount: amount.replace(/,/g, ''),
+                date: new Date().toISOString().split('T')[0],
+                note: 'Extra Payment'
+              });
+              loadPayments();
+              Alert.alert('Success', 'Payment logged successfully');
+            } catch (err) {
+              Alert.alert('Error', 'Failed to save payment');
+            }
+          }
+        }
+      ],
+      'plain-text',
+      '',
+      'numeric'
+    );
+  };
+
   const handleRenewLoan = () => {
     // Pay interest, set new principal, set new interest
     router.push({
@@ -228,6 +262,7 @@ export default function LoanDetail() {
                 params: {
                   id: params.id,
                   loanName: loan.loanName,
+                  loanType: loan.loanType,
                   principal: loan.principal,
                   interest: loan.interest,
                   emiAmount: loan.emiAmount,
@@ -402,17 +437,24 @@ export default function LoanDetail() {
           </View>
         </BlurView>
 
-        {/* ── Bullet Loan Action Buttons ── */}
-        {loanType === 'bullet' && params.status !== 'closed' && (
-          <View style={styles.bulletActions}>
-            <TouchableOpacity style={styles.actionBtnRenew} onPress={handleRenewLoan}>
-              <Text style={styles.actionBtnText}>🔄 Renew / Roll Over</Text>
+        {/* Action Buttons */}
+        <View style={styles.actionGrid}>
+          {loanType === 'bullet' && params.status !== 'closed' && (
+            <>
+              <TouchableOpacity style={styles.actionBtnRenew} onPress={handleRenewLoan}>
+                <Text style={styles.actionBtnText}>🔄 Renew</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionBtnClose} onPress={handleCloseLoan}>
+                <Text style={styles.actionBtnText}>✅ Close</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {params.status !== 'closed' && (
+            <TouchableOpacity style={styles.actionBtnLog} onPress={handleLogExtraPayment}>
+              <Text style={styles.actionBtnText}>💰 Log Extra Payment</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionBtnClose} onPress={handleCloseLoan}>
-              <Text style={styles.actionBtnText}>✅ Close Loan</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+          )}
+        </View>
 
         {/* View Schedule Button — EMI loans only */}
         {loanType !== 'bullet' && (
@@ -651,13 +693,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: 'rgba(15, 23, 42, 0.6)',
   },
-  bulletActions: {
+  actionGrid: {
     flexDirection: 'row',
     gap: 12,
     marginBottom: 20,
+    flexWrap: 'wrap',
   },
   actionBtnRenew: {
     flex: 1,
+    minWidth: '45%',
     backgroundColor: '#38bdf8',
     paddingVertical: 14,
     borderRadius: 20,
@@ -669,11 +713,23 @@ const styles = StyleSheet.create({
   },
   actionBtnClose: {
     flex: 1,
+    minWidth: '45%',
     backgroundColor: '#10b981',
     paddingVertical: 14,
     borderRadius: 20,
     alignItems: 'center',
     shadowColor: '#10b981',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  actionBtnLog: {
+    width: '100%',
+    backgroundColor: '#8b5cf6',
+    paddingVertical: 14,
+    borderRadius: 20,
+    alignItems: 'center',
+    shadowColor: '#8b5cf6',
     shadowOpacity: 0.3,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,8 +11,10 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
+import Config from '../utils/Config';
 import { Ionicons } from '@expo/vector-icons';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../utils/storage';
+import { useNavigation } from 'expo-router';
 
 const { width } = Dimensions.get('window');
 
@@ -80,10 +82,61 @@ export default function Dashboard() {
     setRefreshing(false);
   };
 
+  // ─── Proactive Insights Logic ─────────────────
+  const insights = useMemo(() => {
+    const list = [];
+    if (!loans.length) return ["✨ Add your first loan to see smart insights!"];
+    
+    // 1. Debt Free Target
+    let maxDate = null;
+    loans.forEach(l => {
+      if (l.status === 'closed') return;
+      const sd = new Date(l.startDate);
+      const ed = new Date(sd.getFullYear(), sd.getMonth() + (parseInt(l.tenure) || 0), sd.getDate());
+      if (!maxDate || ed > maxDate) maxDate = ed;
+    });
+    if (maxDate) {
+      const diff = Math.ceil((maxDate - new Date()) / (1000 * 60 * 60 * 24 * 30.44));
+      list.push(`🏁 Target: You will be debt-free in approx. ${diff} months!`);
+    }
+
+    // 2. Resilience Runway
+    const burn = stats.thisMonthDueAmount + (stats.totalOutstanding / 120); // Rough burn estimate
+    if (burn > 0) {
+      // Simplified runway logic for dashboard
+      const rw = (stats.totalPaidAll * 0.1) / burn; // Mock runway if no actual fund tracked yet
+      if (rw > 0) list.push(`🛡️ Resilience: Your current runway is ${rw.toFixed(1)} months.`);
+    }
+
+    // 3. Saving Tip
+    const highInt = [...loans].sort((a,b) => parseFloat(b.interest) - parseFloat(a.interest))[0];
+    if (highInt && highInt.status !== 'closed') {
+      list.push(`💡 Tip: Prepaying ₹5,000 extra on "${highInt.loanName}" saves high interest!`);
+    }
+
+    // 4. Encouragement
+    if (stats.thisMonthTotalPaid > 0) {
+      list.push(`🔥 Great job! You've cleared ${fc(stats.thisMonthTotalPaid)} this month.`);
+    }
+
+    return list.length > 0 ? list : ["📊 Keep tracking to see personalized AI insights!"];
+  }, [loans, stats]);
+
+  const [activeInsight, setActiveInsight] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setActiveInsight((prev) => (prev + 1) % insights.length);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [insights]);
+
   // Quick Action Array for Grid
   const QUICK_ACTIONS = [
+    { id: 'ai', title: 'AI\nAdvisor', icon: 'sparkles-outline', color: '#7c3aed', route: '/ai-advisor' },
     { id: 'plan', title: 'Financial\nPlan', icon: 'trending-up', color: '#10b981', route: '/financial-plan' },
     { id: 'maturity', title: 'Maturity\nAlerts', icon: 'timer-outline', color: bulletUrgentCount > 0 ? '#e11d48' : '#f59e0b', route: '/maturity-alerts', badge: bulletUrgentCount },
+    { id: 'compare', title: 'Loan\nLab', icon: 'git-compare-outline', color: '#10b981', route: '/compare-loans' },
+    { id: 'settings', title: 'App\nSettings', icon: 'settings-outline', color: '#64748b', route: '/settings' },
     { id: 'debtfree', title: 'Debt-Free\nDate', icon: 'flag-outline', color: '#38bdf8', route: '/debt-free' },
     { id: 'analytics', title: 'Analytics\nHub', icon: 'pie-chart-outline', color: '#a78bfa', route: '/analytics' },
     { id: 'calendar', title: 'Payment\nCalendar', icon: 'calendar-outline', color: '#fb923c', route: '/calendar' },
@@ -93,8 +146,9 @@ export default function Dashboard() {
   const SECONDARY_ACTIONS = [
     { title: 'Add Insurance', icon: 'shield-checkmark', route: '/add-insurance' },
     { title: 'Extra Payments Log', icon: 'receipt-outline', route: '/history' },
-    { title: 'Cloud Sync / Backup', icon: 'cloud-upload-outline', route: '/sync' },
+    { title: 'Governance & Settings', icon: 'options-outline', route: '/settings' },
   ];
+  // ──────────────────────────────────────────────
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
@@ -105,13 +159,16 @@ export default function Dashboard() {
       >
         {/* Header Section */}
         <View style={styles.headerRow}>
-          <View>
+          <TouchableOpacity onPress={() => router.push('/settings')}>
+            <Ionicons name="settings-outline" size={24} color="#64748b" />
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={styles.greeting}>Overview</Text>
             <Text style={styles.dateLabel}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
           </View>
           <TouchableOpacity
             style={styles.addBtnWrap}
-            onPress={() => router.push('/add')}
+            onPress={() => router.push('/add-loan')}
             activeOpacity={0.8}
           >
             <LinearGradient colors={['#10b981', '#059669']} style={styles.addBtnInside}>
@@ -119,6 +176,17 @@ export default function Dashboard() {
             </LinearGradient>
           </TouchableOpacity>
         </View>
+
+        {/* Intelligence Banner */}
+        <TouchableOpacity style={styles.insightBanner} onPress={() => router.push('/ai-advisor')}>
+          <BlurView intensity={25} tint="light" style={styles.insightBlur}>
+            <View style={styles.insightIconWrap}>
+              <Ionicons name="sparkles" size={14} color="#7c3aed" />
+            </View>
+            <Text style={styles.insightText} numberOfLines={1}>{insights[activeInsight]}</Text>
+            <Ionicons name="chevron-forward" size={12} color="rgba(15,23,42,0.3)" />
+          </BlurView>
+        </TouchableOpacity>
 
         {/* Hero Card (Outstanding & Next Due) */}
         <LinearGradient
@@ -346,4 +414,10 @@ const styles = StyleSheet.create({
   secRowBorder: { borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.04)' },
   secIconWrap: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.03)', justifyContent: 'center', alignItems: 'center', marginRight: 14 },
   secTitle: { flex: 1, fontSize: 15, fontWeight: '600', color: '#334155' },
+  
+  // Intelligence Banner
+  insightBanner: { marginHorizontal: 20, marginBottom: 20, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(124,58,237,0.15)' },
+  insightBlur: { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: 'rgba(124,58,237,0.05)' },
+  insightIconWrap: { width: 28, height: 28, borderRadius: 10, backgroundColor: 'rgba(124,58,237,0.12)', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  insightText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#334155' },
 });

@@ -113,7 +113,7 @@ export const saveLoan = async (loan) => {
   try {
     const loans = await getLoans();
     const newLoan = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       ...loan,
       createdAt: new Date().toISOString(),
     };
@@ -163,6 +163,11 @@ export const deleteLoan = async (loanId) => {
     const filteredLoans = loans.filter(loan => loan.id !== loanId);
     await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(filteredLoans));
     
+    // Clean up associated payments to prevent orphan data
+    const payments = await getPayments();
+    const filteredPayments = payments.filter(p => p.loanId !== loanId);
+    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(filteredPayments));
+    
     const insurances = await getInsurances();
     await refreshAllNotifications(filteredLoans, insurances);
   } catch (e) {
@@ -203,6 +208,7 @@ export const addPayment = async (payment) => {
 export const calculateLoanStats = (loans, payments = [], insurances = []) => {
   let totalOutstanding = 0;
   let totalOutstandingPr = 0;
+  let totalPrincipalBorrowed = 0;
   let totalPaid = 0;
   let totalPrincipalPaid = 0;
   let totalInterestPaid = 0;
@@ -224,11 +230,14 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
   const currentMonth = today.getMonth();
   const currentYear = today.getFullYear();
 
+  const parseSafe = (val) => parseFloat(String(val || '0').replace(/,/g, ''));
+
   loans.forEach(loan => {
-    const principal = parseFloat(loan.principal) || 0;
+    const principal = parseSafe(loan.principal);
     const interest = parseFloat(loan.interest) || 0;
-    const tenure = parseInt(loan.tenure) || 0;
+    const tenure = parseInt(String(loan.tenure).replace(/,/g, '')) || 0;
     const loanType = loan.loanType || 'emi';
+    const emiAmount = parseSafe(loan.emiAmount);
     
     // Filter payments for this specific loan
     const extraPayments = payments.filter(p => p.loanId === loan.id);
@@ -252,8 +261,8 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
       monthsElapsed = Math.max(0, monthsElapsed);
     }
     
-    // Use proper EMI breakdown calculation with user's EMI amount and extra payments
-    const emiAmount = parseFloat(loan.emiAmount) || 0;
+    totalPrincipalBorrowed += principal;
+
     const breakdown = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emiAmount, loanType, extraPayments);
     
     // Accumulate totals
@@ -378,6 +387,7 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     totalInterestPaid,
     totalPrincipalPending,
     totalInterestPending,
+    totalPrincipalBorrowed,
     upcomingEMI,
     nextDueDate,
     nextPaymentAmount,
@@ -409,15 +419,11 @@ export const exportAllData = async () => {
 export const importAllData = async (jsonString) => {
   try {
     const data = JSON.parse(jsonString);
-    if (data.loans) {
-      await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(data.loans));
-    }
-    if (data.payments) {
-      await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(data.payments));
-    }
-    if (data.insurances) {
-      await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(data.insurances));
-    }
+    // Overwrite all keys with new data (or empty array if missing in backup)
+    // This ensures a complete reset to the backup state
+    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(data.loans || []));
+    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(data.payments || []));
+    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(data.insurances || []));
     
     // Refresh notifications for all imported data
     const finalLoans = data.loans || [];

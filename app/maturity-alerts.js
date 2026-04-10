@@ -82,10 +82,11 @@ export default function MaturityAlerts() {
     const nearEMI = [];
 
     loans.filter(l => l.status !== 'closed').forEach(loan => {
-      const principal  = parseFloat(loan.principal)  || 0;
+      const parseSafe = (val) => parseFloat(String(val || '0').replace(/,/g, ''));
+      const principal  = parseSafe(loan.principal);
       const interest   = parseFloat(loan.interest)   || 0;
-      const tenure     = parseInt(loan.tenure)        || 0;
-      const emiAmount  = parseFloat(loan.emiAmount)   || 0;
+      const tenure     = parseInt(String(loan.tenure).replace(/,/g, '')) || 0;
+      const emiAmount  = parseSafe(loan.emiAmount);
       const loanType   = loan.loanType || 'emi';
       const start      = new Date(loan.startDate);
 

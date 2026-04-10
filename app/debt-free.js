@@ -20,7 +20,8 @@ const fc  = (v) => `₹${parseFloat(v||0).toLocaleString('en-IN',{maximumFractio
 const fd  = (d) => new Date(d).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
 const fmo = (d) => new Date(d).toLocaleDateString('en-IN',{month:'long',year:'numeric'});
 
-const TODAY = new Date(2026, 2, 21); // March 21 2026
+const TODAY = new Date();
+TODAY.setHours(0, 0, 0, 0);
 
 // ── Core simulation engine ───────────────────────────────────────────────────
 function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
@@ -34,18 +35,30 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
     month++;
     const date = new Date(TODAY.getFullYear(), TODAY.getMonth() + month - 1, 1);
 
-    // Step 1: Reduce each EMI loan's principal by its principal-portion this month
+    // Step 1: Aging Logic
     states.forEach(l => {
-      if (l.closed || l.loanType !== 'emi') return;
-      const r = l.interest / 12 / 100;
-      const interestPortion = l.remainingPrincipal * r;
-      const principalPortion = Math.max(0, l.emiAmount - interestPortion);
-      l.remainingPrincipal = Math.max(0, l.remainingPrincipal - principalPortion);
-      l.interestPaid = (l.interestPaid || 0) + interestPortion;
-      if (l.remainingPrincipal < 1) {
-        l.remainingPrincipal = 0;
-        l.closed = true;
-        closures.push({ id: l.id, name: l.name, loanType: l.loanType, month, date: new Date(date) });
+      if (l.closed) return;
+      
+      if (l.loanType === 'emi') {
+        const r = l.interest / 12 / 100;
+        const interestPortion = l.remainingPrincipal * r;
+        const principalPortion = Math.max(0, l.emiAmount - interestPortion);
+        l.remainingPrincipal = Math.max(0, l.remainingPrincipal - principalPortion);
+        l.interestPaid = (l.interestPaid || 0) + interestPortion;
+        l.tenureRemaining -= 1;
+        if (l.remainingPrincipal < 5 || l.tenureRemaining <= 0) {
+          l.remainingPrincipal = 0;
+          l.closed = true;
+          closures.push({ id: l.id, name: l.name, loanType: l.loanType, month, date: new Date(date) });
+        }
+      } else if (l.loanType === 'bullet') {
+        l.tenureRemaining -= 1;
+        if (l.tenureRemaining <= 0) {
+          // Mandatory payoff at maturity
+          l.remainingPrincipal = 0;
+          l.closed = true;
+          closures.push({ id: l.id, name: l.name, loanType: l.loanType, month, date: new Date(date) });
+        }
       }
     });
 
@@ -54,8 +67,9 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
     const open = states
       .filter(l => !l.closed)
       .sort((a, b) => {
-        if (a.loanType !== b.loanType) return a.loanType === 'bullet' ? -1 : 1;
-        return b.interest - a.interest;
+        // Highest interest rate first
+        if (b.interest !== a.interest) return b.interest - a.interest;
+        return a.remainingPrincipal - b.remainingPrincipal;
       });
 
     for (const loan of open) {
@@ -84,11 +98,12 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
 
 // ── Prep loan states from raw data ────────────────────────────────────────────
 function buildLoanStates(loans, payments) {
+  const parseSafe = (val) => parseFloat(String(val || '0').replace(/,/g, ''));
   return loans.filter(l => l.status !== 'closed').map(loan => {
-    const principal  = parseFloat(loan.principal)  || 0;
+    const principal  = parseSafe(loan.principal);
     const interest   = parseFloat(loan.interest)   || 0;
-    const tenure     = parseInt(loan.tenure)        || 0;
-    const emiAmount  = parseFloat(loan.emiAmount)   || 0;
+    const tenure     = parseInt(String(loan.tenure).replace(/,/g, '')) || 0;
+    const emiAmount  = parseSafe(loan.emiAmount);
     const loanType   = loan.loanType || 'emi';
     const start      = new Date(loan.startDate);
 
@@ -116,9 +131,10 @@ function buildLoanStates(loans, payments) {
       emiAmount,
       remainingPrincipal: bd.remainingPrincipalAmount,
       totalInterestRemaining: bd.remainingInterestAmount,
-      closed: false,
+      tenureRemaining: Math.max(0, tenure - monthsElapsed),
+      closed: bd.remainingAmount <= 5,
       interestPaid: 0,
-      bulletMaturity,  // bullet loans have a fixed date
+      bulletMaturity, // bullet loans have a fixed date
     };
   });
 }
