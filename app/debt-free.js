@@ -57,7 +57,14 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
           // Mandatory payoff at maturity
           l.remainingPrincipal = 0;
           l.closed = true;
-          closures.push({ id: l.id, name: l.name, loanType: l.loanType, month, date: new Date(date) });
+          closures.push({ 
+            id: l.id, 
+            name: l.name, 
+            loanType: l.loanType, 
+            month, 
+            date: new Date(date),
+            isMaturityClosure: true // Distinguish from manual prepayments
+          });
         }
       }
     });
@@ -140,7 +147,7 @@ function buildLoanStates(loans, payments) {
 }
 
 // ── Timeline Bar ──────────────────────────────────────────────────────────────
-function TimelineItem({ name, loanType, date, month, isLast, accentColor, daysFromNow }) {
+function TimelineItem({ name, loanType, date, month, isLast, accentColor, daysFromNow, isMaturityClosure }) {
   return (
     <View style={tl.row}>
       {/* Line + dot */}
@@ -158,8 +165,12 @@ function TimelineItem({ name, loanType, date, month, isLast, accentColor, daysFr
             </Text>
           </View>
         </View>
-        <Text style={[tl.date, { color: accentColor }]}>{fmo(date)}</Text>
-        <Text style={tl.sub}>{daysFromNow > 0 ? `${Math.round(daysFromNow / 30)} months from now` : 'Already done'}</Text>
+        <Text style={[tl.date, { color: accentColor }]}>{fmo(date)} {isMaturityClosure && "⚠️"}</Text>
+        <Text style={tl.sub}>
+          {isMaturityClosure 
+            ? `Fixed Maturity Payoff`
+            : (daysFromNow > 0 ? `${Math.round(daysFromNow / 30)} months from now` : 'Already done')}
+        </Text>
       </View>
     </View>
   );
@@ -172,6 +183,7 @@ export default function DebtFree() {
   const router = useRouter();
   const [loanStates, setLoanStates]     = useState([]);
   const [extraInput, setExtraInput]     = useState('');
+  const hasSuggested = useRef(false);
   const [baseline, setBaseline]         = useState(null);
   const [accelerated, setAccelerated]   = useState(null);
   const [refreshing, setRefreshing]     = useState(false);
@@ -190,11 +202,21 @@ export default function DebtFree() {
     const base = simulateDebtFree(states.map(l => ({ ...l })), 0);
     setBaseline(base);
 
-    const extra = parseFloat(extraInput) || 0;
-    if (extra > 0) {
-      setAccelerated(simulateDebtFree(states.map(l => ({ ...l })), extra));
+    // Smart suggestion for Gold loans
+    if (!hasSuggested.current && states.some(l => l.loanType === 'bullet')) {
+      const gold = states.find(l => l.loanType === 'bullet');
+      // Suggest closing in roughly half the remaining time or at least 10k
+      const suggested = Math.max(1000, Math.ceil(gold.remainingPrincipal / Math.max(1, gold.tenureRemaining / 2)));
+      setExtraInput(String(suggested));
+      setAccelerated(simulateDebtFree(states.map(l => ({ ...l })), suggested));
+      hasSuggested.current = true;
     } else {
-      setAccelerated(null);
+      const extra = parseFloat(extraInput) || 0;
+      if (extra > 0) {
+        setAccelerated(simulateDebtFree(states.map(l => ({ ...l })), extra));
+      } else {
+        setAccelerated(null);
+      }
     }
   }, [extraInput]);
 
@@ -320,10 +342,14 @@ export default function DebtFree() {
               </View>
 
               {/* Extra payment simulator */}
-              <BlurView intensity={20} tint="light" style={styles.simCard}>
+              <BlurView intensity={20} tint="light" style={[styles.simCard, extraAmt > 0 && styles.simCardActive]}>
                 <View style={styles.simInner}>
-                  <Text style={styles.simTitle}>⚡ Accelerate! Pay Extra Each Month</Text>
-                  <Text style={styles.simSub}>Enter an extra monthly amount to see how much sooner you'll be free</Text>
+                  <Text style={styles.simTitle}>⚡ {extraAmt > 0 ? 'Shredding Mode Active!' : 'Accelerate! Pay Extra Each Month'}</Text>
+                  <Text style={styles.simSub}>
+                    {hasSuggested.current && extraAmt > 0 && !extraInput.includes('manual')
+                      ? "💡 Suggested an amount to clear your Gold loan early. Adjust as you like!"
+                      : "Enter an extra monthly amount to see how much sooner you'll be free"}
+                  </Text>
                   <View style={styles.simInputRow}>
                     <View style={styles.simInputWrap}>
                       <Text style={styles.simPrefix}>₹</Text>
@@ -338,19 +364,10 @@ export default function DebtFree() {
                     </View>
                     <TouchableOpacity style={styles.simBtn} onPress={applyExtra} activeOpacity={0.8}>
                       <LinearGradient colors={['#10b981','#059669']} style={styles.simBtnGrad}>
-                        <Text style={styles.simBtnText}>Calculate</Text>
+                        <Text style={styles.simBtnText}>Update</Text>
                       </LinearGradient>
                     </TouchableOpacity>
                   </View>
-                  {monthsSaved > 0 && (
-                    <View style={styles.interestSavedRow}>
-                      <Text style={styles.interestSavedText}>
-                        💡 Paying{' '}<Text style={{ fontWeight:'700', color:'#10b981' }}>{fc(extraAmt)}/month</Text>
-                        {' '}extra clears your debt{' '}
-                        <Text style={{ fontWeight:'700', color:'#10b981' }}>{monthsSaved} months sooner</Text>
-                      </Text>
-                    </View>
-                  )}
                 </View>
               </BlurView>
 
@@ -373,6 +390,7 @@ export default function DebtFree() {
                           isLast={i === timelineItems.length - 1}
                           accentColor={TIMELINE_COLORS[i % TIMELINE_COLORS.length]}
                           daysFromNow={Math.ceil((item.date - TODAY) / 86400000)}
+                          isMaturityClosure={item.isMaturityClosure}
                         />
                       ))}
                     </View>
@@ -459,7 +477,8 @@ const styles = StyleSheet.create({
   tileValue: { fontSize: 18, fontWeight: '700', marginTop: 4 },
 
   // Simulator
-  simCard:  { borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)', marginBottom: 16 },
+  simCard:  { borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)', marginBottom: 24, backgroundColor: 'rgba(255,255,255,0.4)' },
+  simCardActive: { borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.05)' },
   simInner: { padding: 20 },
   simTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
   simSub:   { fontSize: 13, color: 'rgba(15,23,42,0.5)', marginBottom: 16, lineHeight: 18 },

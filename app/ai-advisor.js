@@ -14,6 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLoans } from '../utils/storage';
@@ -107,6 +108,13 @@ export default function AIAdvisor() {
   useEffect(() => { 
     loadLoans(); 
     loadUsage();
+    if (!GEMINI_API_KEY) {
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        text: "⚠️ **Config Error**: I can't find your Gemini API Key. \n\nPlease ensure your `.env` file contains `EXPO_PUBLIC_GEMINI_API_KEY` and restart your bundler.",
+        isError: true 
+      }]);
+    }
   }, []);
 
   const loadLoans = async () => { try { const data = await getLoans(); setLoans(data || []); } catch (e) {} };
