@@ -20,8 +20,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLoans } from '../utils/storage';
 import Config from '../utils/Config';
 
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
-const GEMINI_API_KEY = Config.GEMINI_API_KEY;
 const USAGE_KEY = '@ai_usage_limit';
 
 const MODELS = [
@@ -105,16 +103,24 @@ export default function AIAdvisor() {
   const [lastUserQuery, setLastUserQuery] = useState('');
   const [usage, setUsage] = useState({ count: 0, date: '' });
 
+  const [activeKey, setActiveKey] = useState('');
+
   useEffect(() => { 
+    const init = async () => {
+      const userKey = await AsyncStorage.getItem('@user_gemini_api_key');
+      if (userKey) {
+        setActiveKey(userKey);
+      } else {
+        setMessages(prev => [...prev, { 
+          role: 'assistant', 
+          text: "👋 **Welcome!** To start chatting, please head to **Settings** and add your Gemini API Key. \n\nThis keeps your personal AI powered and secure!",
+          isError: true 
+        }]);
+      }
+    };
+    init();
     loadLoans(); 
     loadUsage();
-    if (!GEMINI_API_KEY) {
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        text: "⚠️ **Config Error**: I can't find your Gemini API Key. \n\nPlease ensure your `.env` file contains `EXPO_PUBLIC_GEMINI_API_KEY` and restart your bundler.",
-        isError: true 
-      }]);
-    }
   }, []);
 
   const loadLoans = async () => { try { const data = await getLoans(); setLoans(data || []); } catch (e) {} };
@@ -177,7 +183,12 @@ export default function AIAdvisor() {
     setLoading(true);
 
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${GEMINI_API_KEY}`;
+      if (!activeKey) {
+      Alert.alert('Settings Required', 'Please add your Gemini API Key in the Settings page first.');
+      return;
+    }
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeKey}`;
       const history = newMessages.filter((m, i) => !(i === 0 && m.role === 'assistant')).slice(-8);
 
       const { res, data } = await fetchWithRetry(url, {
@@ -251,7 +262,11 @@ export default function AIAdvisor() {
             <View key={idx} style={{ gap: 8 }}>
               <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
                 {msg.role === 'assistant' && <Text style={styles.aiLabel}>{msg.isError ? 'ERROR' : 'ADVISOR'}</Text>}
-                {msg.role === 'user' ? <Text style={{ color: '#fff', fontSize: 16 }}>{msg.text}</Text> : <Markdown style={markdownStyles}>{msg.text}</Markdown>}
+                {msg.role === 'user' ? (
+                  <Text style={{ color: '#fff', fontSize: 16 }}>{msg.text}</Text>
+                ) : (
+                  <Markdown style={markdownStyles}>{msg.text || ""}</Markdown>
+                )}
               </View>
               {msg.isError && (
                 <TouchableOpacity style={styles.retryBtn} onPress={() => sendMessage(lastUserQuery, true)}>
@@ -292,10 +307,9 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   flex: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 60, paddingBottom: 15, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)' },
-  headerAction: { width: 60 },
+  headerAction: { width: 60, alignItems: 'center' },
   headerTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
   quotaText: { fontSize: 11, fontWeight: '700', color: '#10b981', marginTop: 2, letterSpacing: 1 },
-  headerAction: { width: 60, alignItems: 'center' },
   backBtnText: { color: '#10b981', fontWeight: 'bold' },
   usageCounter: { backgroundColor: 'rgba(16,185,129,0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   usageText: { color: '#10b981', fontWeight: '800', fontSize: 12 },

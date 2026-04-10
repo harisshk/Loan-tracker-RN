@@ -8,6 +8,8 @@ import {
   Alert,
   Switch,
   Share,
+  TextInput,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -20,7 +22,23 @@ import Config from '../utils/Config';
 export default function Settings() {
   const router = useRouter();
   const [currency, setCurrency] = useState(Config.DEFAULT_CURRENCY || '₹');
-  
+  const [apiKey, setApiKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    const savedKey = await AsyncStorage.getItem('@user_gemini_api_key');
+    if (savedKey) setApiKey(savedKey);
+  };
+
+  const saveApiKey = async (val) => {
+    setApiKey(val);
+    await AsyncStorage.setItem('@user_gemini_api_key', val);
+  };
+
   const handleExportCSV = async () => {
     try {
       const loans = await getLoans();
@@ -76,6 +94,30 @@ export default function Settings() {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>AI Intelligence</Text>
+          <BlurView intensity={20} style={styles.aiCard}>
+             <View style={styles.aiHeader}>
+               <View style={[styles.iconWrap, { backgroundColor: '#7c3aed' }]}><Ionicons name="key" size={18} color="#fff" /></View>
+               <Text style={styles.cardText}>Gemini API Key</Text>
+             </View>
+             <TextInput
+               style={styles.keyInput}
+               placeholder="Paste your API key here..."
+               placeholderTextColor="#94a3b8"
+               value={apiKey}
+               onChangeText={saveApiKey}
+               secureTextEntry={!showKey}
+               autoCapitalize="none"
+               autoCorrect={false}
+             />
+             <TouchableOpacity onPress={() => setShowKey(!showKey)} style={styles.toggleBtn}>
+               <Text style={styles.toggleText}>{showKey ? 'Hide Key' : 'Show Key'}</Text>
+             </TouchableOpacity>
+             <Text style={styles.helpText}>Get one for free at aistudio.google.com</Text>
+          </BlurView>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Data Management</Text>
           <TouchableOpacity style={styles.card} onPress={handleExportCSV}>
             <View style={[styles.iconWrap, { backgroundColor: '#38bdf8' }]}><Ionicons name="document-text" size={20} color="#fff" /></View>
@@ -97,12 +139,6 @@ export default function Settings() {
             <Text style={styles.cardText}>Currency Symbol</Text>
             <Text style={styles.valText}>{currency}</Text>
           </View>
-          
-          <TouchableOpacity style={styles.card} onPress={() => Alert.alert('AI Advisor', 'Using Default: Gemini 3.1 Flash Lite')}>
-            <View style={[styles.iconWrap, { backgroundColor: '#7c3aed' }]}><Ionicons name="sparkles" size={20} color="#fff" /></View>
-            <Text style={styles.cardText}>AI Model Preference</Text>
-            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
-          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
@@ -113,7 +149,7 @@ export default function Settings() {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.versionText}>Loan Tracker v1.2.0 • Pro Edition</Text>
+        <Text style={styles.versionText}>Loan Tracker v1.2.5 • Elite Edition</Text>
       </ScrollView>
     </LinearGradient>
   );
@@ -131,6 +167,12 @@ const styles = StyleSheet.create({
   iconWrap: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 14 },
   cardText: { flex: 1, fontSize: 16, fontWeight: '600', color: '#334155' },
   valText: { fontSize: 16, fontWeight: 'bold', color: '#10b981' },
+  aiCard: { backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 20, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', overflow: 'hidden' },
+  aiHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  keyInput: { backgroundColor: '#f1f5f9', borderRadius: 12, padding: 12, fontSize: 13, color: '#0f172a', borderWidth: 1, borderColor: '#e2e8f0', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
+  toggleBtn: { alignSelf: 'flex-end', marginTop: 8, padding: 4 },
+  toggleText: { fontSize: 12, color: '#7c3aed', fontWeight: '700' },
+  helpText: { fontSize: 11, color: '#94a3b8', marginTop: 12, textAlign: 'center' },
   dangerCard: { borderColor: 'rgba(225,29,72,0.1)' },
   versionText: { textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 40, marginBottom: 60 },
 });
