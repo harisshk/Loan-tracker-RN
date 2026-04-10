@@ -44,8 +44,11 @@ export default function History() {
   };
 
   const handleAddPayment = async () => {
-    if (!newPayment.loanId || !newPayment.amount) {
-      Alert.alert('Error', 'Please fill all fields');
+    const parseSafe = (val) => parseFloat(String(val || '0').replace(/,/g, ''));
+    const amountVal = parseSafe(newPayment.amount);
+
+    if (!newPayment.loanId || amountVal <= 0) {
+      Alert.alert('Error', 'Please fill all fields with a valid amount');
       return;
     }
 
@@ -53,6 +56,7 @@ export default function History() {
       const selectedLoan = loans.find(l => l.id === newPayment.loanId);
       await addPayment({
         ...newPayment,
+        amount: amountVal,
         loanName: selectedLoan?.loanName || 'Unknown',
       });
       setShowAddPayment(false);

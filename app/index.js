@@ -136,7 +136,6 @@ export default function Dashboard() {
     { id: 'plan', title: 'Financial\nPlan', icon: 'trending-up', color: '#10b981', route: '/financial-plan' },
     { id: 'maturity', title: 'Maturity\nAlerts', icon: 'timer-outline', color: bulletUrgentCount > 0 ? '#e11d48' : '#f59e0b', route: '/maturity-alerts', badge: bulletUrgentCount },
     { id: 'compare', title: 'Loan\nLab', icon: 'git-compare-outline', color: '#10b981', route: '/compare-loans' },
-    { id: 'settings', title: 'App\nSettings', icon: 'settings-outline', color: '#64748b', route: '/settings' },
     { id: 'debtfree', title: 'Debt-Free\nDate', icon: 'flag-outline', color: '#38bdf8', route: '/debt-free' },
     { id: 'analytics', title: 'Analytics\nHub', icon: 'pie-chart-outline', color: '#a78bfa', route: '/analytics' },
     { id: 'calendar', title: 'Payment\nCalendar', icon: 'calendar-outline', color: '#fb923c', route: '/calendar' },
@@ -146,7 +145,6 @@ export default function Dashboard() {
   const SECONDARY_ACTIONS = [
     { title: 'Add Insurance', icon: 'shield-checkmark', route: '/add-insurance' },
     { title: 'Extra Payments Log', icon: 'receipt-outline', route: '/history' },
-    { title: 'Governance & Settings', icon: 'options-outline', route: '/settings' },
   ];
   // ──────────────────────────────────────────────
 
