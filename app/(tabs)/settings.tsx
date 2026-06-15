@@ -9,6 +9,7 @@ import {
   TextInput,
   Platform,
   ActivityIndicator,
+  NativeModules,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -16,15 +17,24 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
-import { makeRedirectUri } from 'expo-auth-session';
 import { getLoans } from '../../utils/storage';
 import { getSupabaseConfig, saveSupabaseConfig } from '../../utils/transactions';
 import { getGmailConfig, saveGmailTokens, clearGmailTokens, saveGmailSearchQuery, syncGmailTransactions } from '../../utils/gmail';
 import Config from '../../utils/Config';
+import { clearAuthUser } from '../../utils/auth';
 
-WebBrowser.maybeCompleteAuthSession();
+const isGoogleSigninSupported = !!NativeModules?.RNGoogleSignin;
+const GoogleSignin = isGoogleSigninSupported
+  ? require('@react-native-google-signin/google-signin').GoogleSignin
+  : null;
+
+if (isGoogleSigninSupported && GoogleSignin) {
+  GoogleSignin.configure({
+    scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+    webClientId: '198617790134-m5dlqbvfjuol7qh5fjd3egctuokr36kn.apps.googleusercontent.com',
+    iosClientId: '198617790134-6ov965e31pv623b7k24qb8g0ai8i397b.apps.googleusercontent.com',
+  });
+}
 
 export default function Settings() {
   const insets = useSafeAreaInsets();
@@ -40,40 +50,56 @@ export default function Settings() {
   const [gmailQuery, setGmailQuery] = useState('');
   const [isGmailSyncing, setIsGmailSyncing] = useState(false);
 
-  // Configure Google Authentication Request
-  // Note: These are placeholder client IDs. In local development or standalone builds,
-  // the user configures their own Google Cloud console client IDs.
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    iosClientId: '198617790134-6ov965e31pv623b7k24qb8g0ai8i397b.apps.googleusercontent.com',
-    androidClientId: '198617790134-m5dlqbvfjuol7qh5fjd3egctuokr36kn.apps.googleusercontent.com',
-    webClientId: '198617790134-m5dlqbvfjuol7qh5fjd3egctuokr36kn.apps.googleusercontent.com',
-    scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
-    redirectUri: makeRedirectUri({
-      scheme: 'veloflow',
-    }),
-  });
-
-  useEffect(() => {
-    if (response?.type === 'success' && response.authentication) {
-      handleGoogleLoginSuccess(response.authentication);
+  const handleGoogleLogin = async () => {
+    if (!isGoogleSigninSupported) {
+      Alert.alert(
+        'Google Sign-In Unavailable',
+        'Google Sign-In is only supported in custom development builds. Please run the app in a development build or configure manually.'
+      );
+      return;
     }
-  }, [response]);
-
-  const handleGoogleLoginSuccess = async (auth: any) => {
     try {
-      const accessToken = auth.accessToken;
-      const refreshToken = auth.refreshToken;
-      const expiresIn = auth.expiresIn;
-
-      // Retrieve user profile email from Google
-      const userInfoResp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const userInfo = await userInfoResp.json();
-      const email = userInfo.email;
+      await GoogleSignin.hasPlayServices();
+      const response = await GoogleSignin.signIn();
+      const tokens = await GoogleSignin.getTokens();
+      const accessToken = tokens.accessToken;
+      
+      const anyResponse = response as any;
+      const user = anyResponse.data ? anyResponse.data.user : anyResponse.user;
+      const email = user.email;
 
       // Store tokens
-      await saveGmailTokens(accessToken, refreshToken || 'dummy-refresh-token', expiresIn, email);
+      await saveGmailTokens(accessToken, 'native-refresh-token', 3600, email);
+
+      // Migrate local anonymous/untagged transactions to the user's email
+      try {
+        const txsValue = await AsyncStorage.getItem('@transactions');
+        if (txsValue) {
+          const localTxs = JSON.parse(txsValue);
+          let updatedLocal = false;
+          localTxs.forEach((tx: any) => {
+            if (!tx.user_email || tx.user_email === 'anonymous') {
+              tx.user_email = email;
+              tx.synced = false;
+              updatedLocal = true;
+            }
+          });
+          if (updatedLocal) {
+            await AsyncStorage.setItem('@transactions', JSON.stringify(localTxs));
+          }
+        }
+      } catch (txErr) {
+        console.warn('Failed to tag local transactions with user email:', txErr);
+      }
+
+      // Sync with Supabase under the newly connected account
+      setTimeout(async () => {
+        try {
+          await syncGmailTransactions();
+        } catch (syncErr) {
+          console.warn('Initial post-login sync failed:', syncErr);
+        }
+      }, 500);
       
       const config = await getGmailConfig();
       setGmailConfig(config);
@@ -137,6 +163,13 @@ export default function Settings() {
         text: 'Disconnect',
         style: 'destructive',
         onPress: async () => {
+          try {
+            if (isGoogleSigninSupported) {
+              await GoogleSignin.signOut();
+            }
+          } catch (err) {
+            console.warn('Sign out error:', err);
+          }
           await clearGmailTokens();
           const config = await getGmailConfig();
           setGmailConfig(config);
@@ -183,9 +216,23 @@ export default function Settings() {
     );
   };
 
+  const handleLogout = async () => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await clearAuthUser();
+          router.replace('/login');
+        }
+      }
+    ]);
+  };
+
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 15 }]}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 15, paddingBottom: 24 }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Settings</Text>
         </View>
@@ -252,18 +299,18 @@ export default function Settings() {
              />
 
              <Text style={[styles.helpText, { textAlign: 'left', marginTop: 15, fontWeight: '700', color: '#0f172a' }]}>iOS Shortcuts Integration Guide:</Text>
-             <Text style={[styles.helpText, { textAlign: 'left', marginTop: 4, lineHeight: 16, color: '#475569' }]}>
-               1. Create iOS Automation "When SMS is received".{"\n"}
-               2. Parse transaction amount/merchant text.{"\n"}
-               3. Add "Get contents of URL" HTTP action.{"\n"}
-               4. API Endpoint: your-supabase-url + "/rest/v1/transactions"{"\n"}
-               5. HTTP Method: POST{"\n"}
-               6. Headers:{"\n"}
-                  • apikey: [anonKey]{"\n"}
-                  • Authorization: Bearer [anonKey]{"\n"}
-                  • Content-Type: application/json{"\n"}
-               7. Body (JSON):{"\n"}
-                  {"{"} "amount": amount, "type": "debit", "description": merchant, "category": "Other" {"}"}
+              <Text style={[styles.helpText, { textAlign: 'left', marginTop: 4, lineHeight: 16, color: '#475569' }]}>
+                1. Create iOS Automation &quot;When SMS is received&quot;.{"\n"}
+                2. Parse transaction amount/merchant text.{"\n"}
+                3. Add &quot;Get contents of URL&quot; HTTP action.{"\n"}
+                4. API Endpoint: your-supabase-url + &quot;/rest/v1/transactions&quot;.{"\n"}
+                5. HTTP Method: POST{"\n"}
+                6. Headers:{"\n"}
+                   • apikey: [anonKey]{"\n"}
+                   • Authorization: Bearer [anonKey]{"\n"}
+                   • Content-Type: application/json{"\n"}
+                7. Body (JSON):{"\n"}
+                   {"{ \"amount\": amount, \"type\": \"debit\", \"description\": merchant, \"category\": \"Other\" }"}
               </Text>
            </BlurView>
          </View>
@@ -321,8 +368,7 @@ export default function Settings() {
                  </Text>
                  <TouchableOpacity 
                    style={{ backgroundColor: '#ea4335', padding: 14, borderRadius: 14, alignItems: 'center', shadowColor: '#ea4335', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6 }} 
-                   onPress={() => promptAsync()}
-                   disabled={!request}
+                   onPress={handleGoogleLogin}
                  >
                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>Connect Gmail Account</Text>
                  </TouchableOpacity>
@@ -353,6 +399,15 @@ export default function Settings() {
             <Text style={styles.cardText}>Currency Symbol</Text>
             <Text style={styles.valText}>{currency}</Text>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account</Text>
+          <TouchableOpacity style={styles.card} onPress={handleLogout}>
+            <View style={[styles.iconWrap, { backgroundColor: '#64748b' }]}><Ionicons name="log-out-outline" size={20} color="#fff" /></View>
+            <Text style={styles.cardText}>Sign Out</Text>
+            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>

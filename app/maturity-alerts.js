@@ -297,7 +297,7 @@ export default function MaturityAlerts() {
                   <View style={[styles.hintBox, { backgroundColor: 'rgba(16,185,129,0.08)' }]}>
                     <Text style={[styles.hintText, { color: '#10b981' }]}>
                       🎉 Only {item.emisLeft} EMI{item.emisLeft !== 1 ? 's' : ''} of{' '}
-                      {fc(item.monthlyEMI)} remaining — you're almost done!
+                      {fc(item.monthlyEMI)} remaining — you&apos;re almost done!
                     </Text>
                   </View>
                 </View>

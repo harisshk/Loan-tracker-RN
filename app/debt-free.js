@@ -275,7 +275,7 @@ export default function DebtFree() {
           {noLoans ? (
             <BlurView intensity={15} tint="light" style={styles.emptyCard}>
               <Text style={styles.emptyIcon}>🎉</Text>
-              <Text style={styles.emptyText}>You're already debt-free!</Text>
+              <Text style={styles.emptyText}>You&apos;re already debt-free!</Text>
               <Text style={styles.emptySub}>No active loans found</Text>
             </BlurView>
           ) : (

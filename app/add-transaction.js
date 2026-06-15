@@ -10,6 +10,7 @@ import {
   Platform,
   Clipboard,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -26,7 +27,8 @@ export default function AddTransaction() {
   const [type, setType] = useState('debit'); // debit or credit
   const [category, setCategory] = useState('Other');
   const [description, setDescription] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [mode, setMode] = useState('UPI'); // UPI or Credit Card
 
   // Handle URL Deep Link Params and Edit Mode loading
@@ -42,7 +44,7 @@ export default function AddTransaction() {
           setDescription(existingTx.description);
           setMode(existingTx.mode || 'UPI');
           if (existingTx.date) {
-            setDate(existingTx.date.split('T')[0]);
+            setDate(new Date(existingTx.date));
           }
           return;
         }
@@ -173,7 +175,7 @@ export default function AddTransaction() {
           type,
           category,
           description: description || `${type === 'credit' ? 'Inflow' : 'Outflow'} - ${category}`,
-          date: new Date(date).toISOString(),
+          date: date.toISOString(),
           mode,
         });
       } else {
@@ -182,7 +184,7 @@ export default function AddTransaction() {
           type,
           category,
           description: description || `${type === 'credit' ? 'Inflow' : 'Outflow'} - ${category}`,
-          date: new Date(date).toISOString(),
+          date: date.toISOString(),
           source: params.amount ? 'shortcut' : 'manual',
           mode,
         });
@@ -242,32 +244,38 @@ export default function AddTransaction() {
           </View>
 
           {/* Payment Method Selector */}
-          <Text style={[styles.label, { marginTop: 20 }]}>PAYMENT METHOD</Text>
-          <View style={styles.typeContainer}>
-            <TouchableOpacity
-              style={[styles.typeBtn, mode === 'UPI' && styles.typeBtnActiveUPI]}
-              onPress={() => setMode('UPI')}
-            >
-              <Ionicons name="phone-portrait-outline" size={16} color={mode === 'UPI' ? '#fff' : '#6366f1'} />
-              <Text style={[styles.typeBtnText, mode === 'UPI' && styles.typeBtnTextActive]}>UPI</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.typeBtn, mode === 'Credit Card' && styles.typeBtnActiveCard]}
-              onPress={() => setMode('Credit Card')}
-            >
-              <Ionicons name="card-outline" size={16} color={mode === 'Credit Card' ? '#fff' : '#ec4899'} />
-              <Text style={[styles.typeBtnText, mode === 'Credit Card' && styles.typeBtnTextActive]}>Credit Card</Text>
-            </TouchableOpacity>
-          </View>
+          {type === 'debit' && (
+            <>
+              <Text style={[styles.label, { marginTop: 20 }]}>PAYMENT METHOD</Text>
+              <View style={styles.typeContainer}>
+                <TouchableOpacity
+                  style={[styles.typeBtn, mode === 'UPI' && styles.typeBtnActiveUPI]}
+                  onPress={() => setMode('UPI')}
+                >
+                  <Ionicons name="phone-portrait-outline" size={16} color={mode === 'UPI' ? '#fff' : '#6366f1'} />
+                  <Text style={[styles.typeBtnText, mode === 'UPI' && styles.typeBtnTextActive]}>UPI</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.typeBtn, mode === 'Credit Card' && styles.typeBtnActiveCard]}
+                  onPress={() => setMode('Credit Card')}
+                >
+                  <Ionicons name="card-outline" size={16} color={mode === 'Credit Card' ? '#fff' : '#ec4899'} />
+                  <Text style={[styles.typeBtnText, mode === 'Credit Card' && styles.typeBtnTextActive]}>Credit Card</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
 
           {/* Description */}
           <Text style={[styles.label, { marginTop: 20 }]}>MERCHANT / DESCRIPTION</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
             placeholder="e.g. Amazon, Salary, Starbucks"
             placeholderTextColor="#94a3b8"
             value={description}
             onChangeText={setDescription}
+            multiline
+            numberOfLines={3}
           />
 
           {/* Category Selector */}
@@ -288,13 +296,24 @@ export default function AddTransaction() {
 
           {/* Date Selector */}
           <Text style={[styles.label, { marginTop: 20 }]}>DATE</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#94a3b8"
-            value={date}
-            onChangeText={setDate}
-          />
+          <TouchableOpacity style={styles.dateBtn} onPress={() => setShowDatePicker(true)}>
+            <Ionicons name="calendar-outline" size={18} color="#6366f1" />
+            <Text style={styles.dateBtnText}>
+              {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+            </Text>
+          </TouchableOpacity>
+          {showDatePicker && (
+            <DateTimePicker
+              value={date}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              onChange={(_, selected) => {
+                setShowDatePicker(Platform.OS === 'ios');
+                if (selected) setDate(selected);
+              }}
+              maximumDate={new Date()}
+            />
+          )}
         </BlurView>
 
         <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
@@ -333,4 +352,6 @@ const styles = StyleSheet.create({
   categoryTextActive: { color: '#fff' },
   saveBtn: { backgroundColor: '#10b981', borderRadius: 16, padding: 16, alignItems: 'center', marginTop: 30, shadowColor: '#10b981', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 10 },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  dateBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 14, padding: 14, gap: 10 },
+  dateBtnText: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
 });

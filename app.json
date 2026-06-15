@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "veloflow",
+    "scheme": [
+      "veloflow",
+      "com.googleusercontent.apps.198617790134-6ov965e31pv623b7k24qb8g0ai8i397b"
+    ],
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
@@ -45,7 +48,13 @@
           }
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.198617790134-6ov965e31pv623b7k24qb8g0ai8i397b"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

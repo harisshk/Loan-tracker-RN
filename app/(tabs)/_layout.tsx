@@ -20,8 +20,8 @@ export default function TabLayout() {
       </NativeTabTrigger>
 
       <NativeTabTrigger name="analytics">
-        <Icon sf="chart.pie.fill" />
-        <Label>Analytics</Label>
+        <Icon sf="calendar.badge.clock" />
+        <Label>EMI</Label>
       </NativeTabTrigger>
 
       <NativeTabTrigger name="ai-advisor">

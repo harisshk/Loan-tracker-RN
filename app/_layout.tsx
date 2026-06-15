@@ -1,14 +1,46 @@
-import { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { registerForPushNotificationsAsync } from '../utils/notifications';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function RootLayout() {
+  const router = useRouter();
+  const segments = useSegments();
+  const [isReady, setIsReady] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
   useEffect(() => {
     registerForPushNotificationsAsync();
   }, []);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const user = await AsyncStorage.getItem('@auth_user');
+        setIsAuthenticated(!!user);
+      } catch (e) {
+        setIsAuthenticated(false);
+      } finally {
+        setIsReady(true);
+      }
+    };
+    checkAuth();
+  }, [segments]);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    const inAuthGroup = segments[0] === 'login';
+
+    if (!isAuthenticated && !inAuthGroup) {
+      router.replace('/login');
+    } else if (isAuthenticated && inAuthGroup) {
+      router.replace('/(tabs)');
+    }
+  }, [isReady, isAuthenticated, segments]);
 
   return (
     <SafeAreaProvider>
@@ -18,6 +50,7 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: '#f8fafc' },
         }}
       >
+        <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="loans" />
         <Stack.Screen name="insurances" />

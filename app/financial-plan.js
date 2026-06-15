@@ -119,7 +119,7 @@ function InputField({ label, value, onChangeText, placeholder, icon }) {
 }
 
 // ── Month Card ────────────────────────────────────────────────────────────────
-const MonthCard = React.memo(({ data, index }) => {
+const MonthCard = React.memo(function MonthCard({ data, index }) {
   const [expanded, setExpanded] = useState(index === 0);
   const meta = STATUS_META[data.status];
 

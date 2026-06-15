@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { PieChart } from 'react-native-chart-kit';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../../utils/storage';
 import { getTransactions, getBudgetLimit, syncWithSupabase } from '../../utils/transactions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -54,6 +55,7 @@ export default function DashboardView() {
   const [refreshing, setRefreshing] = useState(false);
   const [spentThisMonth, setSpentThisMonth] = useState(0);
   const [budgetLimit, setBudgetLimit] = useState(50000);
+  const [spends, setSpends] = useState<any[]>([]);
 
   const bulletUrgentCount = loans.filter((l: any) => {
     if (l.status === 'closed' || l.loanType !== 'bullet') return false;
@@ -80,7 +82,8 @@ export default function DashboardView() {
       const txs = await getTransactions();
       const limit = await getBudgetLimit();
       setBudgetLimit(limit);
-      
+      setSpends(txs);
+
       const now = new Date();
       const currentMonth = now.getMonth();
       const currentYear = now.getFullYear();
@@ -149,6 +152,75 @@ export default function DashboardView() {
     return () => clearInterval(timer);
   }, [insights]);
 
+  // ─── Analytics Section Data ───────────────────
+  const ANALYTICS_COLORS = ['#10b981', '#38bdf8', '#f59e0b', '#a78bfa', '#e11d48', '#fb923c'];
+
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  // Loan share bars — use raw principal minus total extra payments as a quick estimate
+  const loanSharesData = useMemo(() => {
+    const activeLoans = loans.filter((l: any) => l.status !== 'closed');
+    const items = activeLoans.map((loan: any, i: number) => {
+      const principal = parseFloat(String(loan.principal).replace(/,/g, '')) || 0;
+      const extraPaid = payments
+        .filter((p: any) => p.loanId === loan.id)
+        .reduce((s: number, p: any) => s + parseFloat(p.amount || 0), 0);
+      const emiPaid = (() => {
+        if (!loan.startDate) return 0;
+        const sd = new Date(loan.startDate);
+        const months = Math.max(0,
+          (today.getFullYear() - sd.getFullYear()) * 12 + (today.getMonth() - sd.getMonth())
+        );
+        const emi = parseFloat(String(loan.emiAmount).replace(/,/g, '')) || 0;
+        return emi * months;
+      })();
+      const remaining = Math.max(0, principal - extraPaid - emiPaid * 0.3);
+      return { name: loan.loanName, remaining, color: ANALYTICS_COLORS[i % ANALYTICS_COLORS.length] };
+    }).filter((x: any) => x.remaining > 0);
+
+    const total = items.reduce((s: number, x: any) => s + x.remaining, 0);
+    return items
+      .map((x: any) => ({ ...x, share: total > 0 ? x.remaining / total : 0 }))
+      .sort((a: any, b: any) => b.remaining - a.remaining)
+      .slice(0, 5);
+  }, [loans, payments, today]);
+
+  // Spend category pie data for current month
+  const spendPieData = useMemo(() => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const categoryColors: Record<string, string> = {
+      Food: '#fb923c', Shopping: '#ec4899', EMI: '#6366f1',
+      Bills: '#3b82f6', Investment: '#8b5cf6', Entertainment: '#f43f5e',
+      Travel: '#06b6d4', Other: '#64748b',
+    };
+    const totals: Record<string, number> = {};
+    spends.filter((t: any) => {
+      const d = new Date(t.date);
+      return (t.type || '').toLowerCase() !== 'credit' &&
+        d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    }).forEach((t: any) => {
+      const cat = t.category || 'Other';
+      totals[cat] = (totals[cat] || 0) + parseFloat(t.amount || 0);
+    });
+    return Object.entries(totals)
+      .filter(([, v]) => v > 0)
+      .map(([name, population]) => ({
+        name,
+        population,
+        color: categoryColors[name] || '#64748b',
+        legendFontColor: '#64748b',
+        legendFontSize: 11,
+      }))
+      .sort((a, b) => b.population - a.population)
+      .slice(0, 6);
+  }, [spends]);
+
   // Quick Action Array for Grid
   const QUICK_ACTIONS = [
     { id: 'spend', title: 'Spend\nTracker', icon: 'card-outline', color: '#ec4899', route: '/spend-tracker' },
@@ -170,7 +242,7 @@ export default function DashboardView() {
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 15 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top, paddingBottom: 24 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#10b981" />}
       >
@@ -243,7 +315,7 @@ export default function DashboardView() {
 
         {/* This Month Spending (Segmented view) */}
         <View style={styles.monthSection}>
-          <Text style={styles.sectionTitle}>This Month's Activity</Text>
+          <Text style={styles.sectionTitle}>This Month&apos;s Activity</Text>
           <BlurView intensity={30} tint="light" style={styles.monthCard}>
             
             {/* Payment Track */}
@@ -378,6 +450,71 @@ export default function DashboardView() {
           </BlurView>
         </View>
         
+        {/* Analytics Section */}
+        <View style={styles.analyticsSection}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Analytics</Text>
+            <TouchableOpacity onPress={() => router.push('/analytics' as any)}>
+              <Text style={styles.seeAllText}>Full View</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Loan Overview — outstanding share bars */}
+          {loanSharesData.length > 0 && (
+            <BlurView intensity={30} tint="light" style={styles.analyticsCard}>
+              <Text style={styles.analyticsCardTitle}>Loan-wise Outstanding</Text>
+              <Text style={styles.analyticsCardSubtitle}>Share of remaining principal</Text>
+              {loanSharesData.map((ls: any, i: number) => (
+                <View key={i} style={styles.analyticsShareRow}>
+                  <View style={styles.analyticsShareMeta}>
+                    <View style={[styles.analyticsDot, { backgroundColor: ls.color }]} />
+                    <Text style={styles.analyticsShareName} numberOfLines={1}>{ls.name}</Text>
+                    <Text style={styles.analyticsShareAmt}>
+                      ₹{parseFloat(ls.remaining).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    </Text>
+                  </View>
+                  <View style={styles.analyticsBarBg}>
+                    <View style={[styles.analyticsBarFill, { width: `${ls.share * 100}%`, backgroundColor: ls.color }]} />
+                  </View>
+                </View>
+              ))}
+            </BlurView>
+          )}
+
+          {/* Spend Category Pie */}
+          {spendPieData.length > 0 ? (
+            <BlurView intensity={30} tint="light" style={styles.analyticsCard}>
+              <Text style={styles.analyticsCardTitle}>Spend Categories</Text>
+              <Text style={styles.analyticsCardSubtitle}>This month's expense breakdown</Text>
+              <PieChart
+                data={spendPieData}
+                width={width - 80}
+                height={160}
+                chartConfig={{
+                  backgroundGradientFrom: '#ffffff',
+                  backgroundGradientTo: '#ffffff',
+                  backgroundGradientFromOpacity: 0,
+                  backgroundGradientToOpacity: 0,
+                  color: (opacity = 1) => `rgba(99,102,241,${opacity})`,
+                  decimalPlaces: 0,
+                  labelColor: (opacity = 1) => `rgba(15,23,42,${opacity})`,
+                }}
+                accessor="population"
+                backgroundColor="transparent"
+                paddingLeft="10"
+                absolute
+              />
+            </BlurView>
+          ) : (
+            <BlurView intensity={30} tint="light" style={styles.analyticsCard}>
+              <Text style={styles.analyticsCardTitle}>Spend Categories</Text>
+              <Text style={[styles.analyticsCardSubtitle, { marginBottom: 0 }]}>
+                No expense data recorded this month. Add transactions in Spend Tracker.
+              </Text>
+            </BlurView>
+          )}
+        </View>
+
         <View style={{ height: 100 }} />
       </ScrollView>
     </LinearGradient>
@@ -386,8 +523,8 @@ export default function DashboardView() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { paddingBottom: 40 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 24 },
+  scrollContent: {},
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 24, marginTop: -10 },
   greeting: { fontSize: 32, fontWeight: '800', color: '#0f172a', letterSpacing: -0.5 },
   dateLabel: { fontSize: 13, color: '#64748b', fontWeight: '500', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.5 },
   addBtnWrap: { shadowColor: '#10b981', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 10 },
@@ -446,4 +583,16 @@ const styles = StyleSheet.create({
   insightBlur: { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: 'rgba(124,58,237,0.05)' },
   insightIconWrap: { width: 28, height: 28, borderRadius: 10, backgroundColor: 'rgba(124,58,237,0.12)', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   insightText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#334155' },
+  // Analytics section
+  analyticsSection: { marginBottom: 28 },
+  analyticsCard: { marginHorizontal: 20, borderRadius: 24, padding: 20, borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)', overflow: 'hidden', marginBottom: 14 },
+  analyticsCardTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a', marginBottom: 2 },
+  analyticsCardSubtitle: { fontSize: 12, color: '#64748b', marginBottom: 14 },
+  analyticsShareRow: { marginBottom: 12 },
+  analyticsShareMeta: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 6 },
+  analyticsDot: { width: 8, height: 8, borderRadius: 4 },
+  analyticsShareName: { flex: 1, fontSize: 13, fontWeight: '600', color: '#0f172a' },
+  analyticsShareAmt: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  analyticsBarBg: { height: 6, backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: 3, overflow: 'hidden' },
+  analyticsBarFill: { height: '100%', borderRadius: 3 },
 });

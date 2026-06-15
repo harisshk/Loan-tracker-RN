@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { calculateEMIBreakdown } from './emiCalculator';
-import { scheduleEMIReminder, cancelAllLoanNotifications, scheduleInsuranceReminder } from './notifications';
+import { cancelAllLoanNotifications, scheduleEMIReminder, scheduleInsuranceReminder } from './notifications';
+import { getTransactions } from './transactions';
 
 const LOANS_KEY = '@loans';
 const PAYMENTS_KEY = '@payments';
@@ -33,11 +34,40 @@ const refreshAllNotifications = async (loans, insurances = []) => {
   }
 };
 
-// Insurance operations
-export const getInsurances = async () => {
+// Raw list helpers to retrieve all users' data without filtering (for writing back)
+const getAllInsurancesRaw = async () => {
   try {
     const jsonValue = await AsyncStorage.getItem(INSURANCES_KEY);
     return jsonValue != null ? JSON.parse(jsonValue) : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+const getAllLoansRaw = async () => {
+  try {
+    const jsonValue = await AsyncStorage.getItem(LOANS_KEY);
+    return jsonValue != null ? JSON.parse(jsonValue) : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+const getAllPaymentsRaw = async () => {
+  try {
+    const jsonValue = await AsyncStorage.getItem(PAYMENTS_KEY);
+    return jsonValue != null ? JSON.parse(jsonValue) : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+// User-scoped getters
+export const getInsurances = async () => {
+  try {
+    const all = await getAllInsurancesRaw();
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+    return all.filter(i => (i.user_email || 'anonymous') === userEmail);
   } catch (e) {
     console.error('Error reading insurances:', e);
     return [];
@@ -46,18 +76,21 @@ export const getInsurances = async () => {
 
 export const saveInsurance = async (insurance) => {
   try {
-    const insurances = await getInsurances();
+    const allInsurances = await getAllInsurancesRaw();
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const newIns = {
       id: Date.now().toString(),
       ...insurance,
+      user_email: userEmail,
       createdAt: new Date().toISOString(),
     };
-    insurances.push(newIns);
-    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(insurances));
+    allInsurances.push(newIns);
+    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(allInsurances));
     
     // Refresh notifications
     const loans = await getLoans();
-    await refreshAllNotifications(loans, insurances);
+    const userInsurances = await getInsurances();
+    await refreshAllNotifications(loans, userInsurances);
     
     return newIns;
   } catch (e) {
@@ -68,13 +101,14 @@ export const saveInsurance = async (insurance) => {
 
 export const deleteInsurance = async (id) => {
   try {
-    const insurances = await getInsurances();
-    const filtered = insurances.filter(i => i.id !== id);
+    const allInsurances = await getAllInsurancesRaw();
+    const filtered = allInsurances.filter(i => i.id !== id);
     await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(filtered));
     
     // Refresh notifications
     const loans = await getLoans();
-    await refreshAllNotifications(loans, filtered);
+    const userInsurances = await getInsurances();
+    await refreshAllNotifications(loans, userInsurances);
   } catch (e) {
     console.error('Error deleting insurance:', e);
     throw e;
@@ -83,17 +117,18 @@ export const deleteInsurance = async (id) => {
 
 export const updateInsurance = async (id, updates) => {
   try {
-    const insurances = await getInsurances();
-    const idx = insurances.findIndex(i => i.id === id);
+    const allInsurances = await getAllInsurancesRaw();
+    const idx = allInsurances.findIndex(i => i.id === id);
     if (idx === -1) throw new Error('Insurance not found');
-    insurances[idx] = { ...insurances[idx], ...updates };
-    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(insurances));
+    allInsurances[idx] = { ...allInsurances[idx], ...updates };
+    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(allInsurances));
 
     // Refresh notifications
     const loans = await getLoans();
-    await refreshAllNotifications(loans, insurances);
+    const userInsurances = await getInsurances();
+    await refreshAllNotifications(loans, userInsurances);
 
-    return insurances[idx];
+    return allInsurances[idx];
   } catch (e) {
     console.error('Error updating insurance:', e);
     throw e;
@@ -103,8 +138,9 @@ export const updateInsurance = async (id, updates) => {
 // Loan operations
 export const getLoans = async () => {
   try {
-    const jsonValue = await AsyncStorage.getItem(LOANS_KEY);
-    return jsonValue != null ? JSON.parse(jsonValue) : [];
+    const all = await getAllLoansRaw();
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+    return all.filter(l => (l.user_email || 'anonymous') === userEmail);
   } catch (e) {
     console.error('Error reading loans:', e);
     return [];
@@ -113,17 +149,20 @@ export const getLoans = async () => {
 
 export const saveLoan = async (loan) => {
   try {
-    const loans = await getLoans();
+    const allLoans = await getAllLoansRaw();
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const newLoan = {
       id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       ...loan,
+      user_email: userEmail,
       createdAt: new Date().toISOString(),
     };
-    loans.push(newLoan);
-    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(loans));
+    allLoans.push(newLoan);
+    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(allLoans));
     
     const insurances = await getInsurances();
-    await refreshAllNotifications(loans, insurances);
+    const userLoans = await getLoans();
+    await refreshAllNotifications(userLoans, insurances);
     
     return newLoan;
   } catch (e) {
@@ -134,25 +173,26 @@ export const saveLoan = async (loan) => {
 
 export const updateLoan = async (loanId, updatedData) => {
   try {
-    const loans = await getLoans();
-    const loanIndex = loans.findIndex(loan => loan.id === loanId);
+    const allLoans = await getAllLoansRaw();
+    const loanIndex = allLoans.findIndex(loan => loan.id === loanId);
     
     if (loanIndex === -1) {
       throw new Error('Loan not found');
     }
     
-    loans[loanIndex] = {
-      ...loans[loanIndex],
+    allLoans[loanIndex] = {
+      ...allLoans[loanIndex],
       ...updatedData,
       updatedAt: new Date().toISOString(),
     };
     
-    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(loans));
+    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(allLoans));
     
     const insurances = await getInsurances();
-    await refreshAllNotifications(loans, insurances);
+    const userLoans = await getLoans();
+    await refreshAllNotifications(userLoans, insurances);
     
-    return loans[loanIndex];
+    return allLoans[loanIndex];
   } catch (e) {
     console.error('Error updating loan:', e);
     throw e;
@@ -161,17 +201,18 @@ export const updateLoan = async (loanId, updatedData) => {
 
 export const deleteLoan = async (loanId) => {
   try {
-    const loans = await getLoans();
-    const filteredLoans = loans.filter(loan => loan.id !== loanId);
+    const allLoans = await getAllLoansRaw();
+    const filteredLoans = allLoans.filter(loan => loan.id !== loanId);
     await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(filteredLoans));
     
     // Clean up associated payments to prevent orphan data
-    const payments = await getPayments();
-    const filteredPayments = payments.filter(p => p.loanId !== loanId);
+    const allPayments = await getAllPaymentsRaw();
+    const filteredPayments = allPayments.filter(p => p.loanId !== loanId);
     await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(filteredPayments));
     
     const insurances = await getInsurances();
-    await refreshAllNotifications(filteredLoans, insurances);
+    const userLoans = await getLoans();
+    await refreshAllNotifications(userLoans, insurances);
   } catch (e) {
     console.error('Error deleting loan:', e);
     throw e;
@@ -181,8 +222,9 @@ export const deleteLoan = async (loanId) => {
 // Payment operations
 export const getPayments = async () => {
   try {
-    const jsonValue = await AsyncStorage.getItem(PAYMENTS_KEY);
-    return jsonValue != null ? JSON.parse(jsonValue) : [];
+    const all = await getAllPaymentsRaw();
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+    return all.filter(p => (p.user_email || 'anonymous') === userEmail);
   } catch (e) {
     console.error('Error reading payments:', e);
     return [];
@@ -191,14 +233,16 @@ export const getPayments = async () => {
 
 export const addPayment = async (payment) => {
   try {
-    const payments = await getPayments();
+    const allPayments = await getAllPaymentsRaw();
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const newPayment = {
       id: Date.now().toString(),
       ...payment,
+      user_email: userEmail,
       paidAt: new Date().toISOString(),
     };
-    payments.push(newPayment);
-    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(payments));
+    allPayments.push(newPayment);
+    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(allPayments));
     return newPayment;
   } catch (e) {
     console.error('Error adding payment:', e);
@@ -404,15 +448,13 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
   };
 };
 
-// Export all data for backup
+// Export all data for backup (user-scoped)
 export const exportAllData = async () => {
   try {
     const loans = await getLoans();
     const payments = await getPayments();
     const insurances = await getInsurances();
-    
-    const txsValue = await AsyncStorage.getItem(TRANSACTIONS_KEY);
-    const transactions = txsValue ? JSON.parse(txsValue) : [];
+    const transactions = await getTransactions();
     
     const limitValue = await AsyncStorage.getItem(BUDGET_LIMIT_KEY);
     const budgetLimit = limitValue ? parseFloat(limitValue) : 50000;
@@ -424,25 +466,71 @@ export const exportAllData = async () => {
   }
 };
 
-// Import all data from backup
+// Import all data from backup (user-scoped merge)
 export const importAllData = async (jsonString) => {
   try {
     const data = JSON.parse(jsonString);
-    // Overwrite all keys with new data (or empty array if missing in backup)
-    // This ensures a complete reset to the backup state
-    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(data.loans || []));
-    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(data.payments || []));
-    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(data.insurances || []));
-    await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(data.transactions || []));
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+
+    // Load current raw data
+    const allLoans = await getAllLoansRaw();
+    const allPayments = await getAllPaymentsRaw();
+    const allInsurances = await getAllInsurancesRaw();
+    const txsValue = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+    const allTxs = txsValue ? JSON.parse(txsValue) : [];
+
+    // Filter out current user's data to overwrite with imported
+    const otherLoans = allLoans.filter(l => (l.user_email || 'anonymous') !== userEmail);
+    const otherPayments = allPayments.filter(p => (p.user_email || 'anonymous') !== userEmail);
+    const otherInsurances = allInsurances.filter(i => (i.user_email || 'anonymous') !== userEmail);
+
+    // Tag imported data with current user_email
+    const importedLoans = (data.loans || []).map(l => ({ ...l, user_email: userEmail }));
+    const importedPayments = (data.payments || []).map(p => ({ ...p, user_email: userEmail }));
+    const importedInsurances = (data.insurances || []).map(i => ({ ...i, user_email: userEmail }));
+    const importedTxs = (data.transactions || []).map(t => ({ ...t, user_email: userEmail }));
+
+    // Save merged raw data back
+    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify([...otherLoans, ...importedLoans]));
+    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify([...otherPayments, ...importedPayments]));
+    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify([...otherInsurances, ...importedInsurances]));
+    
+    // Upload transactions directly to Supabase if configured
+    let supabaseUrl = await AsyncStorage.getItem('@supabase_url');
+    let supabaseKey = await AsyncStorage.getItem('@supabase_key');
+    if (!supabaseUrl) supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+    if (!supabaseKey) supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+    
+    if (supabaseUrl && supabaseKey && importedTxs.length > 0) {
+      const cleanUrl = supabaseUrl.trim().replace(/\/$/, '');
+      fetch(`${cleanUrl}/rest/v1/transactions`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify(importedTxs.map(tx => ({
+          id: tx.id,
+          amount: tx.amount,
+          type: tx.type,
+          category: tx.category || 'Other',
+          date: tx.date || new Date().toISOString(),
+          description: tx.description || '',
+          source: tx.source || 'manual',
+          mode: tx.mode || 'UPI',
+          user_email: userEmail,
+        }))),
+      }).catch(e => console.warn('Backup transactions import to Supabase failed:', e));
+    }
     
     if (data.budgetLimit !== undefined) {
       await AsyncStorage.setItem(BUDGET_LIMIT_KEY, String(data.budgetLimit));
     }
     
-    // Refresh notifications for all imported data
-    const finalLoans = data.loans || [];
-    const finalInsurances = data.insurances || [];
-    await refreshAllNotifications(finalLoans, finalInsurances);
+    // Refresh notifications for this user
+    await refreshAllNotifications(importedLoans, importedInsurances);
     
     return true;
   } catch (e) {

@@ -21,6 +21,7 @@ import {
   getBudgetLimit,
   saveBudgetLimit,
   syncWithSupabase,
+  classifyOtherTransactionsBatch,
 } from '../../utils/transactions';
 import { syncGmailTransactions } from '../../utils/gmail';
 import { getLoans } from '../../utils/storage';
@@ -49,7 +50,30 @@ export default function SpendTracker() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all'); // all, credit, debit
+  const [filterCategory, setFilterCategory] = useState('all');
   const [loansCount, setLoansCount] = useState(0);
+  const [isClassifying, setIsClassifying] = useState(false);
+
+  const handleAIClassify = async () => {
+    setIsClassifying(true);
+    try {
+      const res = await classifyOtherTransactionsBatch();
+      setIsClassifying(false);
+      if (res.success) {
+        if (res.scanned > 0) {
+          Alert.alert('AI Classification Done', res.reason);
+          loadData();
+        } else {
+          Alert.alert('AI Classification', 'No unclassified "Other" transactions found.');
+        }
+      } else {
+        Alert.alert('AI Classification Failed', res.reason || 'Could not classify.');
+      }
+    } catch (err: any) {
+      setIsClassifying(false);
+      Alert.alert('Error', err.message || 'An error occurred.');
+    }
+  };
 
   // Financial Stats
   const [stats, setStats] = useState({
@@ -172,9 +196,10 @@ export default function SpendTracker() {
     const cat = t.category || '';
     const matchesSearch = desc.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           cat.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = filterType === 'all' || 
+    const matchesFilter = filterType === 'all' ||
                           (t.type || '').toLowerCase() === filterType.toLowerCase();
-    return matchesSearch && matchesFilter;
+    const matchesCategory = filterCategory === 'all' || cat === filterCategory;
+    return matchesSearch && matchesFilter && matchesCategory;
   });
 
   const fc = (amount: any) => {
@@ -187,17 +212,26 @@ export default function SpendTracker() {
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 15 }]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top, paddingBottom: 24 }]} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Spend Tracker</Text>
-          <TouchableOpacity onPress={handleSync} disabled={isSyncing} style={styles.syncBtn}>
-            {isSyncing ? (
-              <ActivityIndicator size="small" color="#10b981" />
-            ) : (
-              <Ionicons name="sync-outline" size={24} color="#10b981" />
-            )}
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+            <TouchableOpacity onPress={handleAIClassify} disabled={isClassifying} style={styles.syncBtn}>
+              {isClassifying ? (
+                <ActivityIndicator size="small" color="#7c3aed" />
+              ) : (
+                <Ionicons name="sparkles" size={24} color="#7c3aed" />
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleSync} disabled={isSyncing} style={styles.syncBtn}>
+              {isSyncing ? (
+                <ActivityIndicator size="small" color="#10b981" />
+              ) : (
+                <Ionicons name="sync-outline" size={24} color="#10b981" />
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Fancy Spend Summary Card */}
@@ -307,6 +341,36 @@ export default function SpendTracker() {
           ))}
         </View>
 
+        {/* Category Filter Chips */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
+          {(['all', ...Object.keys(CATEGORY_ICONS)] as string[]).map((cat) => {
+            const isActive = filterCategory === cat;
+            const iconInfo = cat !== 'all' ? CATEGORY_ICONS[cat as keyof typeof CATEGORY_ICONS] : null;
+            return (
+              <TouchableOpacity
+                key={cat}
+                onPress={() => setFilterCategory(cat)}
+                style={[
+                  styles.categoryChip,
+                  isActive && { backgroundColor: iconInfo ? iconInfo.color : '#0f172a' },
+                ]}
+              >
+                {iconInfo && (
+                  <Ionicons
+                    name={iconInfo.name as any}
+                    size={13}
+                    color={isActive ? '#fff' : iconInfo.color}
+                    style={{ marginRight: 4 }}
+                  />
+                )}
+                <Text style={[styles.categoryChipText, isActive && { color: '#fff' }]}>
+                  {cat === 'all' ? 'All' : cat}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
         {/* Search */}
         <View style={styles.searchContainer}>
           <Ionicons name="search" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
@@ -326,7 +390,16 @@ export default function SpendTracker() {
 
         {/* Transactions List */}
         <View style={styles.txListContainer}>
-          <Text style={styles.sectionTitle}>Transactions History</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Transactions History</Text>
+            <TouchableOpacity onPress={handleAIClassify} style={styles.aiClassifyBtn} disabled={isClassifying}>
+              {isClassifying ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.aiClassifyBtnText}>🪄 AI Classify (10)</Text>
+              )}
+            </TouchableOpacity>
+          </View>
           {filteredTransactions.length === 0 ? (
             <BlurView intensity={20} tint="light" style={styles.emptyCard}>
               <Ionicons name="receipt-outline" size={40} color="#94a3b8" style={{ marginBottom: 10 }} />
@@ -454,4 +527,32 @@ const styles = StyleSheet.create({
   txCategory: { fontSize: 11, color: '#64748b', fontWeight: '500' },
   modeBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   modeBadgeText: { fontSize: 9, fontWeight: '700' },
+  aiClassifyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#7c3aed',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  aiClassifyBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.07)',
+  },
+  categoryChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
 });

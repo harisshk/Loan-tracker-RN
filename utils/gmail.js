@@ -1,6 +1,21 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getTransactions, syncWithSupabase } from './transactions';
+import { getTransactions, syncWithSupabase, getSupabaseConfig, isUserEmailColumnSupported } from './transactions';
 import { classifyCategoryOffline, bulkClassifyCategories } from './classifier';
+
+import { NativeModules } from 'react-native';
+
+const isGoogleSigninSupported = !!NativeModules?.RNGoogleSignin;
+const GoogleSignin = isGoogleSigninSupported
+  ? require('@react-native-google-signin/google-signin').GoogleSignin
+  : null;
+
+if (isGoogleSigninSupported && GoogleSignin) {
+  GoogleSignin.configure({
+    scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+    webClientId: '198617790134-m5dlqbvfjuol7qh5fjd3egctuokr36kn.apps.googleusercontent.com',
+    iosClientId: '198617790134-6ov965e31pv623b7k24qb8g0ai8i397b.apps.googleusercontent.com',
+  });
+}
 
 const TRANSACTIONS_KEY = '@transactions';
 const GMAIL_ACCESS_TOKEN_KEY = '@gmail_access_token';
@@ -9,7 +24,17 @@ const GMAIL_EXPIRE_TIME_KEY = '@gmail_expire_time';
 const GMAIL_USER_EMAIL_KEY = '@gmail_user_email';
 const GMAIL_SEARCH_QUERY_KEY = '@gmail_search_query';
 
-const DEFAULT_QUERY = 'subject:(transaction OR spent OR debited OR credited OR received OR alert) "Rs."';
+const DEFAULT_QUERY = '(from:alerts@hdfcbank.bank.in OR from:onlinesbicard@sbicard.com) "Rs."';
+const GMAIL_LAST_SYNC_TIME_KEY = '@gmail_last_sync_time';
+
+const getCleanUrl = (url) => {
+  if (!url) return '';
+  let clean = url.trim().replace(/\/$/, '');
+  if (clean.endsWith('/rest/v1')) {
+    clean = clean.substring(0, clean.length - 8);
+  }
+  return clean;
+};
 
 // Base64 URL Decoder helper for decoding Gmail raw payload
 const base64UrlDecode = (str) => {
@@ -148,6 +173,7 @@ export const clearGmailTokens = async () => {
   await AsyncStorage.removeItem(GMAIL_REFRESH_TOKEN_KEY);
   await AsyncStorage.removeItem(GMAIL_EXPIRE_TIME_KEY);
   await AsyncStorage.removeItem(GMAIL_USER_EMAIL_KEY);
+  await AsyncStorage.removeItem(GMAIL_LAST_SYNC_TIME_KEY);
 };
 
 export const getGmailConfig = async () => {
@@ -162,11 +188,27 @@ export const saveGmailSearchQuery = async (query) => {
 };
 
 export const getGmailAccessToken = async () => {
+  try {
+    if (isGoogleSigninSupported && GoogleSignin) {
+      const isSignedIn = await GoogleSignin.isSignedIn();
+      if (isSignedIn) {
+        const tokens = await GoogleSignin.getTokens();
+        if (tokens && tokens.accessToken) {
+          await AsyncStorage.setItem(GMAIL_ACCESS_TOKEN_KEY, tokens.accessToken);
+          return { accessToken: tokens.accessToken };
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Failed to get Google token from native SDK:', e);
+  }
+
+  // Fallback to AsyncStorage if native sign-in is not active or fails
   const accessToken = await AsyncStorage.getItem(GMAIL_ACCESS_TOKEN_KEY);
   const refreshToken = await AsyncStorage.getItem(GMAIL_REFRESH_TOKEN_KEY);
   const expireTimeStr = await AsyncStorage.getItem(GMAIL_EXPIRE_TIME_KEY);
   
-  if (!accessToken || !refreshToken) {
+  if (!accessToken) {
     return { accessToken: null };
   }
 
@@ -174,9 +216,11 @@ export const getGmailAccessToken = async () => {
   
   // If expired or expiring in next 2 minutes, refresh it
   if (Date.now() + 120 * 1000 >= expireTime) {
-    console.log('Refreshing Gmail access token...');
+    if (!refreshToken || refreshToken === 'native-refresh-token') {
+      return { accessToken: null };
+    }
+    console.log('Refreshing Gmail access token using fallback refresh token...');
     try {
-      // Swap refresh token for new access token
       const response = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -207,7 +251,24 @@ export const getGmailAccessToken = async () => {
   return { accessToken };
 };
 
+// Checks if a transaction is a duplicate of an existing one (matching amount, type, and within a 60-minute window)
+const isDuplicate = (newTx, existingTxs) => {
+  const newTime = new Date(newTx.date).getTime();
+  return existingTxs.some(exist => {
+    if (exist.id === newTx.id) return true;
+    
+    // Check if amount and type are identical
+    if (exist.type !== newTx.type) return false;
+    if (Math.abs(exist.amount - newTx.amount) > 0.01) return false;
+    
+    // Check if the time difference is less than 60 minutes (3,600,000 ms)
+    const existTime = new Date(exist.date).getTime();
+    return Math.abs(newTime - existTime) <= 60 * 60 * 1000;
+  });
+};
+
 export const syncGmailTransactions = async () => {
+  const syncStartTime = Math.floor(Date.now() / 1000);
   try {
     const { accessToken } = await getGmailAccessToken();
     if (!accessToken) {
@@ -215,7 +276,16 @@ export const syncGmailTransactions = async () => {
     }
 
     const query = await AsyncStorage.getItem(GMAIL_SEARCH_QUERY_KEY) || DEFAULT_QUERY;
-    const listUrl = `https://gmail.googleapis.com/v1/users/me/messages?maxResults=15&q=${encodeURIComponent(query)}`;
+    
+    // Check if we have a last sync time, and construct the date filter
+    let finalQuery = query;
+    const lastSyncTime = await AsyncStorage.getItem(GMAIL_LAST_SYNC_TIME_KEY);
+    if (lastSyncTime) {
+      finalQuery = `${query} after:${lastSyncTime}`;
+    }
+    
+    console.log('Syncing Gmail with query:', finalQuery);
+    const listUrl = `https://gmail.googleapis.com/v1/users/me/messages?maxResults=25&q=${encodeURIComponent(finalQuery)}`;
     
     const listResp = await fetch(listUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -227,6 +297,8 @@ export const syncGmailTransactions = async () => {
 
     const listData = await listResp.json();
     if (!listData.messages || listData.messages.length === 0) {
+      // Even if 0 messages, update the sync timestamp so next search starts from now
+      await AsyncStorage.setItem(GMAIL_LAST_SYNC_TIME_KEY, String(syncStartTime));
       return { success: true, count: 0 };
     }
 
@@ -254,20 +326,50 @@ export const syncGmailTransactions = async () => {
       }
     }
 
+    // Save the last successful sync timestamp
+    await AsyncStorage.setItem(GMAIL_LAST_SYNC_TIME_KEY, String(syncStartTime));
+
     if (parsedTxs.length > 0) {
       const classifiedTxs = await bulkClassifyCategories(parsedTxs);
 
       const currentTxs = await getTransactions();
-      const currentIds = new Set(currentTxs.map(t => t.id));
-      
-      const newTxs = classifiedTxs.filter(tx => !currentIds.has(tx.id));
+      const newTxs = classifiedTxs.filter(tx => !isDuplicate(tx, currentTxs));
       
       if (newTxs.length > 0) {
-        const updatedTxs = [...currentTxs, ...newTxs];
-        await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(updatedTxs));
-        
-        // Force remote Supabase synchronization
-        await syncWithSupabase();
+        const { url, key } = await getSupabaseConfig();
+        if (url && key) {
+          const cleanUrl = getCleanUrl(url);
+          const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+          const uploadResp = await fetch(`${cleanUrl}/rest/v1/transactions`, {
+            method: 'POST',
+            headers: {
+              'apikey': key,
+              'Authorization': `Bearer ${key}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'resolution=merge-duplicates',
+            },
+            body: JSON.stringify(newTxs.map(tx => {
+              const payload = {
+                id: tx.id,
+                amount: tx.amount,
+                type: tx.type,
+                category: tx.category || 'Other',
+                date: tx.date || new Date().toISOString(),
+                description: tx.description || '',
+                source: tx.source || 'gmail',
+                mode: tx.mode || 'UPI',
+              };
+              if (isUserEmailColumnSupported) {
+                payload.user_email = userEmail;
+              }
+              return payload;
+            })),
+          });
+          
+          if (!uploadResp.ok) {
+            console.warn('Failed to upload Gmail transactions to Supabase:', await uploadResp.text());
+          }
+        }
       }
       return { success: true, count: newTxs.length };
     }

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Dimensions,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
