@@ -18,7 +18,7 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: '#f8fafc' },
         }}
       >
-        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
         <Stack.Screen name="loans" />
         <Stack.Screen name="insurances" />
         <Stack.Screen name="add-loan" />
@@ -32,9 +32,8 @@ export default function RootLayout() {
         <Stack.Screen name="financial-plan" />
         <Stack.Screen name="maturity-alerts" />
         <Stack.Screen name="debt-free" />
-        <Stack.Screen name="ai-advisor" />
-        <Stack.Screen name="settings" />
         <Stack.Screen name="compare-loans" />
+        <Stack.Screen name="add-transaction" />
       </Stack>
       <StatusBar style="dark" />
     </SafeAreaProvider>

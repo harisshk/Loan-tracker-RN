@@ -13,7 +13,7 @@ const refreshAllNotifications = async (loans, insurances = []) => {
     
     if (loans) {
       for (const loan of loans) {
-        if (loan.startDate && loan.emiAmount) {
+        if (loan.startDate && loan.emiAmount && loan.loanType !== 'bullet') {
           await scheduleEMIReminder(loan);
         }
       }

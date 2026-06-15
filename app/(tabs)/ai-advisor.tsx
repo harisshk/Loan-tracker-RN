@@ -17,8 +17,9 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getLoans } from '../utils/storage';
-import Config from '../utils/Config';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getLoans } from '../../utils/storage';
+import { getTransactions } from '../../utils/transactions';
 
 const USAGE_KEY = '@ai_usage_limit';
 
@@ -29,16 +30,22 @@ const MODELS = [
   { id: 'gemini-2.5-flash-preview', name: '2.5 Flash', desc: 'Active • 20 RPD • 5 RPM', rpm: 5, rpd: 20 }
 ];
 
-const SUGGESTIONS = [
+const LOAN_SUGGESTIONS = [
   '💰 Which loan costs me the most interest?',
   '📊 Should I prepay any loan?',
   '🗓️ When will I be debt-free?',
   '📈 How to reduce my EMI burden?',
-  '📝 Give me a financial health checkup',
+];
+
+const SPEND_SUGGESTIONS = [
+  '📊 How much did I spend this month?',
+  '💸 What is my 3-month spending breakdown?',
+  '🛍️ What is my highest spending category?',
+  '💳 Give me a budget and spending health checkup',
 ];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
+const fetchWithRetry = async (url: string, options: any, retries = 3, backoff = 1000): Promise<{ res: Response, data: any }> => {
   try {
     const res = await fetch(url, options);
     const data = await res.json();
@@ -56,14 +63,10 @@ const fetchWithRetry = async (url, options, retries = 3, backoff = 1000) => {
   }
 };
 
-const buildSystemPrompt = (loans) => {
+const buildLoansPrompt = (loans: any[]) => {
   const today = new Date();
-  
-  // Filter for ONLY active loans
   const activeLoans = loans.filter(l => {
     if (l.status === 'closed') return false;
-    
-    // Check if tenure has already expired based on start date
     if (l.startDate && l.tenure) {
       const start = new Date(l.startDate);
       const monthsDiff = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
@@ -76,7 +79,7 @@ const buildSystemPrompt = (loans) => {
     `- ${l.loanName}: ₹${parseFloat(l.principal || 0).toLocaleString('en-IN')} @ ${l.interest}% interest. EMI: ₹${parseFloat(l.emiAmount || 0).toLocaleString('en-IN')}. Tenure: ${l.tenure} months. Started: ${l.startDate}`
   ).join('\n');
 
-  return `You are a professional Indian Financial Advisor. Help users understand their loans and optimize their finances.
+  return `You are a professional Indian Financial Advisor specializing in Loan Optimization. Help users understand their loans, minimize interest payments, plan prepayments, and reach debt freedom.
 Today: ${today.toDateString()}
 
 USER ACTIVE LOAN PORTFOLIO (Only current debts):
@@ -84,25 +87,128 @@ ${context || 'No active loans currently.'}
 
 INSTRUCTIONS:
 - ONLY calculate based on the ACTIVE loans listed above.
-- Ignore any mention of past/finished car or property loans if they aren't in the list above.
+- Ignore any mention of past/finished car or property loans if they aren't in the list.
+- Use Markdown for responses (# for headers, **bold** for emphasis, - for lists).
+- Use Indian currency format (₹).
+- Keep your response short and concise. Do not explain much until asked by the user.`;
+};
+
+const buildSpendsPrompt = (transactions: any[]) => {
+  const today = new Date();
+  if (!transactions || transactions.length === 0) {
+    return `You are a professional Expense Analyst & Budget Advisor. Analyze the user's spending data.
+Today: ${today.toDateString()}
+
+USER TRANSACTION DATA:
+No spending/transaction history available.
+
+INSTRUCTIONS:
+- Guide the user on how to add transaction data manually or configure automated SMS imports in settings.
+- Use Markdown for responses. Keep response short and concise.`;
+  }
+
+  const getStatsForRange = (monthsAgoStart: number, monthsAgoEnd?: number) => {
+    const startDate = new Date(today.getFullYear(), today.getMonth() - monthsAgoStart, 1);
+    const endDate = monthsAgoEnd !== undefined 
+      ? new Date(today.getFullYear(), today.getMonth() - monthsAgoEnd, 0, 23, 59, 59) 
+      : new Date();
+
+    const filtered = transactions.filter(t => {
+      const d = new Date(t.date);
+      return d >= startDate && d <= endDate;
+    });
+
+    let inflow = 0;
+    let outflow = 0;
+    let upiOutflow = 0;
+    let cardOutflow = 0;
+    const categories: { [key: string]: number } = {};
+
+    filtered.forEach(t => {
+      const amt = parseFloat(t.amount || 0);
+      if (t.type === 'credit') {
+        inflow += amt;
+      } else {
+        outflow += amt;
+        const mode = t.mode || 'UPI';
+        if (mode === 'Credit Card') {
+          cardOutflow += amt;
+        } else {
+          upiOutflow += amt;
+        }
+        categories[t.category] = (categories[t.category] || 0) + amt;
+      }
+    });
+
+    return { inflow, outflow, upiOutflow, cardOutflow, categories };
+  };
+
+  const thisMonthStats = getStatsForRange(0);
+  const lastMonthStats = getStatsForRange(1, 1);
+  const last3MonthsStats = getStatsForRange(3);
+  const last6MonthsStats = getStatsForRange(6);
+
+  const formatStats = (title: string, stats: any) => {
+    const catBreakdown = Object.entries(stats.categories)
+      .map(([cat, amt]: any) => `  - ${cat}: ₹${amt.toLocaleString('en-IN')}`)
+      .join('\n');
+    return `### ${title}:
+- Total Inflow (Credit): ₹${stats.inflow.toLocaleString('en-IN')}
+- Total Outflow (Debit): ₹${stats.outflow.toLocaleString('en-IN')}
+- Outflow by Payment Method:
+  - UPI Spends: ₹${stats.upiOutflow.toLocaleString('en-IN')}
+  - Credit Card Spends: ₹${stats.cardOutflow.toLocaleString('en-IN')}
+- Category Breakdown:
+${catBreakdown || '  - No debit categories recorded.'}`;
+  };
+
+  const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, 1);
+  const recentTxs = transactions
+    .filter(t => new Date(t.date) >= sixMonthsAgo)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 100);
+
+  const txList = recentTxs.map(t => 
+    `- ${new Date(t.date).toISOString().split('T')[0]}: ${t.type.toUpperCase()} of ₹${parseFloat(t.amount).toLocaleString('en-IN')} in "${t.category}" (${t.description || 'No description'}) [Mode: ${t.mode || 'UPI'}]`
+  ).join('\n');
+
+  return `You are a professional Expense Analyst & Budget Advisor specializing in Personal Expense Analysis. Help users track budgets, recognize outflow trends (including splitting by Credit Card vs UPI spends), cut unnecessary spending, and manage their cash flow.
+Today: ${today.toDateString()}
+
+USER SPENDING & INCOME SUMMARY:
+${formatStats('This Month (Current)', thisMonthStats)}
+
+${formatStats('Last Month', lastMonthStats)}
+
+${formatStats('Last 3 Months (Cumulative)', last3MonthsStats)}
+
+${formatStats('Last 6 Months (Cumulative)', last6MonthsStats)}
+
+RECENT TRANSACTION LEDGER (Last 6 Months, up to 100 items):
+${txList}
+
+INSTRUCTIONS:
+- ONLY analyze and calculate based on the TRANSACTION summaries and list provided above.
+- Find averages, maximum amounts, payment method breakdowns (UPI vs Credit Card), and category breakdowns directly using this data.
 - Use Markdown for responses (# for headers, **bold** for emphasis, - for lists).
 - Use Indian currency format (₹).
 - Keep your response short and concise. Do not explain much until asked by the user.`;
 };
 
 export default function AIAdvisor() {
-  const router = useRouter();
-  const scrollRef = useRef(null);
-  const [messages, setMessages] = useState([
-    { role: 'assistant', text: "👋 Hi! I'm your **AI Financial Advisor**. I've analyzed your loans and I'm ready to help you save money!\n\nWhat would you like to know?" },
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
+  const [contextType, setContextType] = useState<'loans' | 'spends'>('loans');
+  const [messages, setMessages] = useState<{ role: string; text: string; isError?: boolean }[]>([
+    { role: 'assistant', text: "👋 Hi! I'm your **AI Financial Advisor**. I can help you analyze your **Loans** or your **Spends**.\n\nUse the toggle at the top to select your context, and let's get started!" },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loans, setLoans] = useState([]);
+  const [loans, setLoans] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState(MODELS[0].id);
   const [lastUserQuery, setLastUserQuery] = useState('');
   const [usage, setUsage] = useState({ count: 0, date: '' });
-
   const [activeKey, setActiveKey] = useState('');
 
   useEffect(() => { 
@@ -120,10 +226,12 @@ export default function AIAdvisor() {
     };
     init();
     loadLoans(); 
+    loadTransactions();
     loadUsage();
   }, []);
 
   const loadLoans = async () => { try { const data = await getLoans(); setLoans(data || []); } catch (e) {} };
+  const loadTransactions = async () => { try { const data = await getTransactions(); setTransactions(data || []); } catch (e) {} };
   
   const loadUsage = async () => {
     try {
@@ -156,17 +264,17 @@ export default function AIAdvisor() {
     Alert.alert(
       '📊 AI Usage Today',
       `Model: ${currentModel.name}\nUsed: ${usage.count}\nRemaining: ${Math.max(0, remaining)}\nDaily Limit: ${currentModel.rpd}\n\nLimit resets at midnight.`,
-      [{ text: 'Got it' }, { text: 'Switch Model', onPress: () => {} }]
+      [{ text: 'Got it' }]
     );
   };
 
-  const sendMessage = async (text, isRetry = false) => {
+  const sendMessage = async (text?: string, isRetry = false) => {
     const userText = (text || input).trim();
     if (!userText || loading) return;
 
     const currentModel = MODELS.find(m => m.id === selectedModel) || MODELS[0];
     if (usage.count >= currentModel.rpd) {
-      Alert.alert('Quota Exceeded', 'You have reached your 20 daily messages for this AI model. Please try again tomorrow.');
+      Alert.alert('Quota Exceeded', 'You have reached your daily limit for this AI model. Please try again tomorrow.');
       return;
     }
 
@@ -184,18 +292,21 @@ export default function AIAdvisor() {
 
     try {
       if (!activeKey) {
-      Alert.alert('Settings Required', 'Please add your Gemini API Key in the Settings page first.');
-      return;
-    }
+        Alert.alert('Settings Required', 'Please add your Gemini API Key in the Settings page first.');
+        setLoading(false);
+        return;
+      }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeKey}`;
       const history = newMessages.filter((m, i) => !(i === 0 && m.role === 'assistant')).slice(-8);
+
+      const prompt = contextType === 'loans' ? buildLoansPrompt(loans) : buildSpendsPrompt(transactions);
 
       const { res, data } = await fetchWithRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          system_instruction: { parts: [{ text: buildSystemPrompt(loans) }] },
+          system_instruction: { parts: [{ text: prompt }] },
           contents: history.map(m => ({
             role: m.role === 'assistant' ? 'model' : 'user',
             parts: [{ text: m.text }]
@@ -210,27 +321,30 @@ export default function AIAdvisor() {
         
         if (highDemandRegex.test(rawMsg)) {
           const match = rawMsg.match(retryRegex);
-          rawMsg = `🚀 AI is currently very busy (High Demand). Please try again in ${match ? match[1] : 'a few seconds'}.`;
+          rawMsg = `🚀 AI is currently very busy. Please try again in ${match ? match[1] : 'a few seconds'}.`;
         }
         throw new Error(rawMsg);
       }
 
       await incrementUsage();
       const parts = data?.candidates?.[0]?.content?.parts || [];
-      const aiResponse = parts.find(p => p.text)?.text || "I couldn't generate a response.";
+      const aiResponse = parts.find((p: any) => p.text)?.text || "I couldn't generate a response.";
       setMessages(prev => [...prev, { role: 'assistant', text: aiResponse }]);
-    } catch (err) {
+    } catch (err: any) {
       setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${err.message}`, isError: true }]);
     } finally {
       setLoading(false);
     }
   };
 
+  const suggestions = contextType === 'loans' ? LOAN_SUGGESTIONS : SPEND_SUGGESTIONS;
+
   return (
     <LinearGradient colors={['#0f172a', '#1e293b', '#0f2d20']} style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'padding'} style={styles.flex} keyboardVerticalOffset={40}>
-        <BlurView intensity={20} tint="dark" style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.headerAction}><Text style={styles.backBtnText}>← Back</Text></TouchableOpacity>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex} keyboardVerticalOffset={0}>
+        
+        {/* Header Block */}
+        <BlurView intensity={20} tint="dark" style={[styles.header, { paddingTop: insets.top + 10 }]}>
           <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={styles.headerTitle}>🤖 AI Advisor</Text>
             {(() => {
@@ -247,6 +361,7 @@ export default function AIAdvisor() {
           </TouchableOpacity>
         </BlurView>
 
+        {/* Model Bar Selector */}
         <View style={styles.modelBar}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modelScroll}>
             {MODELS.map(m => (
@@ -257,8 +372,28 @@ export default function AIAdvisor() {
           </ScrollView>
         </View>
 
+        {/* Segmented Context Selector */}
+        <View style={styles.selectorContainer}>
+          <BlurView intensity={25} tint="dark" style={styles.selectorBlur}>
+            <TouchableOpacity 
+              style={[styles.selectorBtn, contextType === 'loans' && styles.selectorBtnActive]} 
+              onPress={() => setContextType('loans')}
+            >
+              <Ionicons name="wallet-outline" size={16} color={contextType === 'loans' ? '#fff' : 'rgba(255,255,255,0.5)'} />
+              <Text style={[styles.selectorText, contextType === 'loans' && styles.selectorTextActive]}>Analyze Loans</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.selectorBtn, contextType === 'spends' && styles.selectorBtnActive]} 
+              onPress={() => setContextType('spends')}
+            >
+              <Ionicons name="card-outline" size={16} color={contextType === 'spends' ? '#fff' : 'rgba(255,255,255,0.5)'} />
+              <Text style={[styles.selectorText, contextType === 'spends' && styles.selectorTextActive]}>Analyze Spends</Text>
+            </TouchableOpacity>
+          </BlurView>
+        </View>
+
         <ScrollView ref={scrollRef} style={styles.chatArea} contentContainerStyle={styles.chatContent} keyboardShouldPersistTaps="handled">
-          {messages.map((msg, idx) => (
+          {messages.map((msg: any, idx) => (
             <View key={idx} style={{ gap: 8 }}>
               <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
                 {msg.role === 'assistant' && <Text style={styles.aiLabel}>{msg.isError ? 'ERROR' : 'ADVISOR'}</Text>}
@@ -279,26 +414,37 @@ export default function AIAdvisor() {
           
           {messages.length < 3 && !loading && (
             <View style={styles.suggestGrid}>
-              {SUGGESTIONS.map((s, i) => (
-                <TouchableOpacity key={i} style={styles.suggestChip} onPress={() => sendMessage(s)}><Text style={styles.suggestText}>{s}</Text></TouchableOpacity>
+              {suggestions.map((s, i) => (
+                <TouchableOpacity key={i} style={styles.suggestChip} onPress={() => sendMessage(s)}>
+                  <Text style={styles.suggestText}>{s}</Text>
+                </TouchableOpacity>
               ))}
             </View>
           )}
         </ScrollView>
 
         <BlurView intensity={40} tint="dark" style={styles.inputBar}>
-          <TextInput style={styles.input} placeholder="Ask about your loans..." placeholderTextColor="rgba(255,255,255,0.3)" value={input} onChangeText={setInput} multiline />
-          <TouchableOpacity style={styles.sendBt} onPress={() => sendMessage()} disabled={loading}><Text style={styles.sendBtText}>↑</Text></TouchableOpacity>
+          <TextInput 
+            style={styles.input} 
+            placeholder={contextType === 'loans' ? "Ask about your loans..." : "Ask about your spends/budgets..."} 
+            placeholderTextColor="rgba(255,255,255,0.3)" 
+            value={input} 
+            onChangeText={setInput} 
+            multiline 
+          />
+          <TouchableOpacity style={styles.sendBt} onPress={() => sendMessage()} disabled={loading}>
+            <Text style={styles.sendBtText}>↑</Text>
+          </TouchableOpacity>
         </BlurView>
       </KeyboardAvoidingView>
     </LinearGradient>
   );
 }
 
-const markdownStyles = {
+const markdownStyles: any = {
   body: { color: 'rgba(255,255,255,0.95)', fontSize: 15, lineHeight: 22 },
-  heading1: { color: '#10b981', fontSize: 24, fontWeight: '800', marginVertical: 10 },
-  heading2: { color: '#10b981', fontSize: 20, fontWeight: '700', marginVertical: 10 },
+  heading1: { color: '#10b981', fontSize: 22, fontWeight: '800', marginVertical: 8 },
+  heading2: { color: '#10b981', fontSize: 18, fontWeight: '700', marginVertical: 8 },
   strong: { fontWeight: '800', color: '#fff' },
   bullet_list_icon: { color: '#10b981' },
 };
@@ -306,19 +452,22 @@ const markdownStyles = {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 60, paddingBottom: 15, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)' },
-  headerAction: { width: 60, alignItems: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 12, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)' },
+  headerAction: { width: 50, alignItems: 'center' },
   headerTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
   quotaText: { fontSize: 11, fontWeight: '700', color: '#10b981', marginTop: 2, letterSpacing: 1 },
-  backBtnText: { color: '#10b981', fontWeight: 'bold' },
-  usageCounter: { backgroundColor: 'rgba(16,185,129,0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
-  usageText: { color: '#10b981', fontWeight: '800', fontSize: 12 },
-  modelBar: { backgroundColor: 'rgba(0,0,0,0.2)', paddingVertical: 12 },
-  modelScroll: { paddingHorizontal: 15, gap: 10 },
-  modelChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  modelBar: { backgroundColor: 'rgba(0,0,0,0.2)', paddingVertical: 10 },
+  modelScroll: { paddingHorizontal: 15, gap: 8 },
+  modelChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   modelChipActive: { backgroundColor: '#10b981', borderColor: '#10b981' },
-  modelChipText: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 'bold' },
+  modelChipText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: 'bold' },
   modelChipTextActive: { color: '#fff' },
+  selectorContainer: { paddingHorizontal: 15, marginVertical: 10 },
+  selectorBlur: { flexDirection: 'row', borderRadius: 14, overflow: 'hidden', padding: 4, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  selectorBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10 },
+  selectorBtnActive: { backgroundColor: '#10b981' },
+  selectorText: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.6)' },
+  selectorTextActive: { color: '#fff' },
   chatArea: { flex: 1 },
   chatContent: { padding: 15, gap: 15 },
   bubble: { maxWidth: '88%', padding: 14, borderRadius: 18 },
@@ -330,7 +479,7 @@ const styles = StyleSheet.create({
   suggestGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 20 },
   suggestChip: { padding: 12, borderRadius: 15, backgroundColor: 'rgba(16,185,129,0.1)', borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)' },
   suggestText: { color: '#10b981', fontSize: 14, fontWeight: '500' },
-  inputBar: { flexDirection: 'row', padding: 15, paddingBottom: Platform.OS === 'ios' ? 35 : 15, gap: 12, alignItems: 'flex-end', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' },
+  inputBar: { flexDirection: 'row', padding: 15, paddingBottom: Platform.OS === 'ios' ? 25 : 15, gap: 12, alignItems: 'flex-end', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' },
   input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 22, paddingHorizontal: 18, paddingVertical: 12, color: '#fff', fontSize: 16, maxHeight: 120 },
   sendBt: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#10b981', justifyContent: 'center', alignItems: 'center' },
   sendBtText: { color: '#fff', fontSize: 24, fontWeight: 'bold' }

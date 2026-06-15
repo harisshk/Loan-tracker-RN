@@ -1,35 +1,33 @@
-import { Tabs } from 'expo-router';
-import React from 'react';
-
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import {
+  Icon,
+  Label,
+  NativeTabs,
+  NativeTabTrigger,
+} from "expo-router/unstable-native-tabs";
+import React from "react";
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
-        }}
-      />
-    </Tabs>
+    <NativeTabs>
+      <NativeTabTrigger name="index">
+        <Icon sf="house.fill" />
+        <Label>Loans</Label>
+      </NativeTabTrigger>
+
+      <NativeTabTrigger name="spend-tracker">
+        <Icon sf="creditcard.fill" />
+        <Label>Spends</Label>
+      </NativeTabTrigger>
+
+      <NativeTabTrigger name="ai-advisor">
+        <Icon sf="sparkles" />
+        <Label>AI Advisor</Label>
+      </NativeTabTrigger>
+
+      <NativeTabTrigger name="settings">
+        <Icon sf="gearshape.fill" />
+        <Label>Settings</Label>
+      </NativeTabTrigger>
+    </NativeTabs>
   );
 }

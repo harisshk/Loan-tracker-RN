@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "LoanGlass",
-    "slug": "loan-glass",
+    "name": "Velo Flow",
+    "slug": "velo-flow",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "loanglass",
-    "userInterfaceStyle": "automatic",
+    "scheme": "veloflow",
+    "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.hkumardev.loanglass",
+      "bundleIdentifier": "com.hkumardev.veloflow",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.hkumardev.loanglass"
+      "package": "com.hkumardev.veloflow"
     },
     "web": {
       "output": "static",
@@ -44,7 +44,8 @@
             "backgroundColor": "#0f172a"
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
