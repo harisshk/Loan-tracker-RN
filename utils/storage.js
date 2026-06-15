@@ -5,6 +5,8 @@ import { scheduleEMIReminder, cancelAllLoanNotifications, scheduleInsuranceRemin
 const LOANS_KEY = '@loans';
 const PAYMENTS_KEY = '@payments';
 const INSURANCES_KEY = '@insurances';
+const TRANSACTIONS_KEY = '@transactions';
+const BUDGET_LIMIT_KEY = '@budget_limit';
 
 // Helper to refresh all notifications
 const refreshAllNotifications = async (loans, insurances = []) => {
@@ -408,7 +410,14 @@ export const exportAllData = async () => {
     const loans = await getLoans();
     const payments = await getPayments();
     const insurances = await getInsurances();
-    return JSON.stringify({ loans, payments, insurances, timestamp: new Date().toISOString() });
+    
+    const txsValue = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+    const transactions = txsValue ? JSON.parse(txsValue) : [];
+    
+    const limitValue = await AsyncStorage.getItem(BUDGET_LIMIT_KEY);
+    const budgetLimit = limitValue ? parseFloat(limitValue) : 50000;
+
+    return JSON.stringify({ loans, payments, insurances, transactions, budgetLimit, timestamp: new Date().toISOString() });
   } catch (e) {
     console.error('Error exporting data:', e);
     throw e;
@@ -424,6 +433,11 @@ export const importAllData = async (jsonString) => {
     await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(data.loans || []));
     await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(data.payments || []));
     await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(data.insurances || []));
+    await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(data.transactions || []));
+    
+    if (data.budgetLimit !== undefined) {
+      await AsyncStorage.setItem(BUDGET_LIMIT_KEY, String(data.budgetLimit));
+    }
     
     // Refresh notifications for all imported data
     const finalLoans = data.loans || [];

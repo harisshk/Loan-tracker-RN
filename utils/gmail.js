@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getTransactions, syncWithSupabase } from './transactions';
+import { classifyCategoryOffline, bulkClassifyCategories } from './classifier';
 
 const TRANSACTIONS_KEY = '@transactions';
 const GMAIL_ACCESS_TOKEN_KEY = '@gmail_access_token';
@@ -124,7 +125,7 @@ const parseGmailMessage = (bodyText, dateStr) => {
     id,
     amount,
     type,
-    category: type === 'credit' ? 'Salary' : 'Other',
+    category: classifyCategoryOffline(description),
     description,
     date: dateStr,
     source: 'gmail',
@@ -254,10 +255,12 @@ export const syncGmailTransactions = async () => {
     }
 
     if (parsedTxs.length > 0) {
+      const classifiedTxs = await bulkClassifyCategories(parsedTxs);
+
       const currentTxs = await getTransactions();
       const currentIds = new Set(currentTxs.map(t => t.id));
       
-      const newTxs = parsedTxs.filter(tx => !currentIds.has(tx.id));
+      const newTxs = classifiedTxs.filter(tx => !currentIds.has(tx.id));
       
       if (newTxs.length > 0) {
         const updatedTxs = [...currentTxs, ...newTxs];

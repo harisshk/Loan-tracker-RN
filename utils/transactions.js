@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSmartCategory } from './classifier';
 
 const TRANSACTIONS_KEY = '@transactions';
 const BUDGET_LIMIT_KEY = '@budget_limit';
@@ -27,12 +28,20 @@ export const getTransactions = async () => {
 export const saveTransaction = async (transaction) => {
   try {
     const transactions = await getTransactions();
+    
+    let finalCategory = transaction.category || 'Other';
+    if (finalCategory === 'Other' && transaction.description) {
+      finalCategory = await getSmartCategory(transaction.description);
+    }
+
     const newTx = {
       id: transaction.id || `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       ...transaction,
+      category: finalCategory,
       mode: transaction.mode || 'UPI',
       date: transaction.date || new Date().toISOString(),
       createdAt: new Date().toISOString(),
+      synced: false,
     };
     transactions.push(newTx);
     await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(transactions));
@@ -129,12 +138,7 @@ export const syncWithSupabase = async () => {
     const remoteTxs = await response.json();
 
     // 2. Simple sync logic: Merge local and remote by ID, newer updates wins if any.
-    // For personal transactions, we primarily:
-    // - Upload local transactions not yet in remote
-    // - Download remote transactions not yet in local (like SMS shortcuts)
     const remoteMap = new Map(remoteTxs.map(tx => [tx.id, tx]));
-    const localMap = new Map(localTxs.map(tx => [tx.id, tx]));
-
     const mergedMap = new Map();
 
     // Add all local transactions
@@ -142,7 +146,6 @@ export const syncWithSupabase = async () => {
 
     // Add remote transactions (remote wins in case of additions, e.g., Shortcut)
     remoteTxs.forEach(tx => {
-      // Map database schema fields to app format if necessary
       const mappedTx = {
         id: tx.id,
         amount: parseFloat(tx.amount),
@@ -152,11 +155,22 @@ export const syncWithSupabase = async () => {
         description: tx.description || '',
         source: tx.source || 'shortcut',
         mode: tx.mode || 'UPI',
+        synced: true,
       };
       mergedMap.set(tx.id, mappedTx);
     });
 
     const finalTxs = Array.from(mergedMap.values());
+    
+    // Set synced status for transactions that exist in remote Map
+    finalTxs.forEach(tx => {
+      if (remoteMap.has(tx.id)) {
+        tx.synced = true;
+      } else {
+        tx.synced = tx.synced || false;
+      }
+    });
+
     await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(finalTxs));
 
     // 3. Upload missing transactions back to Supabase
@@ -188,6 +202,15 @@ export const syncWithSupabase = async () => {
 
       if (!uploadResp.ok) {
         console.warn('Sync uploading failed:', await uploadResp.text());
+      } else {
+        // Mark these uploaded transactions as synced!
+        const uploadedIds = new Set(toUpload.map(tx => tx.id));
+        finalTxs.forEach(tx => {
+          if (uploadedIds.has(tx.id)) {
+            tx.synced = true;
+          }
+        });
+        await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(finalTxs));
       }
     }
 
@@ -206,10 +229,17 @@ export const updateTransaction = async (updatedTx) => {
       throw new Error('Transaction not found');
     }
     
+    let finalCategory = updatedTx.category || 'Other';
+    if (finalCategory === 'Other' && updatedTx.description) {
+      finalCategory = await getSmartCategory(updatedTx.description);
+    }
+
     transactions[index] = {
       ...transactions[index],
       ...updatedTx,
+      category: finalCategory,
       updatedAt: new Date().toISOString(),
+      synced: false,
     };
     
     await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(transactions));
@@ -228,11 +258,20 @@ export const updateTransaction = async (updatedTx) => {
         body: JSON.stringify({
           amount: updatedTx.amount,
           type: updatedTx.type,
-          category: updatedTx.category,
+          category: finalCategory,
           date: updatedTx.date,
           description: updatedTx.description,
           mode: updatedTx.mode || 'UPI',
         }),
+      }).then(async (res) => {
+        if (res.ok) {
+          const currentTxs = await getTransactions();
+          const curIndex = currentTxs.findIndex(t => t.id === updatedTx.id);
+          if (curIndex !== -1) {
+            currentTxs[curIndex].synced = true;
+            await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(currentTxs));
+          }
+        }
       }).catch(e => console.warn('Supabase update background failed:', e));
     }
     
@@ -242,4 +281,3 @@ export const updateTransaction = async (updatedTx) => {
     throw e;
   }
 };
-

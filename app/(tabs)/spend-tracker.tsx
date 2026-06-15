@@ -353,15 +353,23 @@ export default function SpendTracker() {
                     <Text style={styles.txDesc} numberOfLines={1}>
                       {item.description || item.category}
                     </Text>
-                    <Text style={styles.txDate}>
-                      {new Date(item.date).toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                      {item.source === 'shortcut' && ' • Automated'}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                      <Text style={styles.txDate}>
+                        {new Date(item.date).toLocaleDateString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        {item.source === 'shortcut' && ' • Automated'}
+                      </Text>
+                      <Ionicons
+                        name={item.synced ? "cloud-done" : "cloud-offline"}
+                        size={12}
+                        color={item.synced ? "#10b981" : "#f59e0b"}
+                        style={{ marginLeft: 2 }}
+                      />
+                    </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text

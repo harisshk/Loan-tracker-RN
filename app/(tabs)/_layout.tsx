@@ -19,6 +19,11 @@ export default function TabLayout() {
         <Label>Spends</Label>
       </NativeTabTrigger>
 
+      <NativeTabTrigger name="analytics">
+        <Icon sf="chart.pie.fill" />
+        <Label>Analytics</Label>
+      </NativeTabTrigger>
+
       <NativeTabTrigger name="ai-advisor">
         <Icon sf="sparkles" />
         <Label>AI Advisor</Label>
