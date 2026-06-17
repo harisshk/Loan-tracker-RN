@@ -48,11 +48,8 @@ export const clearAuthUser = async () => {
 };
 
 export const signUpWithEmail = async (email, password) => {
-  let urlStr = await AsyncStorage.getItem('@supabase_url');
-  let key = await AsyncStorage.getItem('@supabase_key');
-  
-  if (!urlStr) urlStr = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  if (!key) key = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+  let urlStr = process.env.EXPO_PUBLIC_SUPABASE_URL || await AsyncStorage.getItem('@supabase_url');
+  let key = process.env.EXPO_PUBLIC_SUPABASE_KEY || await AsyncStorage.getItem('@supabase_key');
 
   if (!urlStr || !key) {
     throw new Error('Supabase URL and Anon Key must be configured first.');
@@ -76,11 +73,8 @@ export const signUpWithEmail = async (email, password) => {
 };
 
 export const signInWithEmail = async (email, password) => {
-  let urlStr = await AsyncStorage.getItem('@supabase_url');
-  let key = await AsyncStorage.getItem('@supabase_key');
-
-  if (!urlStr) urlStr = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  if (!key) key = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+  let urlStr = process.env.EXPO_PUBLIC_SUPABASE_URL || await AsyncStorage.getItem('@supabase_url');
+  let key = process.env.EXPO_PUBLIC_SUPABASE_KEY || await AsyncStorage.getItem('@supabase_key');
 
   if (!urlStr || !key) {
     throw new Error('Supabase URL and Anon Key must be configured first.');

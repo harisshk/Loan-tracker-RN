@@ -89,7 +89,7 @@ export default function DashboardView() {
       const currentYear = now.getFullYear();
       const currentMonthDebits = txs.filter((t: any) => {
         const d = new Date(t.date);
-        return t.type === 'debit' && d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+        return (t.type || '').toLowerCase() !== 'credit' && d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       }).reduce((sum: number, t: any) => sum + parseFloat(t.amount || 0), 0);
       setSpentThisMonth(currentMonthDebits);
 
@@ -485,7 +485,7 @@ export default function DashboardView() {
           {spendPieData.length > 0 ? (
             <BlurView intensity={30} tint="light" style={styles.analyticsCard}>
               <Text style={styles.analyticsCardTitle}>Spend Categories</Text>
-              <Text style={styles.analyticsCardSubtitle}>This month's expense breakdown</Text>
+              <Text style={styles.analyticsCardSubtitle}>This month&apos;s expense breakdown</Text>
               <PieChart
                 data={spendPieData}
                 width={width - 80}

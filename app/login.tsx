@@ -49,8 +49,8 @@ export default function LoginScreen() {
   useEffect(() => {
     const loadSupabaseConfig = async () => {
       try {
-        const url = await AsyncStorage.getItem('@supabase_url');
-        const key = await AsyncStorage.getItem('@supabase_key');
+        const url = process.env.EXPO_PUBLIC_SUPABASE_URL || await AsyncStorage.getItem('@supabase_url');
+        const key = process.env.EXPO_PUBLIC_SUPABASE_KEY || await AsyncStorage.getItem('@supabase_key');
         if (url) setSupabaseUrl(url);
         if (key) setSupabaseKey(key);
       } catch (e) {

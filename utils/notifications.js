@@ -1,45 +1,71 @@
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-// Configure how notifications appear when the app is in foreground
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+let Notifications = null;
+let isSupported = true;
+
+// Helper to lazily load expo-notifications only when a function is called
+function getNotifications() {
+  if (!isSupported) return null;
+  if (Notifications) return Notifications;
+  try {
+    Notifications = require('expo-notifications');
+    // Configure how notifications appear when the app is in foreground
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+    return Notifications;
+  } catch (e) {
+    console.warn('expo-notifications is not supported in this environment (e.g. Expo Go). Falling back to mock implementation.', e.message);
+    isSupported = false;
+    return null;
+  }
+}
 
 // Request local notification permissions (no remote push token needed)
 export async function registerForPushNotificationsAsync() {
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#10b981',
-    });
-  }
+  const notifications = getNotifications();
+  if (!notifications) return null;
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
+  try {
+    if (Platform.OS === 'android') {
+      await notifications.setNotificationChannelAsync('default', {
+        name: 'default',
+        importance: notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#10b981',
+      });
+    }
 
-  if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
+    const { status: existingStatus } = await notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
 
-  if (finalStatus !== 'granted') {
-    console.log('Notification permission not granted.');
+    if (existingStatus !== 'granted') {
+      const { status } = await notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== 'granted') {
+      console.log('Notification permission not granted.');
+      return null;
+    }
+
+    return 'local-only'; // No remote token needed
+  } catch (e) {
+    console.warn('Failed to register for push notifications:', e.message);
     return null;
   }
-
-  return 'local-only'; // No remote token needed
 }
 
 // Schedule a monthly local notification for an EMI loan
 export async function scheduleEMIReminder(loan) {
   if (!loan.startDate || !loan.emiAmount) return;
+
+  const notifications = getNotifications();
+  if (!notifications) return null;
 
   const startDate = new Date(loan.startDate);
   const dueDay = startDate.getDate();
@@ -48,7 +74,7 @@ export async function scheduleEMIReminder(loan) {
   if (targetDay <= 0) targetDay = 28; // Safe fallback for 1st-of-month due dates
 
   try {
-    const identifier = await Notifications.scheduleNotificationAsync({
+    const identifier = await notifications.scheduleNotificationAsync({
       content: {
         title: '💰 EMI Reminder',
         body: `Your EMI for ${loan.loanName} of ₹${parseFloat(loan.emiAmount).toLocaleString('en-IN')} is due tomorrow!`,
@@ -70,8 +96,11 @@ export async function scheduleEMIReminder(loan) {
 
 // Cancel all scheduled notifications (call before rescheduling)
 export async function cancelAllLoanNotifications() {
+  const notifications = getNotifications();
+  if (!notifications) return;
+
   try {
-    await Notifications.cancelAllScheduledNotificationsAsync();
+    await notifications.cancelAllScheduledNotificationsAsync();
   } catch (e) {
     console.warn('Could not cancel notifications:', e.message);
   }
@@ -80,6 +109,9 @@ export async function cancelAllLoanNotifications() {
 // Schedule local notifications for an insurance policy
 export async function scheduleInsuranceReminder(insurance) {
   if (!insurance.startDate || !insurance.premiumAmount) return;
+
+  const notifications = getNotifications();
+  if (!notifications) return;
 
   const startDate = new Date(insurance.startDate);
   const dueDay = startDate.getDate();
@@ -92,7 +124,7 @@ export async function scheduleInsuranceReminder(insurance) {
 
   try {
     if (insurance.frequency === 'monthly') {
-      await Notifications.scheduleNotificationAsync({
+      await notifications.scheduleNotificationAsync({
         content: { title: '🛡️ Insurance Premium Due!', body },
         trigger: { type: 'calendar', day: targetDay, hour: 10, minute: 0, repeats: true },
       });
@@ -114,7 +146,7 @@ export async function scheduleInsuranceReminder(insurance) {
       }
 
       for (const month of targetMonths) {
-        await Notifications.scheduleNotificationAsync({
+        await notifications.scheduleNotificationAsync({
           content: { title: '🛡️ Insurance Premium Due!', body },
           trigger: { type: 'calendar', month, day: targetDay, hour: 10, minute: 0, repeats: true },
         });

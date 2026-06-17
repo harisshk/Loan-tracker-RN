@@ -1,13 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { calculateEMIBreakdown } from './emiCalculator';
 import { cancelAllLoanNotifications, scheduleEMIReminder, scheduleInsuranceReminder } from './notifications';
-import { getTransactions } from './transactions';
+import { getTransactions, getSupabaseConfig, isUserEmailColumnSupported } from './transactions';
 
-const LOANS_KEY = '@loans';
-const PAYMENTS_KEY = '@payments';
-const INSURANCES_KEY = '@insurances';
-const TRANSACTIONS_KEY = '@transactions';
 const BUDGET_LIMIT_KEY = '@budget_limit';
+
+const getCleanUrl = (url) => {
+  if (!url) return '';
+  let clean = url.trim().replace(/\/$/, '');
+  if (clean.endsWith('/rest/v1')) {
+    clean = clean.substring(0, clean.length - 8);
+  }
+  return clean;
+};
 
 // Helper to refresh all notifications
 const refreshAllNotifications = async (loans, insurances = []) => {
@@ -34,103 +39,203 @@ const refreshAllNotifications = async (loans, insurances = []) => {
   }
 };
 
-// Raw list helpers to retrieve all users' data without filtering (for writing back)
-const getAllInsurancesRaw = async () => {
-  try {
-    const jsonValue = await AsyncStorage.getItem(INSURANCES_KEY);
-    return jsonValue != null ? JSON.parse(jsonValue) : [];
-  } catch (e) {
-    return [];
-  }
-};
-
-const getAllLoansRaw = async () => {
-  try {
-    const jsonValue = await AsyncStorage.getItem(LOANS_KEY);
-    return jsonValue != null ? JSON.parse(jsonValue) : [];
-  } catch (e) {
-    return [];
-  }
-};
-
-const getAllPaymentsRaw = async () => {
-  try {
-    const jsonValue = await AsyncStorage.getItem(PAYMENTS_KEY);
-    return jsonValue != null ? JSON.parse(jsonValue) : [];
-  } catch (e) {
-    return [];
-  }
-};
-
 // User-scoped getters
 export const getInsurances = async () => {
   try {
-    const all = await getAllInsurancesRaw();
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      console.warn('Supabase not configured, returning empty insurances');
+      return [];
+    }
+
+    const cleanUrl = getCleanUrl(url);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
-    return all.filter(i => (i.user_email || 'anonymous') === userEmail);
+    
+    let fetchUrl = `${cleanUrl}/rest/v1/insurances?select=*`;
+    if (isUserEmailColumnSupported) {
+      fetchUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+    
+    const response = await fetch(fetchUrl, {
+      method: 'GET',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch insurances: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.map(ins => ({
+      id: ins.id,
+      name: ins.name || ins.insuranceName || ins.insurance_name || 'Unnamed Policy',
+      premiumAmount: parseFloat(ins.premiumamount || ins.premium_amount || ins.premiumAmount || 0),
+      startDate: ins.startdate || ins.start_date || ins.startDate,
+      frequency: ins.frequency || 'monthly',
+      createdAt: ins.createdat || ins.created_at || ins.createdAt || new Date().toISOString(),
+    }));
   } catch (e) {
-    console.error('Error reading insurances:', e);
+    console.error('Error reading insurances from Supabase:', e);
     return [];
   }
 };
 
 export const saveInsurance = async (insurance) => {
   try {
-    const allInsurances = await getAllInsurancesRaw();
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const cleanUrl = getCleanUrl(url);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const newIns = {
-      id: Date.now().toString(),
-      ...insurance,
-      user_email: userEmail,
-      createdAt: new Date().toISOString(),
+      id: insurance.id || Date.now().toString(),
+      name: insurance.name || insurance.insuranceName || insurance.insurance_name || 'Unnamed Policy',
+      premiumamount: parseFloat(insurance.premiumAmount || insurance.premium_amount || insurance.premiumamount || 0),
+      startdate: insurance.startDate || insurance.start_date || insurance.startdate || new Date().toISOString().split('T')[0],
+      frequency: insurance.frequency || 'monthly',
     };
-    allInsurances.push(newIns);
-    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(allInsurances));
-    
+    if (isUserEmailColumnSupported) {
+      newIns.user_email = userEmail;
+    }
+
+    const response = await fetch(`${cleanUrl}/rest/v1/insurances`, {
+      method: 'POST',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify(newIns),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to save insurance to Supabase: ${response.status} - ${errText}`);
+    }
+
+    const savedData = await response.json();
+    const savedIns = savedData && savedData[0] ? savedData[0] : newIns;
+
     // Refresh notifications
     const loans = await getLoans();
     const userInsurances = await getInsurances();
     await refreshAllNotifications(loans, userInsurances);
-    
-    return newIns;
+
+    return {
+      id: savedIns.id,
+      name: savedIns.name,
+      premiumAmount: parseFloat(savedIns.premiumamount || savedIns.premium_amount || savedIns.premiumAmount || 0),
+      startDate: savedIns.startdate || savedIns.start_date || savedIns.startDate,
+      frequency: savedIns.frequency || 'monthly',
+      createdAt: savedIns.createdat || savedIns.created_at || savedIns.createdAt || new Date().toISOString(),
+    };
   } catch (e) {
-    console.error('Error saving insurance:', e);
+    console.error('Error saving insurance to Supabase:', e);
     throw e;
   }
 };
 
 export const deleteInsurance = async (id) => {
   try {
-    const allInsurances = await getAllInsurancesRaw();
-    const filtered = allInsurances.filter(i => i.id !== id);
-    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(filtered));
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const cleanUrl = getCleanUrl(url);
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     
+    let deleteUrl = `${cleanUrl}/rest/v1/insurances?id=eq.${id}`;
+    if (isUserEmailColumnSupported) {
+      deleteUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+
+    const response = await fetch(deleteUrl, {
+      method: 'DELETE',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to delete insurance from Supabase: ${response.status} - ${errText}`);
+    }
+
     // Refresh notifications
     const loans = await getLoans();
     const userInsurances = await getInsurances();
     await refreshAllNotifications(loans, userInsurances);
   } catch (e) {
-    console.error('Error deleting insurance:', e);
+    console.error('Error deleting insurance from Supabase:', e);
     throw e;
   }
 };
 
 export const updateInsurance = async (id, updates) => {
   try {
-    const allInsurances = await getAllInsurancesRaw();
-    const idx = allInsurances.findIndex(i => i.id === id);
-    if (idx === -1) throw new Error('Insurance not found');
-    allInsurances[idx] = { ...allInsurances[idx], ...updates };
-    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify(allInsurances));
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const cleanUrl = getCleanUrl(url);
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+
+    let patchUrl = `${cleanUrl}/rest/v1/insurances?id=eq.${id}`;
+    if (isUserEmailColumnSupported) {
+      patchUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+
+    const patchPayload = {};
+    if (updates.name !== undefined) patchPayload.name = updates.name;
+    if (updates.premiumAmount !== undefined) patchPayload.premiumamount = parseFloat(updates.premiumAmount);
+    if (updates.premium_amount !== undefined) patchPayload.premiumamount = parseFloat(updates.premium_amount);
+    if (updates.startDate !== undefined) patchPayload.startdate = updates.startDate;
+    if (updates.start_date !== undefined) patchPayload.startdate = updates.start_date;
+    if (updates.frequency !== undefined) patchPayload.frequency = updates.frequency;
+
+    const response = await fetch(patchUrl, {
+      method: 'PATCH',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify(patchPayload),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to update insurance on Supabase: ${response.status} - ${errText}`);
+    }
+
+    const data = await response.json();
+    const updatedIns = data && data[0] ? data[0] : { id, ...updates };
 
     // Refresh notifications
     const loans = await getLoans();
     const userInsurances = await getInsurances();
     await refreshAllNotifications(loans, userInsurances);
 
-    return allInsurances[idx];
+    return {
+      id: updatedIns.id,
+      name: updatedIns.name,
+      premiumAmount: parseFloat(updatedIns.premiumamount || updatedIns.premium_amount || updatedIns.premiumAmount || 0),
+      startDate: updatedIns.startdate || updatedIns.start_date || updatedIns.startDate,
+      frequency: updatedIns.frequency || 'monthly',
+      createdAt: updatedIns.createdat || updatedIns.created_at || updatedIns.createdAt || new Date().toISOString(),
+    };
   } catch (e) {
-    console.error('Error updating insurance:', e);
+    console.error('Error updating insurance on Supabase:', e);
     throw e;
   }
 };
@@ -138,83 +243,237 @@ export const updateInsurance = async (id, updates) => {
 // Loan operations
 export const getLoans = async () => {
   try {
-    const all = await getAllLoansRaw();
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      console.warn('Supabase not configured, returning empty loans');
+      return [];
+    }
+
+    const cleanUrl = getCleanUrl(url);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
-    return all.filter(l => (l.user_email || 'anonymous') === userEmail);
+
+    let fetchUrl = `${cleanUrl}/rest/v1/loans?select=*`;
+    if (isUserEmailColumnSupported) {
+      fetchUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+
+    const response = await fetch(fetchUrl, {
+      method: 'GET',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch loans: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.map(loan => ({
+      id: loan.id,
+      loanName: loan.loanname || loan.loan_name || loan.loanName || 'Unnamed Loan',
+      loanType: loan.loantype || loan.loan_type || loan.loanType || 'emi',
+      principal: parseFloat(loan.principal || 0),
+      interest: parseFloat(loan.interest || 0),
+      tenure: parseInt(loan.tenure || 0),
+      emiAmount: parseFloat(loan.emiamount || loan.emi_amount || loan.emiAmount || 0),
+      startDate: loan.startdate || loan.start_date || loan.startDate,
+      status: loan.status || 'active',
+      createdAt: loan.createdat || loan.created_at || loan.createdAt || new Date().toISOString(),
+      updatedAt: loan.updatedat || loan.updated_at || loan.updatedAt || new Date().toISOString(),
+    }));
   } catch (e) {
-    console.error('Error reading loans:', e);
+    console.error('Error reading loans from Supabase:', e);
     return [];
   }
 };
 
 export const saveLoan = async (loan) => {
   try {
-    const allLoans = await getAllLoansRaw();
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const cleanUrl = getCleanUrl(url);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const newLoan = {
-      id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      ...loan,
-      user_email: userEmail,
-      createdAt: new Date().toISOString(),
+      id: loan.id || `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      loanname: loan.loanName || loan.loan_name || loan.loanname || 'Unnamed Loan',
+      loantype: loan.loanType || loan.loan_type || loan.loantype || 'emi',
+      principal: parseFloat(loan.principal || 0),
+      interest: parseFloat(loan.interest || 0),
+      tenure: parseInt(loan.tenure || 0),
+      emiamount: parseFloat(loan.emiAmount || loan.emi_amount || loan.emiamount || 0),
+      startdate: loan.startDate || loan.start_date || loan.startdate || new Date().toISOString().split('T')[0],
+      status: loan.status || 'active',
     };
-    allLoans.push(newLoan);
-    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(allLoans));
-    
+    if (isUserEmailColumnSupported) {
+      newLoan.user_email = userEmail;
+    }
+
+    const response = await fetch(`${cleanUrl}/rest/v1/loans`, {
+      method: 'POST',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify(newLoan),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to save loan to Supabase: ${response.status} - ${errText}`);
+    }
+
+    const data = await response.json();
+    const savedLoan = data && data[0] ? data[0] : newLoan;
+
     const insurances = await getInsurances();
     const userLoans = await getLoans();
     await refreshAllNotifications(userLoans, insurances);
-    
-    return newLoan;
+
+    return {
+      id: savedLoan.id,
+      loanName: savedLoan.loanname || savedLoan.loan_name || savedLoan.loanName || 'Unnamed Loan',
+      loanType: savedLoan.loantype || savedLoan.loan_type || savedLoan.loanType || 'emi',
+      principal: parseFloat(savedLoan.principal || 0),
+      interest: parseFloat(savedLoan.interest || 0),
+      tenure: parseInt(savedLoan.tenure || 0),
+      emiAmount: parseFloat(savedLoan.emiamount || savedLoan.emi_amount || savedLoan.emiAmount || 0),
+      startDate: savedLoan.startdate || savedLoan.start_date || savedLoan.startDate,
+      status: savedLoan.status || 'active',
+      createdAt: savedLoan.createdat || savedLoan.created_at || savedLoan.createdAt || new Date().toISOString(),
+      updatedAt: savedLoan.updatedat || savedLoan.updated_at || savedLoan.updatedAt || new Date().toISOString(),
+    };
   } catch (e) {
-    console.error('Error saving loan:', e);
+    console.error('Error saving loan to Supabase:', e);
     throw e;
   }
 };
 
 export const updateLoan = async (loanId, updatedData) => {
   try {
-    const allLoans = await getAllLoansRaw();
-    const loanIndex = allLoans.findIndex(loan => loan.id === loanId);
-    
-    if (loanIndex === -1) {
-      throw new Error('Loan not found');
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
     }
-    
-    allLoans[loanIndex] = {
-      ...allLoans[loanIndex],
-      ...updatedData,
-      updatedAt: new Date().toISOString(),
-    };
-    
-    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(allLoans));
-    
+
+    const cleanUrl = getCleanUrl(url);
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+
+    let patchUrl = `${cleanUrl}/rest/v1/loans?id=eq.${loanId}`;
+    if (isUserEmailColumnSupported) {
+      patchUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+
+    const patchPayload = {};
+    if (updatedData.loanName !== undefined) patchPayload.loanname = updatedData.loanName;
+    if (updatedData.loan_name !== undefined) patchPayload.loanname = updatedData.loan_name;
+    if (updatedData.loanType !== undefined) patchPayload.loantype = updatedData.loanType;
+    if (updatedData.loan_type !== undefined) patchPayload.loantype = updatedData.loan_type;
+    if (updatedData.principal !== undefined) patchPayload.principal = parseFloat(updatedData.principal);
+    if (updatedData.interest !== undefined) patchPayload.interest = parseFloat(updatedData.interest);
+    if (updatedData.tenure !== undefined) patchPayload.tenure = parseInt(updatedData.tenure);
+    if (updatedData.emiAmount !== undefined) patchPayload.emiamount = parseFloat(updatedData.emiAmount);
+    if (updatedData.emi_amount !== undefined) patchPayload.emiamount = parseFloat(updatedData.emi_amount);
+    if (updatedData.startDate !== undefined) patchPayload.startdate = updatedData.startDate;
+    if (updatedData.start_date !== undefined) patchPayload.startdate = updatedData.start_date;
+    if (updatedData.status !== undefined) patchPayload.status = updatedData.status;
+
+    const response = await fetch(patchUrl, {
+      method: 'PATCH',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify(patchPayload),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to update loan on Supabase: ${response.status} - ${errText}`);
+    }
+
+    const data = await response.json();
+    const updatedLoan = data && data[0] ? data[0] : { id: loanId, ...updatedData };
+
     const insurances = await getInsurances();
     const userLoans = await getLoans();
     await refreshAllNotifications(userLoans, insurances);
-    
-    return allLoans[loanIndex];
+
+    return {
+      id: updatedLoan.id,
+      loanName: updatedLoan.loanname || updatedLoan.loan_name || updatedLoan.loanName || 'Unnamed Loan',
+      loanType: updatedLoan.loantype || updatedLoan.loan_type || updatedLoan.loanType || 'emi',
+      principal: parseFloat(updatedLoan.principal || 0),
+      interest: parseFloat(updatedLoan.interest || 0),
+      tenure: parseInt(updatedLoan.tenure || 0),
+      emiAmount: parseFloat(updatedLoan.emiamount || updatedLoan.emi_amount || updatedLoan.emiAmount || 0),
+      startDate: updatedLoan.startdate || updatedLoan.start_date || updatedLoan.startDate,
+      status: updatedLoan.status || 'active',
+      createdAt: updatedLoan.createdat || updatedLoan.created_at || updatedLoan.createdAt || new Date().toISOString(),
+      updatedAt: updatedLoan.updatedat || updatedLoan.updated_at || updatedLoan.updatedAt || new Date().toISOString(),
+    };
   } catch (e) {
-    console.error('Error updating loan:', e);
+    console.error('Error updating loan on Supabase:', e);
     throw e;
   }
 };
 
 export const deleteLoan = async (loanId) => {
   try {
-    const allLoans = await getAllLoansRaw();
-    const filteredLoans = allLoans.filter(loan => loan.id !== loanId);
-    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify(filteredLoans));
-    
-    // Clean up associated payments to prevent orphan data
-    const allPayments = await getAllPaymentsRaw();
-    const filteredPayments = allPayments.filter(p => p.loanId !== loanId);
-    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(filteredPayments));
-    
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const cleanUrl = getCleanUrl(url);
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+
+    // 1. Delete associated payments to prevent orphan data in Supabase
+    let deletePaymentsUrl = `${cleanUrl}/rest/v1/payments?loanid=eq.${loanId}`;
+    if (isUserEmailColumnSupported) {
+      deletePaymentsUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+
+    await fetch(deletePaymentsUrl, {
+      method: 'DELETE',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+    });
+
+    // 2. Delete the loan itself
+    let deleteLoanUrl = `${cleanUrl}/rest/v1/loans?id=eq.${loanId}`;
+    if (isUserEmailColumnSupported) {
+      deleteLoanUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+
+    const response = await fetch(deleteLoanUrl, {
+      method: 'DELETE',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to delete loan from Supabase: ${response.status} - ${errText}`);
+    }
+
     const insurances = await getInsurances();
     const userLoans = await getLoans();
     await refreshAllNotifications(userLoans, insurances);
   } catch (e) {
-    console.error('Error deleting loan:', e);
+    console.error('Error deleting loan from Supabase:', e);
     throw e;
   }
 };
@@ -222,30 +481,92 @@ export const deleteLoan = async (loanId) => {
 // Payment operations
 export const getPayments = async () => {
   try {
-    const all = await getAllPaymentsRaw();
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      console.warn('Supabase not configured, returning empty payments');
+      return [];
+    }
+
+    const cleanUrl = getCleanUrl(url);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
-    return all.filter(p => (p.user_email || 'anonymous') === userEmail);
+
+    let fetchUrl = `${cleanUrl}/rest/v1/payments?select=*`;
+    if (isUserEmailColumnSupported) {
+      fetchUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
+    }
+
+    const response = await fetch(fetchUrl, {
+      method: 'GET',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch payments: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.map(payment => ({
+      id: payment.id,
+      loanId: payment.loanid || payment.loan_id || payment.loanId,
+      amount: parseFloat(payment.amount || 0),
+      paidAt: payment.paidat || payment.paid_at || payment.paidAt,
+      createdAt: payment.createdat || payment.created_at || payment.createdAt || payment.paidat || new Date().toISOString(),
+    }));
   } catch (e) {
-    console.error('Error reading payments:', e);
+    console.error('Error reading payments from Supabase:', e);
     return [];
   }
 };
 
 export const addPayment = async (payment) => {
   try {
-    const allPayments = await getAllPaymentsRaw();
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const cleanUrl = getCleanUrl(url);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const newPayment = {
-      id: Date.now().toString(),
-      ...payment,
-      user_email: userEmail,
-      paidAt: new Date().toISOString(),
+      id: payment.id || Date.now().toString(),
+      loanid: payment.loanId || payment.loan_id || payment.loanid,
+      amount: parseFloat(payment.amount || 0),
+      paidat: payment.date || payment.paidAt || payment.paid_at || payment.paidat || new Date().toISOString(),
     };
-    allPayments.push(newPayment);
-    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify(allPayments));
-    return newPayment;
+    if (isUserEmailColumnSupported) {
+      newPayment.user_email = userEmail;
+    }
+
+    const response = await fetch(`${cleanUrl}/rest/v1/payments`, {
+      method: 'POST',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify(newPayment),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to add payment on Supabase: ${response.status} - ${errText}`);
+    }
+
+    const data = await response.json();
+    const savedPayment = data && data[0] ? data[0] : newPayment;
+    return {
+      id: savedPayment.id,
+      loanId: savedPayment.loanid || savedPayment.loan_id || savedPayment.loanId,
+      amount: parseFloat(savedPayment.amount || 0),
+      paidAt: savedPayment.paidat || savedPayment.paid_at || savedPayment.paidAt,
+      createdAt: savedPayment.createdat || savedPayment.created_at || savedPayment.createdAt || new Date().toISOString(),
+    };
   } catch (e) {
-    console.error('Error adding payment:', e);
+    console.error('Error adding payment on Supabase:', e);
     throw e;
   }
 };
@@ -471,67 +792,173 @@ export const importAllData = async (jsonString) => {
   try {
     const data = JSON.parse(jsonString);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
-
-    // Load current raw data
-    const allLoans = await getAllLoansRaw();
-    const allPayments = await getAllPaymentsRaw();
-    const allInsurances = await getAllInsurancesRaw();
-    const txsValue = await AsyncStorage.getItem(TRANSACTIONS_KEY);
-    const allTxs = txsValue ? JSON.parse(txsValue) : [];
-
-    // Filter out current user's data to overwrite with imported
-    const otherLoans = allLoans.filter(l => (l.user_email || 'anonymous') !== userEmail);
-    const otherPayments = allPayments.filter(p => (p.user_email || 'anonymous') !== userEmail);
-    const otherInsurances = allInsurances.filter(i => (i.user_email || 'anonymous') !== userEmail);
-
-    // Tag imported data with current user_email
-    const importedLoans = (data.loans || []).map(l => ({ ...l, user_email: userEmail }));
-    const importedPayments = (data.payments || []).map(p => ({ ...p, user_email: userEmail }));
-    const importedInsurances = (data.insurances || []).map(i => ({ ...i, user_email: userEmail }));
-    const importedTxs = (data.transactions || []).map(t => ({ ...t, user_email: userEmail }));
-
-    // Save merged raw data back
-    await AsyncStorage.setItem(LOANS_KEY, JSON.stringify([...otherLoans, ...importedLoans]));
-    await AsyncStorage.setItem(PAYMENTS_KEY, JSON.stringify([...otherPayments, ...importedPayments]));
-    await AsyncStorage.setItem(INSURANCES_KEY, JSON.stringify([...otherInsurances, ...importedInsurances]));
+    const { url, key } = await getSupabaseConfig();
     
-    // Upload transactions directly to Supabase if configured
-    let supabaseUrl = await AsyncStorage.getItem('@supabase_url');
-    let supabaseKey = await AsyncStorage.getItem('@supabase_key');
-    if (!supabaseUrl) supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-    if (!supabaseKey) supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
-    
-    if (supabaseUrl && supabaseKey && importedTxs.length > 0) {
-      const cleanUrl = supabaseUrl.trim().replace(/\/$/, '');
-      fetch(`${cleanUrl}/rest/v1/transactions`, {
-        method: 'POST',
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates',
-        },
-        body: JSON.stringify(importedTxs.map(tx => ({
-          id: tx.id,
-          amount: tx.amount,
-          type: tx.type,
-          category: tx.category || 'Other',
-          date: tx.date || new Date().toISOString(),
-          description: tx.description || '',
-          source: tx.source || 'manual',
-          mode: tx.mode || 'UPI',
-          user_email: userEmail,
-        }))),
-      }).catch(e => console.warn('Backup transactions import to Supabase failed:', e));
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
     }
     
+    const cleanUrl = getCleanUrl(url);
+
+    // 1. Delete all current user's records from Supabase tables to override/overwrite
+    const deleteHeaders = {
+      'apikey': key,
+      'Authorization': `Bearer ${key}`,
+    };
+
+    let deleteFilter = `?user_email=eq.${encodeURIComponent(userEmail)}`;
+    if (!isUserEmailColumnSupported) {
+      deleteFilter = `?id=not.is.null`;
+    }
+
+    // Delete existing records (order: payments first due to foreign keys referencing loans)
+    await fetch(`${cleanUrl}/rest/v1/payments${deleteFilter}`, { method: 'DELETE', headers: deleteHeaders });
+    await fetch(`${cleanUrl}/rest/v1/loans${deleteFilter}`, { method: 'DELETE', headers: deleteHeaders });
+    await fetch(`${cleanUrl}/rest/v1/insurances${deleteFilter}`, { method: 'DELETE', headers: deleteHeaders });
+    await fetch(`${cleanUrl}/rest/v1/transactions${deleteFilter}`, { method: 'DELETE', headers: deleteHeaders });
+
+    const cleanNumeric = (val) => {
+      if (val === undefined || val === null) return 0;
+      const cleaned = String(val).replace(/[^0-9.-]/g, '');
+      const num = parseFloat(cleaned);
+      return isNaN(num) ? 0 : num;
+    };
+
+    const cleanInteger = (val) => {
+      if (val === undefined || val === null) return 0;
+      const cleaned = String(val).replace(/[^0-9-]/g, '');
+      const num = parseInt(cleaned, 10);
+      return isNaN(num) ? 0 : num;
+    };
+
+    // 2. Tag imported data with current user_email and filter to database columns only
+    const importedLoans = (data.loans || []).map(l => {
+      const loanObj = {
+        id: String(l.id || l.loanId || `${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+        loanname: l.loanName || l.loan_name || l.loanname || 'Unnamed Loan',
+        loantype: l.loanType || l.loan_type || l.loantype || 'emi',
+        principal: cleanNumeric(l.principal),
+        interest: cleanNumeric(l.interest),
+        tenure: cleanInteger(l.tenure),
+        emiamount: cleanNumeric(l.emiAmount || l.emi_amount || l.emiamount),
+        startdate: l.startDate || l.start_date || l.startdate || new Date().toISOString().split('T')[0],
+        status: l.status || 'active',
+      };
+      if (isUserEmailColumnSupported) {
+        loanObj.user_email = userEmail;
+      }
+      return loanObj;
+    });
+
+    const importedPayments = (data.payments || []).map(p => {
+      const paymentObj = {
+        id: String(p.id || `${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+        loanid: String(p.loanId || p.loan_id || p.loanid),
+        amount: cleanNumeric(p.amount),
+        paidat: p.paidAt || p.paid_at || p.date || p.paidat || new Date().toISOString(),
+      };
+      if (isUserEmailColumnSupported) {
+        paymentObj.user_email = userEmail;
+      }
+      return paymentObj;
+    });
+
+    const importedInsurances = (data.insurances || []).map(i => {
+      const insObj = {
+        id: String(i.id || `${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+        name: i.name || i.insuranceName || i.insurance_name || 'Unnamed Policy',
+        premiumamount: cleanNumeric(i.premiumAmount || i.premium_amount || i.premiumamount),
+        startdate: i.startDate || i.start_date || i.startdate || new Date().toISOString().split('T')[0],
+        frequency: i.frequency || 'monthly',
+      };
+      if (isUserEmailColumnSupported) {
+        insObj.user_email = userEmail;
+      }
+      return insObj;
+    });
+
+    const importedTxs = (data.transactions || []).map(t => {
+      const txObj = {
+        id: String(t.id || `${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+        amount: cleanNumeric(t.amount),
+        type: String(t.type || 'debit').toLowerCase(),
+        category: t.category || 'Other',
+        mode: t.mode || 'UPI',
+        date: t.date || t.created_at || new Date().toISOString(),
+        description: t.description || '',
+        source: t.source || 'manual',
+      };
+      if (isUserEmailColumnSupported) {
+        txObj.user_email = userEmail;
+      }
+      return txObj;
+    });
+
+    const postHeaders = {
+      'apikey': key,
+      'Authorization': `Bearer ${key}`,
+      'Content-Type': 'application/json',
+    };
+
+    // Upload records (order: loans first so payments can link correctly)
+    if (importedLoans.length > 0) {
+      const res = await fetch(`${cleanUrl}/rest/v1/loans`, {
+        method: 'POST',
+        headers: postHeaders,
+        body: JSON.stringify(importedLoans),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Failed to upload loans: ${res.status} - ${txt}`);
+      }
+    }
+
+    const validLoanIds = new Set(importedLoans.map(l => l.id));
+    const cleanPayments = importedPayments.filter(p => validLoanIds.has(p.loanid));
+
+    if (cleanPayments.length > 0) {
+      const res = await fetch(`${cleanUrl}/rest/v1/payments`, {
+        method: 'POST',
+        headers: postHeaders,
+        body: JSON.stringify(cleanPayments),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Failed to upload payments: ${res.status} - ${txt}`);
+      }
+    }
+
+    if (importedInsurances.length > 0) {
+      const res = await fetch(`${cleanUrl}/rest/v1/insurances`, {
+        method: 'POST',
+        headers: postHeaders,
+        body: JSON.stringify(importedInsurances),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Failed to upload insurances: ${res.status} - ${txt}`);
+      }
+    }
+
+    if (importedTxs.length > 0) {
+      const res = await fetch(`${cleanUrl}/rest/v1/transactions`, {
+        method: 'POST',
+        headers: postHeaders,
+        body: JSON.stringify(importedTxs),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Failed to upload transactions: ${res.status} - ${txt}`);
+      }
+    }
+
     if (data.budgetLimit !== undefined) {
       await AsyncStorage.setItem(BUDGET_LIMIT_KEY, String(data.budgetLimit));
     }
-    
+
     // Refresh notifications for this user
     await refreshAllNotifications(importedLoans, importedInsurances);
-    
+
     return true;
   } catch (e) {
     console.error('Error importing data:', e);

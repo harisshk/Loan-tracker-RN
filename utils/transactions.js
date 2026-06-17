@@ -39,13 +39,7 @@ const getCleanUrl = (url) => {
 };
 
 const getAllTransactionsRaw = async () => {
-  try {
-    const jsonValue = await AsyncStorage.getItem(TRANSACTIONS_KEY);
-    return jsonValue != null ? JSON.parse(jsonValue) : [];
-  } catch (e) {
-    console.error('Error reading raw transactions:', e);
-    return [];
-  }
+  return [];
 };
 
 export const getTransactions = async () => {
@@ -99,12 +93,14 @@ export const getTransactions = async () => {
       data = await response.json();
     }
 
-    return data.map((t) => ({
+    const formatted = data.map((t) => ({
       ...t,
       amount: parseFloat(t.amount || 0),
       type: (t.type || 'debit').toLowerCase(),
       synced: true,
     }));
+
+    return formatted;
   } catch (e) {
     console.error('Error fetching transactions from Supabase:', e);
     return [];
@@ -113,32 +109,33 @@ export const getTransactions = async () => {
 
 export const saveTransaction = async (transaction) => {
   try {
-    const { url, key } = await getSupabaseConfig();
-    if (!url || !key) {
-      throw new Error('Supabase credentials not configured');
-    }
-
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     let finalCategory = transaction.category || 'Other';
     if (finalCategory === 'Other' && transaction.description) {
       finalCategory = await getSmartCategory(transaction.description);
     }
 
-    const newTx = {
+    const txData = {
       id: transaction.id || `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      amount: transaction.amount,
-      type: transaction.type,
+      amount: parseFloat(transaction.amount || 0),
+      type: (transaction.type || 'debit').toLowerCase(),
       category: finalCategory,
       mode: transaction.mode || 'UPI',
       date: transaction.date || new Date().toISOString(),
       description: transaction.description || `${transaction.type === 'credit' ? 'Inflow' : 'Outflow'} - ${finalCategory}`,
       source: transaction.source || 'manual',
     };
+
     if (isUserEmailColumnSupported) {
-      newTx.user_email = userEmail;
+      txData.user_email = userEmail;
     }
 
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
     const cleanUrl = getCleanUrl(url);
+
     let response = await fetch(`${cleanUrl}/rest/v1/transactions`, {
       method: 'POST',
       headers: {
@@ -147,18 +144,15 @@ export const saveTransaction = async (transaction) => {
         'Content-Type': 'application/json',
         'Prefer': 'return=representation',
       },
-      body: JSON.stringify(newTx),
+      body: JSON.stringify(txData),
     });
 
-    let data;
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
-        console.warn('user_email column is missing in Supabase. Saving transaction without user_email tag.');
         await markUserEmailMissing();
-        // Remove user_email field from payload and retry
-        const { user_email, ...fallbackTx } = newTx;
-        const retryResponse = await fetch(`${cleanUrl}/rest/v1/transactions`, {
+        const { user_email, ...fallbackTx } = txData;
+        let retryResponse = await fetch(`${cleanUrl}/rest/v1/transactions`, {
           method: 'POST',
           headers: {
             'apikey': key,
@@ -171,22 +165,17 @@ export const saveTransaction = async (transaction) => {
         if (!retryResponse.ok) {
           throw new Error(`Failed to save transaction to Supabase (retry): ${retryResponse.status}`);
         }
-        data = await retryResponse.json();
+        const data = await retryResponse.json();
+        return { ...data[0], synced: true };
       } else {
         throw new Error(`Failed to save transaction to Supabase: ${response.status} - ${errText}`);
       }
-    } else {
-      data = await response.json();
     }
 
-    const createdTx = data[0] || newTx;
-    return {
-      ...createdTx,
-      amount: parseFloat(createdTx.amount || 0),
-      synced: true,
-    };
+    const data = await response.json();
+    return { ...data[0], synced: true };
   } catch (e) {
-    console.error('Error saving transaction directly to Supabase:', e);
+    console.error('Error saving transaction:', e);
     throw e;
   }
 };
@@ -201,11 +190,9 @@ export const deleteTransaction = async (id) => {
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const cleanUrl = getCleanUrl(url);
     
-    let deleteUrl;
+    let deleteUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${id}`;
     if (isUserEmailColumnSupported) {
-      deleteUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${id}&user_email=eq.${encodeURIComponent(userEmail)}`;
-    } else {
-      deleteUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${id}`;
+      deleteUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
     }
 
     let response = await fetch(deleteUrl, {
@@ -219,7 +206,6 @@ export const deleteTransaction = async (id) => {
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
-        console.warn('user_email column is missing in Supabase. Deleting transaction without user_email filter.');
         await markUserEmailMissing();
         const fallbackUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${id}`;
         const fallbackResponse = await fetch(fallbackUrl, {
@@ -237,7 +223,7 @@ export const deleteTransaction = async (id) => {
       }
     }
   } catch (e) {
-    console.error('Error deleting transaction from Supabase:', e);
+    console.error('Error deleting transaction:', e);
     throw e;
   }
 };
@@ -245,7 +231,7 @@ export const deleteTransaction = async (id) => {
 export const getBudgetLimit = async () => {
   try {
     const limit = await AsyncStorage.getItem(BUDGET_LIMIT_KEY);
-    return limit ? parseFloat(limit) : 50000; // default 50k
+    return limit ? parseFloat(limit) : 50000;
   } catch (e) {
     return 50000;
   }
@@ -260,10 +246,8 @@ export const saveBudgetLimit = async (limit) => {
 };
 
 export const getSupabaseConfig = async () => {
-  let url = await AsyncStorage.getItem(SUPABASE_URL_KEY);
-  let key = await AsyncStorage.getItem(SUPABASE_KEY_KEY);
-  if (!url) url = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  if (!key) key = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+  let url = process.env.EXPO_PUBLIC_SUPABASE_URL || await AsyncStorage.getItem(SUPABASE_URL_KEY);
+  let key = process.env.EXPO_PUBLIC_SUPABASE_KEY || await AsyncStorage.getItem(SUPABASE_KEY_KEY);
   return { url: url || '', key: key || '' };
 };
 
@@ -272,11 +256,10 @@ export const saveSupabaseConfig = async (url, key) => {
   await AsyncStorage.setItem(SUPABASE_KEY_KEY, key || '');
 };
 
-// Deprecated local sync: directly returns remote transaction count as a success message
 export const syncWithSupabase = async () => {
   try {
-    const txs = await getTransactions();
-    return { success: true, count: txs.length };
+    const latestTxs = await getTransactions();
+    return { success: true, count: latestTxs.length };
   } catch (e) {
     return { success: false, reason: e.message };
   }
@@ -284,29 +267,26 @@ export const syncWithSupabase = async () => {
 
 export const updateTransaction = async (updatedTx) => {
   try {
-    const { url, key } = await getSupabaseConfig();
-    if (!url || !key) {
-      throw new Error('Supabase credentials not configured');
-    }
-
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     let finalCategory = updatedTx.category || 'Other';
     if (finalCategory === 'Other' && updatedTx.description) {
       finalCategory = await getSmartCategory(updatedTx.description);
     }
 
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
     const cleanUrl = getCleanUrl(url);
-    
-    let patchUrl;
+
+    let patchUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${updatedTx.id}`;
     if (isUserEmailColumnSupported) {
-      patchUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${updatedTx.id}&user_email=eq.${encodeURIComponent(userEmail)}`;
-    } else {
-      patchUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${updatedTx.id}`;
+      patchUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
     }
 
     const patchPayload = {
-      amount: updatedTx.amount,
-      type: updatedTx.type,
+      amount: parseFloat(updatedTx.amount || 0),
+      type: (updatedTx.type || 'debit').toLowerCase(),
       category: finalCategory,
       date: updatedTx.date,
       description: updatedTx.description,
@@ -327,14 +307,11 @@ export const updateTransaction = async (updatedTx) => {
       body: JSON.stringify(patchPayload),
     });
 
-    let data;
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
-        console.warn('user_email column is missing in Supabase. Updating transaction without user_email tag/filter.');
         await markUserEmailMissing();
         const fallbackUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${updatedTx.id}`;
-        
         const fallbackPayload = { ...patchPayload };
         delete fallbackPayload.user_email;
 
@@ -351,22 +328,17 @@ export const updateTransaction = async (updatedTx) => {
         if (!fallbackResponse.ok) {
           throw new Error(`Failed to update transaction on Supabase (retry): ${fallbackResponse.status}`);
         }
-        data = await fallbackResponse.json();
+        const data = await fallbackResponse.json();
+        return { ...data[0], synced: true };
       } else {
         throw new Error(`Failed to update transaction on Supabase: ${response.status} - ${errText}`);
       }
-    } else {
-      data = await response.json();
     }
 
-    const resultTx = data[0] || updatedTx;
-    return {
-      ...resultTx,
-      amount: parseFloat(resultTx.amount || 0),
-      synced: true,
-    };
+    const data = await response.json();
+    return { ...data[0], synced: true };
   } catch (e) {
-    console.error('Error updating transaction on Supabase:', e);
+    console.error('Error updating transaction:', e);
     throw e;
   }
 };
@@ -425,5 +397,40 @@ export const classifyOtherTransactionsBatch = async () => {
   } catch (e) {
     console.error('Batch classification error:', e);
     return { success: false, reason: e.message };
+  }
+};
+
+export const deleteAllTransactions = async () => {
+  try {
+    const { url, key } = await getSupabaseConfig();
+    if (!url || !key) {
+      throw new Error('Supabase credentials not configured');
+    }
+
+    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
+    const cleanUrl = getCleanUrl(url);
+    
+    let deleteUrl = `${cleanUrl}/rest/v1/transactions`;
+    if (isUserEmailColumnSupported) {
+      deleteUrl += `?user_email=eq.${encodeURIComponent(userEmail)}`;
+    } else {
+      deleteUrl += `?id=not.is.null`;
+    }
+
+    let response = await fetch(deleteUrl, {
+      method: 'DELETE',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Failed to delete all transactions: ${response.status} - ${errText}`);
+    }
+  } catch (e) {
+    console.error('Error deleting all transactions:', e);
+    throw e;
   }
 };

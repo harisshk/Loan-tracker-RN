@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   getTransactions,
   deleteTransaction,
+  deleteAllTransactions,
   getBudgetLimit,
   saveBudgetLimit,
   syncWithSupabase,
@@ -53,6 +54,38 @@ export default function SpendTracker() {
   const [filterCategory, setFilterCategory] = useState('all');
   const [loansCount, setLoansCount] = useState(0);
   const [isClassifying, setIsClassifying] = useState(false);
+  const [filterMonth, setFilterMonth] = useState('all'); // all, 0-11
+  const [filterYear, setFilterYear] = useState('all'); // all, 2026, 2025...
+
+  const availableYears = useMemo(() => {
+    const yearsSet = new Set<string>();
+    transactions.forEach((t: any) => {
+      if (t.date) {
+        const year = new Date(t.date).getFullYear();
+        if (!isNaN(year)) {
+          yearsSet.add(String(year));
+        }
+      }
+    });
+    yearsSet.add(String(new Date().getFullYear()));
+    return ['all', ...Array.from(yearsSet).sort((a, b) => parseInt(b) - parseInt(a))];
+  }, [transactions]);
+
+  const MONTHS = [
+    { value: 'all', label: 'All Months' },
+    { value: '0', label: 'Jan' },
+    { value: '1', label: 'Feb' },
+    { value: '2', label: 'Mar' },
+    { value: '3', label: 'Apr' },
+    { value: '4', label: 'May' },
+    { value: '5', label: 'Jun' },
+    { value: '6', label: 'Jul' },
+    { value: '7', label: 'Aug' },
+    { value: '8', label: 'Sep' },
+    { value: '9', label: 'Oct' },
+    { value: '10', label: 'Nov' },
+    { value: '11', label: 'Dec' },
+  ];
 
   const handleAIClassify = async () => {
     setIsClassifying(true);
@@ -190,16 +223,63 @@ export default function SpendTracker() {
     ]);
   };
 
+  const handleDeleteAll = () => {
+    if (transactions.length === 0) {
+      Alert.alert('Info', 'No transactions to delete.');
+      return;
+    }
+    Alert.alert(
+      'Delete All Transactions',
+      'Are you absolutely sure you want to delete ALL transactions? This will permanently wipe your transaction history.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Final Confirmation Required',
+              'This action is irreversible. All transaction records will be wiped from Supabase/AsyncStorage. Proceed?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Wipe Everything',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await deleteAllTransactions();
+                      Alert.alert('Success', 'All transactions deleted successfully.');
+                      loadData();
+                    } catch (e) {
+                      Alert.alert('Error', 'Failed to delete transactions.');
+                    }
+                  }
+                }
+              ]
+            );
+          }
+        }
+      ]
+    );
+  };
+
   // Filter & Search
   const filteredTransactions = transactions.filter((t: any) => {
     const desc = t.description || '';
     const cat = t.category || '';
+    const dateObj = t.date ? new Date(t.date) : null;
+
     const matchesSearch = desc.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           cat.toLowerCase().includes(searchQuery.toLowerCase());
+    const isTxCredit = (t.type || '').toLowerCase() === 'credit';
     const matchesFilter = filterType === 'all' ||
-                          (t.type || '').toLowerCase() === filterType.toLowerCase();
+                          (filterType === 'credit' ? isTxCredit : !isTxCredit);
     const matchesCategory = filterCategory === 'all' || cat === filterCategory;
-    return matchesSearch && matchesFilter && matchesCategory;
+
+    const matchesMonth = filterMonth === 'all' || (dateObj && String(dateObj.getMonth()) === filterMonth);
+    const matchesYear = filterYear === 'all' || (dateObj && String(dateObj.getFullYear()) === filterYear);
+
+    return matchesSearch && matchesFilter && matchesCategory && matchesMonth && matchesYear;
   });
 
   const fc = (amount: any) => {
@@ -371,6 +451,48 @@ export default function SpendTracker() {
           })}
         </ScrollView>
 
+        {/* Year Filter Chips */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
+          {availableYears.map((yr) => {
+            const isActive = filterYear === yr;
+            return (
+              <TouchableOpacity
+                key={yr}
+                onPress={() => setFilterYear(yr)}
+                style={[
+                  styles.filterChip,
+                  isActive && styles.filterChipActive,
+                ]}
+              >
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                  {yr === 'all' ? '📅 All Years' : yr}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* Month Filter Chips */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
+          {MONTHS.map((mo) => {
+            const isActive = filterMonth === mo.value;
+            return (
+              <TouchableOpacity
+                key={mo.value}
+                onPress={() => setFilterMonth(mo.value)}
+                style={[
+                  styles.filterChip,
+                  isActive && styles.filterChipActiveMonth,
+                ]}
+              >
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                  {mo.label === 'All Months' ? '⏱️ All Months' : mo.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
         {/* Search */}
         <View style={styles.searchContainer}>
           <Ionicons name="search" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
@@ -391,7 +513,12 @@ export default function SpendTracker() {
         {/* Transactions List */}
         <View style={styles.txListContainer}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Transactions History</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Transactions History</Text>
+              <TouchableOpacity onPress={handleDeleteAll} style={styles.deleteAllBtn} activeOpacity={0.7}>
+                <Ionicons name="trash-outline" size={18} color="#e11d48" />
+              </TouchableOpacity>
+            </View>
             <TouchableOpacity onPress={handleAIClassify} style={styles.aiClassifyBtn} disabled={isClassifying}>
               {isClassifying ? (
                 <ActivityIndicator size="small" color="#fff" />
@@ -455,8 +582,27 @@ export default function SpendTracker() {
                     </Text>
                     <Text style={styles.txCategory}>{item.category}</Text>
                     {item.mode && (
-                      <View style={[styles.modeBadge, { backgroundColor: item.mode === 'Credit Card' ? 'rgba(236,72,153,0.08)' : 'rgba(99,102,241,0.08)', marginTop: 4 }]}>
-                        <Text style={[styles.modeBadgeText, { color: item.mode === 'Credit Card' ? '#ec4899' : '#6366f1' }]}>
+                      <View style={[
+                        styles.modeBadge,
+                        {
+                          backgroundColor: item.mode === 'Credit Card'
+                            ? 'rgba(236,72,153,0.08)'
+                            : item.mode === 'Cash'
+                            ? 'rgba(245,158,11,0.08)'
+                            : 'rgba(99,102,241,0.08)',
+                          marginTop: 4
+                        }
+                      ]}>
+                        <Text style={[
+                          styles.modeBadgeText,
+                          {
+                            color: item.mode === 'Credit Card'
+                              ? '#ec4899'
+                              : item.mode === 'Cash'
+                              ? '#f59e0b'
+                              : '#6366f1'
+                          }
+                        ]}>
                           {item.mode}
                         </Text>
                       </View>
@@ -554,5 +700,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#475569',
+  },
+  deleteAllBtn: {
+    padding: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(225,29,72,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.07)',
+  },
+  filterChipActive: {
+    backgroundColor: '#6366f1',
+    borderColor: '#6366f1',
+  },
+  filterChipActiveMonth: {
+    backgroundColor: '#38bdf8',
+    borderColor: '#38bdf8',
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  filterChipTextActive: {
+    color: '#fff',
   },
 });

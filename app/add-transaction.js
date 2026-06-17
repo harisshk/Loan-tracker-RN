@@ -16,6 +16,7 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { saveTransaction, getTransactions, updateTransaction } from '../utils/transactions';
+import { getLoans, addPayment } from '../utils/storage';
 
 const CATEGORIES = ['Salary', 'Food', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Other'];
 
@@ -29,7 +30,22 @@ export default function AddTransaction() {
   const [description, setDescription] = useState('');
   const [date, setDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [mode, setMode] = useState('UPI'); // UPI or Credit Card
+  const [mode, setMode] = useState('UPI'); // UPI, Credit Card, or Cash
+  const [loans, setLoans] = useState([]);
+  const [selectedLoanId, setSelectedLoanId] = useState('');
+
+  // Fetch loans for EMI classification on mount
+  useEffect(() => {
+    const fetchLoans = async () => {
+      try {
+        const loansData = await getLoans();
+        setLoans(loansData.filter(l => l.status !== 'closed'));
+      } catch (err) {
+        console.warn('Failed to load loans:', err);
+      }
+    };
+    fetchLoans();
+  }, []);
 
   // Handle URL Deep Link Params and Edit Mode loading
   useEffect(() => {
@@ -43,6 +59,9 @@ export default function AddTransaction() {
           setCategory(existingTx.category);
           setDescription(existingTx.description);
           setMode(existingTx.mode || 'UPI');
+          if (existingTx.loanId) {
+            setSelectedLoanId(existingTx.loanId);
+          }
           if (existingTx.date) {
             setDate(new Date(existingTx.date));
           }
@@ -62,7 +81,7 @@ export default function AddTransaction() {
       if (params.category && CATEGORIES.includes(String(params.category))) {
         setCategory(String(params.category));
       }
-      if (params.mode && (String(params.mode) === 'UPI' || String(params.mode) === 'Credit Card')) {
+      if (params.mode && (String(params.mode) === 'UPI' || String(params.mode) === 'Credit Card' || String(params.mode) === 'Cash')) {
         setMode(String(params.mode));
       }
     };
@@ -167,27 +186,45 @@ export default function AddTransaction() {
       return;
     }
 
+    if (category === 'EMI' && loans.length > 0 && !selectedLoanId) {
+      Alert.alert('Error', 'Please select a loan/debt for this EMI payment.');
+      return;
+    }
+
     try {
+      const selectedLoan = loans.find(l => l.id === selectedLoanId);
+      const txData = {
+        amount: amt,
+        type,
+        category,
+        description: description || `${type === 'credit' ? 'Inflow' : 'Outflow'} - ${category}`,
+        date: date.toISOString(),
+        mode,
+        loanId: category === 'EMI' ? selectedLoanId : undefined,
+        loanName: (category === 'EMI' && selectedLoan) ? selectedLoan.loanName : undefined,
+      };
+
       if (params.id) {
         await updateTransaction({
           id: params.id,
-          amount: amt,
-          type,
-          category,
-          description: description || `${type === 'credit' ? 'Inflow' : 'Outflow'} - ${category}`,
-          date: date.toISOString(),
-          mode,
+          ...txData,
         });
       } else {
         await saveTransaction({
-          amount: amt,
-          type,
-          category,
-          description: description || `${type === 'credit' ? 'Inflow' : 'Outflow'} - ${category}`,
-          date: date.toISOString(),
+          ...txData,
           source: params.amount ? 'shortcut' : 'manual',
-          mode,
         });
+
+        // Record payment in loan history
+        if (category === 'EMI' && selectedLoanId && selectedLoan) {
+          await addPayment({
+            loanId: selectedLoanId,
+            loanName: selectedLoan.loanName,
+            amount: amt.toString(),
+            date: date.toISOString().split('T')[0],
+            note: description || `EMI Payment via Spend Tracker`
+          });
+        }
       }
       router.replace('/spend-tracker');
     } catch (e) {
@@ -262,6 +299,13 @@ export default function AddTransaction() {
                   <Ionicons name="card-outline" size={16} color={mode === 'Credit Card' ? '#fff' : '#ec4899'} />
                   <Text style={[styles.typeBtnText, mode === 'Credit Card' && styles.typeBtnTextActive]}>Credit Card</Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.typeBtn, mode === 'Cash' && styles.typeBtnActiveCash]}
+                  onPress={() => setMode('Cash')}
+                >
+                  <Ionicons name="cash-outline" size={16} color={mode === 'Cash' ? '#fff' : '#fb923c'} />
+                  <Text style={[styles.typeBtnText, mode === 'Cash' && styles.typeBtnTextActive]}>Cash</Text>
+                </TouchableOpacity>
               </View>
             </>
           )}
@@ -269,13 +313,13 @@ export default function AddTransaction() {
           {/* Description */}
           <Text style={[styles.label, { marginTop: 20 }]}>MERCHANT / DESCRIPTION</Text>
           <TextInput
-            style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
+            style={[styles.input, { minHeight: 100, textAlignVertical: 'top' }]}
             placeholder="e.g. Amazon, Salary, Starbucks"
             placeholderTextColor="#94a3b8"
             value={description}
             onChangeText={setDescription}
             multiline
-            numberOfLines={3}
+            numberOfLines={4}
           />
 
           {/* Category Selector */}
@@ -293,6 +337,36 @@ export default function AddTransaction() {
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Select Loan/Debt (only when category is EMI) */}
+          {category === 'EMI' && loans.length > 0 && (
+            <>
+              <Text style={[styles.label, { marginTop: 20 }]}>SELECT LOAN / DEBT *</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                <View style={styles.loanSelector}>
+                  {loans.map((loan) => (
+                    <TouchableOpacity
+                      key={loan.id}
+                      style={[
+                        styles.loanOption,
+                        selectedLoanId === loan.id && styles.loanOptionSelected,
+                      ]}
+                      onPress={() => setSelectedLoanId(loan.id)}
+                    >
+                      <Text
+                        style={[
+                          styles.loanOptionText,
+                          selectedLoanId === loan.id && styles.loanOptionTextSelected,
+                        ]}
+                      >
+                        {loan.loanName}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+            </>
+          )}
 
           {/* Date Selector */}
           <Text style={[styles.label, { marginTop: 20 }]}>DATE</Text>
@@ -342,6 +416,7 @@ const styles = StyleSheet.create({
   typeBtnActiveCred: { backgroundColor: '#10b981' },
   typeBtnActiveUPI: { backgroundColor: '#6366f1' },
   typeBtnActiveCard: { backgroundColor: '#ec4899' },
+  typeBtnActiveCash: { backgroundColor: '#fb923c' },
   typeBtnText: { fontSize: 13, fontWeight: '700', color: '#334155', marginLeft: 6 },
   typeBtnTextActive: { color: '#fff' },
   input: { backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 14, padding: 14, fontSize: 15, color: '#0f172a', borderParent: 1, borderColor: 'rgba(0,0,0,0.05)' },
@@ -354,4 +429,9 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
   dateBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 14, padding: 14, gap: 10 },
   dateBtnText: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
+  loanSelector: { flexDirection: 'row', gap: 8 },
+  loanOption: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)' },
+  loanOptionSelected: { backgroundColor: '#10b981', borderColor: '#10b981' },
+  loanOptionText: { fontSize: 13, fontWeight: '600', color: 'rgba(15,23,42,0.6)' },
+  loanOptionTextSelected: { color: '#ffffff' },
 });
