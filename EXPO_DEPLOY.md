@@ -96,3 +96,39 @@ Checklist:
 - `eas-cli` in this env is older than latest; the upgrade banner is harmless.
 - Keep commit messages short (4–5 words) per owner preference.
 - Do **not** add `Co-Authored-By` to commits.
+
+## iOS deployment — read before promising anything
+
+The owner asked "I need it for iOS / I use Expo Go, scan a QR and use it offline without my laptop running." Here is the ground truth so a future agent does not over-promise:
+
+### Hard facts
+1. **Expo Go is NOT a standalone app.** It always loads a JS bundle from somewhere — either the laptop's `npx expo start` (Metro) or Expo's cloud. It can never be a true offline home-screen app by itself.
+2. **The classic `expo publish` → open-in-Expo-Go flow was removed in SDK 50+.** This project is SDK 54. EAS Update only feeds **real builds**, not Expo Go.
+3. **Runtime mismatch blocks Expo Go.** `app.json` has `runtimeVersion.policy: "appVersion"` → updates publish with runtime `1.0.0`. Expo Go only loads updates matching its own runtime (`exposdk:54.0.0`), so it filters these out. An `appVersion`-pinned runtime targets standalone builds, period.
+4. **Native Google Sign-In.** App uses native Google/Gmail OAuth (`com.googleusercontent...` scheme). That native code does not exist in Expo Go, so login/Gmail sync cannot run in Expo Go even if the runtime matched.
+5. **Any install on a physical iPhone requires an Apple Developer account ($99/yr).** Apple mandates code signing. There is NO iOS shortcut around this. The first iOS build is interactive (logs into Apple, generates dist cert + provisioning profile) — cannot use `--non-interactive`.
+
+### What actually works on iOS
+- **With laptop, free, now:** `npx expo start` → scan QR in Expo Go. Only works while Metro runs on the laptop. The owner's stated "offline without laptop" goal is NOT achievable this way.
+- **Without laptop (the real goal):** a standalone iOS build. Requires Apple Developer account. Then:
+
+```bash
+# First build is INTERACTIVE — run in a real terminal, log into Apple when prompted
+eas build --platform ios --profile production    # TestFlight / App Store route
+# then:
+eas submit --platform ios --profile production    # uploads to App Store Connect → TestFlight
+
+# OR ad-hoc internal install:
+eas device:create                                 # register the iPhone's UDID first
+eas build --platform ios --profile preview        # ad-hoc build installs directly on registered device
+```
+
+After any real build is installed, `eas update --branch <production|preview>` OTA updates flow to it automatically (channel + runtime already match).
+
+### Decision the owner still needs to make
+The blocker is the **Apple Developer account**. If a future agent is asked to "deploy for iOS," confirm the owner has (or will create) an Apple Developer account before starting — without it, only the Mac iOS Simulator build is possible (free, but not a real device).
+
+### Status as of 2026-06-17
+- Channels added to `eas.json` (`development`/`preview`/`production`); `production` and `preview` channels created and linked to branches.
+- `eas update` published to both `production` and `preview` branches (runtime `1.0.0`, android+ios).
+- **No standalone build exists yet that can receive these updates.** Android needs an interactive keystore generation; iOS needs an Apple Developer account. Both first builds must run interactively.
