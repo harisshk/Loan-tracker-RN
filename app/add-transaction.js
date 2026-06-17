@@ -9,14 +9,16 @@ import {
   Alert,
   Platform,
   Clipboard,
+  KeyboardAvoidingView,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { saveTransaction, getTransactions, updateTransaction } from '../utils/transactions';
+import { saveTransaction, getTransactions, updateTransaction, getBudgetLimit } from '../utils/transactions';
 import { getLoans, addPayment } from '../utils/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CATEGORIES = ['Salary', 'Food', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Other'];
 
@@ -33,6 +35,10 @@ export default function AddTransaction() {
   const [mode, setMode] = useState('UPI'); // UPI, Credit Card, or Cash
   const [loans, setLoans] = useState([]);
   const [selectedLoanId, setSelectedLoanId] = useState('');
+  // Guard so the form is only pre-filled once. useLocalSearchParams() returns a
+  // fresh object every render, so without this the effect re-ran on every
+  // keystroke and reset the fields back to their original values.
+  const initializedRef = React.useRef(false);
 
   // Fetch loans for EMI classification on mount
   useEffect(() => {
@@ -50,23 +56,44 @@ export default function AddTransaction() {
   // Handle URL Deep Link Params and Edit Mode loading
   useEffect(() => {
     const initData = async () => {
+      // Only ever pre-fill the form once (see initializedRef note above).
+      if (initializedRef.current) return;
+
       if (params.id) {
         const txs = await getTransactions();
         const existingTx = txs.find(t => String(t.id) === String(params.id));
         if (existingTx) {
-          setAmount(String(existingTx.amount));
-          setType(existingTx.type);
-          setCategory(existingTx.category);
-          setDescription(existingTx.description);
-          setMode(existingTx.mode || 'UPI');
+          initializedRef.current = true;
+          setAmount(String(existingTx.amount ?? ''));
+          // Normalize so the toggle/grid match exactly regardless of stored casing.
+          const normalizedType =
+            String(existingTx.type || 'debit').trim().toLowerCase() === 'credit' ? 'credit' : 'debit';
+          setType(normalizedType);
+          const normalizedCategory = CATEGORIES.find(
+            (c) => c.toLowerCase() === String(existingTx.category || '').trim().toLowerCase()
+          ) || 'Other';
+          setCategory(normalizedCategory);
+          setDescription(existingTx.description || '');
+          const normalizedMode = ['UPI', 'Credit Card', 'Cash'].find(
+            (m) => m.toLowerCase() === String(existingTx.mode || '').trim().toLowerCase()
+          ) || 'UPI';
+          setMode(normalizedMode);
           if (existingTx.loanId) {
             setSelectedLoanId(existingTx.loanId);
           }
           if (existingTx.date) {
             setDate(new Date(existingTx.date));
           }
-          return;
+        } else {
+          console.warn('Edit: transaction not found for id', params.id);
         }
+        // Edit mode: never fall through to deep-link prefill.
+        return;
+      }
+
+      // Deep-link / shortcut create params (only lock in once we actually have some).
+      if (params.amount || params.type || params.description || params.category || params.mode) {
+        initializedRef.current = true;
       }
 
       if (params.amount) {
@@ -192,6 +219,49 @@ export default function AddTransaction() {
     }
 
     try {
+      if (type === 'debit' && !params.id) {
+        try {
+          const txs = await getTransactions();
+          const budgetLimit = await getBudgetLimit();
+          
+          const now = new Date();
+          const currentMonth = now.getMonth();
+          const currentYear = now.getFullYear();
+          
+          const existingDebits = txs.filter((t) => {
+            const d = new Date(t.date);
+            return (t.type || '').toLowerCase() !== 'credit' && d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+          }).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+          
+          const newTotal = existingDebits + amt;
+          const pct = (newTotal / budgetLimit) * 100;
+          
+          if (pct >= 90) {
+            const warningTitle = pct >= 100 ? "🚨 Budget Exceeded" : "⚠️ Budget Warning";
+            const warningMessage = pct >= 100 
+              ? `This transaction brings your monthly spending to ₹${newTotal.toLocaleString('en-IN')}, which exceeds your monthly budget limit of ₹${budgetLimit.toLocaleString('en-IN')}!`
+              : `This transaction brings your monthly spending to ₹${newTotal.toLocaleString('en-IN')} (${Math.round(pct)}% of your monthly budget limit).`;
+            
+            const shouldProceed = await new Promise((resolve) => {
+              Alert.alert(
+                warningTitle,
+                warningMessage + "\n\nDo you want to proceed with saving this transaction?",
+                [
+                  { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                  { text: 'Proceed', onPress: () => resolve(true) }
+                ]
+              );
+            });
+            
+            if (!shouldProceed) {
+              return;
+            }
+          }
+        } catch (budgetErr) {
+          console.warn("Budget check failed:", budgetErr);
+        }
+      }
+
       const selectedLoan = loans.find(l => l.id === selectedLoanId);
       const txData = {
         amount: amt,
@@ -226,15 +296,34 @@ export default function AddTransaction() {
           });
         }
       }
-      router.replace('/spend-tracker');
+      // Go back to the existing list (preserves scroll position) instead of
+      // replacing it with a fresh screen that resets to the top. The list's
+      // focus effect refreshes the data so the edit shows up.
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace('/spend-tracker');
+      }
     } catch (e) {
       Alert.alert('Error', 'Failed to save transaction');
     }
   };
 
+  const insets = useSafeAreaInsets();
+
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        <ScrollView 
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingTop: Math.max(insets.top, 20) + 10 }
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -393,7 +482,8 @@ export default function AddTransaction() {
         <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
           <Text style={styles.saveBtnText}>{params.id ? 'Save Changes' : 'Save Transaction'}</Text>
         </TouchableOpacity>
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </LinearGradient>
   );
 }

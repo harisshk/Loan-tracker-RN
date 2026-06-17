@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getSmartCategory, bulkClassifyCategories } from './classifier';
 
+const GENERATED_EMI_KEY = '@generated_emi_ids';
+
 export let isUserEmailColumnSupported = true;
 
 const initUserEmailSupport = async () => {
@@ -180,6 +182,93 @@ export const saveTransaction = async (transaction) => {
   }
 };
 
+// Auto-generate EMI debit transactions for active EMI loans so they show up in
+// the Spend Tracker and feed the budget. Idempotent: each (loan, month) is
+// generated at most once ever (tracked in AsyncStorage), so re-running does
+// nothing and deleting an EMI won't make it reappear. Bounded to the last 6
+// months to match the spend tracker's viewing window.
+export const syncEmiTransactions = async () => {
+  try {
+    const { getLoans } = require('./storage');
+    const loans = await getLoans();
+    const emiLoans = (loans || []).filter(
+      (l) => (l.loanType || 'emi') === 'emi' && l.status !== 'closed' && l.emiAmount > 0 && l.startDate
+    );
+    if (emiLoans.length === 0) return { created: 0 };
+
+    const existing = await getTransactions();
+    const existingIds = new Set(existing.map((t) => String(t.id)));
+
+    const genJson = await AsyncStorage.getItem(GENERATED_EMI_KEY);
+    const generated = new Set(genJson ? JSON.parse(genJson) : []);
+
+    const now = new Date();
+    const windowStart = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+
+    let created = 0;
+    const newlyGenerated = [];
+
+    for (const loan of emiLoans) {
+      const start = new Date(loan.startDate);
+      if (isNaN(start.getTime())) continue;
+      const dueDay = start.getDate();
+
+      // Iterate month-by-month from the later of (loan start, 6 months ago) to now.
+      const from = start > windowStart ? start : windowStart;
+      let y = from.getFullYear();
+      let m = from.getMonth();
+      let guard = 0;
+
+      while ((y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth())) && guard < 12) {
+        guard++;
+        const detId = `emi-${loan.id}-${y}-${m + 1}`;
+        const dueDate = new Date(y, m, dueDay, 9, 0, 0);
+
+        const monthOccupiedByManual = existing.some((t) => {
+          if ((t.category || '').toLowerCase() !== 'emi') return false;
+          if (!t.description || !loan.loanName || !t.description.includes(loan.loanName)) return false;
+          const d = new Date(t.date);
+          return d.getFullYear() === y && d.getMonth() === m;
+        });
+
+        if (dueDate <= now && !existingIds.has(detId) && !generated.has(detId) && !monthOccupiedByManual) {
+          try {
+            await saveTransaction({
+              id: detId,
+              amount: loan.emiAmount,
+              type: 'debit',
+              category: 'EMI',
+              mode: 'UPI',
+              date: dueDate.toISOString(),
+              description: `EMI · ${loan.loanName}`,
+              source: 'emi-auto',
+            });
+            created++;
+            existingIds.add(detId);
+            generated.add(detId);
+            newlyGenerated.push(detId);
+          } catch (e) {
+            // Likely a duplicate-id conflict; mark generated so we stop retrying.
+            generated.add(detId);
+            newlyGenerated.push(detId);
+          }
+        }
+
+        m++;
+        if (m > 11) { m = 0; y++; }
+      }
+    }
+
+    if (newlyGenerated.length > 0) {
+      await AsyncStorage.setItem(GENERATED_EMI_KEY, JSON.stringify(Array.from(generated)));
+    }
+    return { created };
+  } catch (e) {
+    console.warn('syncEmiTransactions failed:', e);
+    return { created: 0 };
+  }
+};
+
 export const deleteTransaction = async (id) => {
   try {
     const { url, key } = await getSupabaseConfig();
@@ -187,40 +276,34 @@ export const deleteTransaction = async (id) => {
       throw new Error('Supabase credentials not configured');
     }
 
-    const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     const cleanUrl = getCleanUrl(url);
-    
-    let deleteUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${id}`;
-    if (isUserEmailColumnSupported) {
-      deleteUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
-    }
+    const headers = {
+      'apikey': key,
+      'Authorization': `Bearer ${key}`,
+      // return=representation makes Supabase return the rows it actually deleted,
+      // so we can detect a "204 OK but nothing matched" (e.g. user_email mismatch).
+      'Prefer': 'return=representation',
+    };
 
-    let response = await fetch(deleteUrl, {
-      method: 'DELETE',
-      headers: {
-        'apikey': key,
-        'Authorization': `Bearer ${key}`,
-      },
-    });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
-        await markUserEmailMissing();
-        const fallbackUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${id}`;
-        const fallbackResponse = await fetch(fallbackUrl, {
-          method: 'DELETE',
-          headers: {
-            'apikey': key,
-            'Authorization': `Bearer ${key}`,
-          },
-        });
-        if (!fallbackResponse.ok) {
-          throw new Error(`Failed to delete transaction from Supabase (retry): ${fallbackResponse.status}`);
-        }
-      } else {
-        throw new Error(`Failed to delete transaction from Supabase: ${response.status} - ${errText}`);
+    // Delete strictly by id only. Scoping by user_email caused rows whose
+    // user_email didn't match the current account (SMS/shortcut/anonymous
+    // imports) to silently survive the delete.
+    const deleteById = async () => {
+      const res = await fetch(`${cleanUrl}/rest/v1/transactions?id=eq.${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(`Failed to delete transaction from Supabase: ${res.status} - ${errText}`);
       }
+      const deleted = await res.json().catch(() => []);
+      return Array.isArray(deleted) ? deleted.length : 0;
+    };
+
+    const deletedCount = await deleteById();
+    if (deletedCount === 0) {
+      console.warn(`deleteTransaction: no row matched id=${id} (already gone or RLS-blocked).`);
     }
   } catch (e) {
     console.error('Error deleting transaction:', e);
@@ -279,63 +362,60 @@ export const updateTransaction = async (updatedTx) => {
     }
     const cleanUrl = getCleanUrl(url);
 
-    let patchUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${updatedTx.id}`;
-    if (isUserEmailColumnSupported) {
-      patchUrl += `&user_email=eq.${encodeURIComponent(userEmail)}`;
-    }
+    // Match strictly by id (unique). Scoping the PATCH by user_email made edits
+    // silently match zero rows when the row's user_email differed from the
+    // current account (anonymous / SMS / Gmail imports) — the API returned 200
+    // but nothing changed.
+    const patchUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${encodeURIComponent(updatedTx.id)}`;
 
-    const patchPayload = {
-      amount: parseFloat(updatedTx.amount || 0),
-      type: (updatedTx.type || 'debit').toLowerCase(),
-      category: finalCategory,
-      date: updatedTx.date,
-      description: updatedTx.description,
-      mode: updatedTx.mode || 'UPI',
+    const buildPayload = (withEmail) => {
+      const p = {
+        amount: parseFloat(updatedTx.amount || 0),
+        type: (updatedTx.type || 'debit').toLowerCase(),
+        category: finalCategory,
+        date: updatedTx.date,
+        description: updatedTx.description,
+        mode: updatedTx.mode || 'UPI',
+      };
+      // Stamp ownership so the row shows up for this account going forward.
+      if (withEmail) p.user_email = userEmail;
+      return p;
     };
-    if (isUserEmailColumnSupported) {
-      patchPayload.user_email = userEmail;
-    }
 
-    let response = await fetch(patchUrl, {
-      method: 'PATCH',
-      headers: {
-        'apikey': key,
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=representation',
-      },
-      body: JSON.stringify(patchPayload),
-    });
+    const sendPatch = async (withEmail) => {
+      const res = await fetch(patchUrl, {
+        method: 'PATCH',
+        headers: {
+          'apikey': key,
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation',
+        },
+        body: JSON.stringify(buildPayload(withEmail)),
+      });
+      return res;
+    };
+
+    let response = await sendPatch(isUserEmailColumnSupported);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
         await markUserEmailMissing();
-        const fallbackUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${updatedTx.id}`;
-        const fallbackPayload = { ...patchPayload };
-        delete fallbackPayload.user_email;
-
-        const fallbackResponse = await fetch(fallbackUrl, {
-          method: 'PATCH',
-          headers: {
-            'apikey': key,
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation',
-          },
-          body: JSON.stringify(fallbackPayload),
-        });
-        if (!fallbackResponse.ok) {
-          throw new Error(`Failed to update transaction on Supabase (retry): ${fallbackResponse.status}`);
+        response = await sendPatch(false);
+        if (!response.ok) {
+          throw new Error(`Failed to update transaction on Supabase (retry): ${response.status}`);
         }
-        const data = await fallbackResponse.json();
-        return { ...data[0], synced: true };
       } else {
         throw new Error(`Failed to update transaction on Supabase: ${response.status} - ${errText}`);
       }
     }
 
-    const data = await response.json();
+    const data = await response.json().catch(() => []);
+    if (!Array.isArray(data) || data.length === 0) {
+      // 200 OK but no row changed — the id didn't match anything.
+      throw new Error('No matching transaction was found to update.');
+    }
     return { ...data[0], synced: true };
   } catch (e) {
     console.error('Error updating transaction:', e);
@@ -368,7 +448,7 @@ export const classifyOtherTransactionsBatch = async () => {
       return { success: true, count: 0, reason: 'All transactions are already classified or scanned.' };
     }
 
-    const batch = unclassifiedTxs.slice(0, 10);
+    const batch = unclassifiedTxs.slice(0, 20);
     const classifiedBatch = await bulkClassifyCategories(batch);
 
     let successCount = 0;

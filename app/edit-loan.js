@@ -14,10 +14,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { updateLoan } from '../utils/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function EditLoan() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
 
   const loanType = params.loanType || 'emi';
   const isBullet = loanType === 'bullet';
@@ -92,7 +94,10 @@ export default function EditLoan() {
         style={styles.keyboardView}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingTop: Math.max(insets.top, 20) + 10 }
+          ]}
           keyboardShouldPersistTaps="handled"
         >
           {/* Header */}

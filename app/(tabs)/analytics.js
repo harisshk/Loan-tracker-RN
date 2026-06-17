@@ -360,7 +360,7 @@ export default function EMIPage() {
           </BlurView>
         )}
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     </LinearGradient>
   );

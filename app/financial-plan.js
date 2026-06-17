@@ -17,6 +17,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLoans, getInsurances, getPayments } from '../utils/storage';
 import { generateFinancialPlan } from '../utils/financialPlanner';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const PLAN_SETTINGS_KEY = '@financial_plan_settings';
 
@@ -175,6 +176,7 @@ function MonthRow({ label, value, bold, accent }) {
 // ── Main Controller ─────────────────────────────────────────────────────────────
 export default function FinancialPlan() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [loading, setLoading]       = useState(true);
   const [showSetup, setShowSetup]   = useState(false);
   const [settings, setSettings]     = useState(null);
@@ -243,7 +245,7 @@ export default function FinancialPlan() {
 
   return (
     <LinearGradient colors={['#f0fdf4', '#f8fafc', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}><Text style={styles.backButton}>← Back</Text></TouchableOpacity>
           <Text style={styles.headerTitle}>Financial Plan</Text>

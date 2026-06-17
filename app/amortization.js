@@ -113,6 +113,111 @@ export default function AmortizationSchedule() {
     }
   };
 
+  const handleExportHTML = async () => {
+    try {
+      let rows = '';
+      schedule.forEach((row) => {
+        rows += `
+          <tr class="${row.isPaid ? 'paid' : ''}">
+            <td>${row.month}</td>
+            <td>${formatDate(row.date)}</td>
+            <td class="amount principal">${formatCurrency(row.principal)}</td>
+            <td class="amount interest">${formatCurrency(row.interest)}</td>
+            <td class="amount">${formatCurrency(row.emi)}</td>
+            <td class="amount balance">${formatCurrency(row.remainingPrincipal)}</td>
+            <td><span class="badge ${row.isPaid ? 'badge-paid' : 'badge-pending'}">${row.isPaid ? 'Paid' : 'Pending'}</span></td>
+          </tr>
+        `;
+      });
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Amortization Schedule - ${loan.loanName}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; color: #0f172a; background-color: #f8fafc; }
+            h1 { font-size: 24px; font-weight: 800; margin-bottom: 4px; color: #0f172a; }
+            h2 { font-size: 14px; font-weight: 600; color: #64748b; margin-top: 0; margin-bottom: 24px; }
+            .stats { display: flex; gap: 16px; margin-bottom: 24px; }
+            .stat-card { flex: 1; padding: 16px; background: white; border-radius: 12px; border: 1px solid #e2e8f0; }
+            .stat-label { font-size: 11px; text-transform: uppercase; color: #64748b; margin-bottom: 4px; font-weight: 700; letter-spacing: 0.5px; }
+            .stat-value { font-size: 18px; font-weight: 700; }
+            table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; }
+            th { background-color: #f1f5f9; padding: 12px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0; }
+            td { padding: 12px; font-size: 13px; border-bottom: 1px solid #f1f5f9; font-weight: 500; }
+            tr.paid { background-color: rgba(16, 185, 129, 0.02); }
+            .amount { text-align: right; }
+            .principal { color: #10b981; }
+            .interest { color: #f59e0b; }
+            .balance { color: #e11d48; font-weight: 600; }
+            .badge { display: inline-block; padding: 4px 8px; border-radius: 9999px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+            .badge-paid { background-color: rgba(16, 185, 129, 0.1); color: #10b981; }
+            .badge-pending { background-color: rgba(100, 116, 139, 0.1); color: #64748b; }
+            @media print {
+              body { background-color: white; padding: 0; }
+              .stat-card { border: 1px solid #cbd5e1; }
+              table { border: 1px solid #cbd5e1; page-break-inside: auto; }
+              tr { page-break-inside: avoid; page-break-after: auto; }
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Payment Amortization Schedule</h1>
+          <h2>Loan: ${loan.loanName}</h2>
+          <div class="stats">
+            <div class="stat-card">
+              <div class="stat-label">Principal Amount</div>
+              <div class="stat-value">${formatCurrency(loan.principal)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Interest Rate</div>
+              <div class="stat-value">${loan.interest}% p.a.</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Monthly EMI</div>
+              <div class="stat-value">${formatCurrency(loan.emiAmount)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Tenure</div>
+              <div class="stat-value">${loan.tenure} Months</div>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Due Date</th>
+                <th class="amount">Principal</th>
+                <th class="amount">Interest</th>
+                <th class="amount">EMI</th>
+                <th class="amount">Remaining Balance</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </body>
+        </html>
+      `;
+
+      const fileUri = FileSystem.documentDirectory + `Loan_Schedule_${loan.loanName.replace(/[^a-zA-Z0-9]/g, '_')}.html`;
+      await FileSystem.writeAsStringAsync(fileUri, htmlContent, { encoding: 'utf8' });
+      
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri);
+      } else {
+        Alert.alert('Success', `File saved to ${fileUri}`);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to export HTML schedule');
+      console.error(error);
+    }
+  };
+
   return (
     <LinearGradient
       colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
@@ -160,6 +265,12 @@ export default function AmortizationSchedule() {
         <TouchableOpacity style={styles.exportButton} onPress={handleExportCSV}>
           <BlurView intensity={25} tint="light" style={styles.exportBlur}>
             <Text style={styles.exportButtonText}>📥 Export to CSV / Excel</Text>
+          </BlurView>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.printButton} onPress={handleExportHTML}>
+          <BlurView intensity={25} tint="light" style={styles.printBlur}>
+            <Text style={styles.printButtonText}>🖨️ Export to Printable Document (HTML/PDF)</Text>
           </BlurView>
         </TouchableOpacity>
 
@@ -361,5 +472,22 @@ const styles = StyleSheet.create({
   balanceText: {
     color: '#e11d48',
     fontWeight: '600',
+  },
+  printButton: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+    marginBottom: 24,
+  },
+  printBlur: {
+    padding: 16,
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+  },
+  printButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#10b981',
   },
 });

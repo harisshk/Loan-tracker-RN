@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { registerForPushNotificationsAsync } from '../utils/notifications';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function RootLayout() {
@@ -43,6 +44,7 @@ export default function RootLayout() {
   }, [isReady, isAuthenticated, segments]);
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaProvider>
       <Stack
         screenOptions={{
@@ -68,7 +70,11 @@ export default function RootLayout() {
         <Stack.Screen name="compare-loans" />
         <Stack.Screen name="add-transaction" />
       </Stack>
-      <StatusBar style="dark" />
+      {(() => {
+        const isDarkScreen = segments[0] === 'login' || (segments[0] === '(tabs)' && segments[1] === 'ai-advisor');
+        return <StatusBar style={isDarkScreen ? 'light' : 'dark'} />;
+      })()}
     </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

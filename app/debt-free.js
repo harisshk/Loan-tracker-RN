@@ -15,6 +15,7 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { getLoans, getPayments } from '../utils/storage';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const fc  = (v) => `₹${parseFloat(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
 const fd  = (d) => new Date(d).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
@@ -181,6 +182,7 @@ const TIMELINE_COLORS = ['#10b981','#38bdf8','#a78bfa','#f59e0b','#e11d48','#fb9
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function DebtFree() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [loanStates, setLoanStates]     = useState([]);
   const [extraInput, setExtraInput]     = useState('');
   const hasSuggested = useRef(false);
@@ -259,7 +261,7 @@ export default function DebtFree() {
     <LinearGradient colors={['#f0f9ff','#f8fafc','#e2e8f0']} style={styles.container}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           keyboardShouldPersistTaps="handled"
         >

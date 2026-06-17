@@ -16,6 +16,7 @@ import { PieChart } from 'react-native-chart-kit';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../../utils/storage';
 import { getTransactions, getBudgetLimit, syncWithSupabase } from '../../utils/transactions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PulseSkeleton } from '../../components/ui/skeleton';
 
 const { width } = Dimensions.get('window');
 
@@ -52,6 +53,7 @@ export default function DashboardView() {
     nextPaymentAmount: 0,
     nextPaymentLoanName: '',
   });
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [spentThisMonth, setSpentThisMonth] = useState(0);
   const [budgetLimit, setBudgetLimit] = useState(50000);
@@ -66,19 +68,20 @@ export default function DashboardView() {
     return days >= 0 && days <= 90;
   }).length;
 
-  const loadData = async () => {
-    const loansData = await getLoans();
-    const paymentsData = await getPayments();
-    const insurancesData = await getInsurances();
-    setLoans(loansData);
-    setPayments(paymentsData);
-    setInsurances(insurancesData);
-    
-    const calculatedStats = calculateLoanStats(loansData, paymentsData, insurancesData);
-    setStats(calculatedStats);
-
-    // Load Spend Data
+  const loadData = async (showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     try {
+      const loansData = await getLoans();
+      const paymentsData = await getPayments();
+      const insurancesData = await getInsurances();
+      setLoans(loansData);
+      setPayments(paymentsData);
+      setInsurances(insurancesData);
+      
+      const calculatedStats = calculateLoanStats(loansData, paymentsData, insurancesData);
+      setStats(calculatedStats);
+
+      // Load Spend Data
       const txs = await getTransactions();
       const limit = await getBudgetLimit();
       setBudgetLimit(limit);
@@ -96,16 +99,29 @@ export default function DashboardView() {
       // Silent sync
       syncWithSupabase().catch(e => console.warn('Silent sync failed:', e));
     } catch (e) {
-      console.error('Error loading spend data on home:', e);
+      console.error('Error loading data on home:', e);
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => { loadData(); }, []);
-  useFocusEffect(React.useCallback(() => { loadData(); }, []));
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+      (async () => {
+        if (active) {
+          await loadData(true);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadData();
+    await loadData(false);
     setRefreshing(false);
   };
 
@@ -239,6 +255,83 @@ export default function DashboardView() {
     { title: 'Extra Payments Log', icon: 'receipt-outline', route: '/history' },
   ];
 
+  if (loading) {
+    return (
+      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top, paddingHorizontal: 20 }]}>
+          {/* Header */}
+          <View style={[styles.headerRow, { paddingHorizontal: 0, marginTop: 10, marginBottom: 20, justifyContent: 'center' }]}>
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <PulseSkeleton width={120} height={32} borderRadius={8} style={{ marginBottom: 8 }} />
+              <PulseSkeleton width={180} height={16} borderRadius={6} />
+            </View>
+          </View>
+
+          {/* Insight Banner */}
+          <View style={{ marginBottom: 20 }}>
+            <PulseSkeleton height={48} borderRadius={16} />
+          </View>
+
+          {/* Hero Card */}
+          <View style={{ backgroundColor: '#fff', borderRadius: 28, padding: 24, marginBottom: 26, borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)' }}>
+            <PulseSkeleton width={120} height={14} borderRadius={4} style={{ marginBottom: 8 }} />
+            <PulseSkeleton width={200} height={38} borderRadius={8} style={{ marginBottom: 20 }} />
+            <View style={{ height: 1, backgroundColor: 'rgba(0,0,0,0.05)', marginVertical: 14 }} />
+            <View style={{ flexDirection: 'row', gap: 24 }}>
+              <View style={{ flex: 1 }}>
+                <PulseSkeleton width={80} height={12} borderRadius={4} style={{ marginBottom: 6 }} />
+                <PulseSkeleton width={100} height={18} borderRadius={6} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <PulseSkeleton width={80} height={12} borderRadius={4} style={{ marginBottom: 6 }} />
+                <PulseSkeleton width={100} height={18} borderRadius={6} />
+              </View>
+            </View>
+          </View>
+
+          {/* Activity Section */}
+          <View style={{ marginBottom: 28 }}>
+            <PulseSkeleton width={150} height={20} borderRadius={6} style={{ marginBottom: 14 }} />
+            <View style={{ backgroundColor: '#fff', borderRadius: 24, padding: 20, borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
+                <View>
+                  <PulseSkeleton width={60} height={12} borderRadius={4} style={{ marginBottom: 6 }} />
+                  <PulseSkeleton width={80} height={18} borderRadius={6} />
+                </View>
+                <View>
+                  <PulseSkeleton width={60} height={12} borderRadius={4} style={{ marginBottom: 6 }} />
+                  <PulseSkeleton width={80} height={18} borderRadius={6} />
+                </View>
+                <View>
+                  <PulseSkeleton width={60} height={12} borderRadius={4} style={{ marginBottom: 6 }} />
+                  <PulseSkeleton width={80} height={18} borderRadius={6} />
+                </View>
+              </View>
+              <PulseSkeleton height={8} borderRadius={4} style={{ marginBottom: 16 }} />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <PulseSkeleton width={100} height={14} borderRadius={4} />
+                <PulseSkeleton width={100} height={14} borderRadius={4} />
+              </View>
+            </View>
+          </View>
+
+          {/* Quick Access */}
+          <View style={{ marginBottom: 28 }}>
+            <PulseSkeleton width={120} height={20} borderRadius={6} style={{ marginBottom: 14 }} />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <View key={i} style={{ width: '31.3%', height: 90, backgroundColor: '#fff', borderRadius: 20, padding: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)' }}>
+                  <PulseSkeleton width={32} height={32} borderRadius={10} style={{ marginBottom: 8 }} />
+                  <PulseSkeleton width={50} height={10} borderRadius={3} />
+                </View>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
+      </LinearGradient>
+    );
+  }
+
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
       <ScrollView
@@ -312,6 +405,27 @@ export default function DashboardView() {
             </View>
           </View>
         </LinearGradient>
+
+        {/* Interest Savings Highlight Card */}
+        {(stats as any).totalInterestSaved > 0 && (
+          <View style={styles.savingsCardContainer}>
+            <LinearGradient
+              colors={['#065f46', '#047857']}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+              style={styles.savingsCard}
+            >
+              <View style={styles.savingsContent}>
+                <View style={styles.savingsIconWrap}>
+                  <Ionicons name="sparkles" size={18} color="#fff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.savingsLabel}>Total Interest Saved</Text>
+                  <Text style={styles.savingsValue}>🎉 You saved {fc((stats as any).totalInterestSaved)} in interest!</Text>
+                </View>
+              </View>
+            </LinearGradient>
+          </View>
+        )}
 
         {/* This Month Spending (Segmented view) */}
         <View style={styles.monthSection}>
@@ -515,7 +629,7 @@ export default function DashboardView() {
           )}
         </View>
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     </LinearGradient>
   );
@@ -595,4 +709,10 @@ const styles = StyleSheet.create({
   analyticsShareAmt: { fontSize: 12, fontWeight: '600', color: '#64748b' },
   analyticsBarBg: { height: 6, backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: 3, overflow: 'hidden' },
   analyticsBarFill: { height: '100%', borderRadius: 3 },
+  savingsCardContainer: { marginHorizontal: 20, marginBottom: 20, borderRadius: 20, overflow: 'hidden', shadowColor: '#10b981', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 8 },
+  savingsCard: { padding: 14 },
+  savingsContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  savingsIconWrap: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
+  savingsLabel: { fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', fontWeight: '700', letterSpacing: 0.5 },
+  savingsValue: { fontSize: 15, color: '#fff', fontWeight: '700', marginTop: 1 },
 });

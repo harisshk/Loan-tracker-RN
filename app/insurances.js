@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { getInsurances, deleteInsurance } from '../utils/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ── Sort options ──────────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
@@ -33,6 +34,7 @@ const INS_TYPE_META = {
 
 export default function Insurances() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [insurances, setInsurances] = useState([]);
   const [sortId, setSortId]         = useState('nextDue');
   const [refreshing, setRefreshing] = useState(false);
@@ -124,7 +126,7 @@ export default function Insurances() {
       style={styles.container}
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Header */}

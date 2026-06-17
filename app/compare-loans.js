@@ -13,12 +13,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const fc = (v) =>
   `₹${parseFloat(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 
 export default function Compare() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   
   // Offer A
   const [p1, setP1] = useState('1000000');
@@ -54,7 +56,7 @@ export default function Compare() {
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}><Text style={styles.backButton}>← Dashboard</Text></TouchableOpacity>
           <Text style={styles.headerTitle}>Comparison Lab</Text>

@@ -18,7 +18,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLoans } from '../../utils/storage';
-import { getSupabaseConfig, saveSupabaseConfig } from '../../utils/transactions';
 import { getGmailConfig, saveGmailTokens, clearGmailTokens, saveGmailSearchQuery, syncGmailTransactions } from '../../utils/gmail';
 import Config from '../../utils/Config';
 import { clearAuthUser } from '../../utils/auth';
@@ -42,8 +41,6 @@ export default function Settings() {
   const [currency, setCurrency] = useState(Config.DEFAULT_CURRENCY || '₹');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
-  const [supabaseUrl, setSupabaseUrl] = useState('');
-  const [supabaseKey, setSupabaseKey] = useState('');
 
   // Gmail states
   const [gmailConfig, setGmailConfig] = useState({ email: '', query: '', isConnected: false });
@@ -120,10 +117,6 @@ export default function Settings() {
     const savedKey = await AsyncStorage.getItem('@user_gemini_api_key');
     if (savedKey) setApiKey(savedKey);
 
-    const sb = await getSupabaseConfig();
-    setSupabaseUrl(sb.url);
-    setSupabaseKey(sb.key);
-
     const gConfig = await getGmailConfig();
     setGmailConfig(gConfig);
     setGmailQuery(gConfig.query);
@@ -132,10 +125,6 @@ export default function Settings() {
   const saveApiKey = async (val: any) => {
     setApiKey(val);
     await AsyncStorage.setItem('@user_gemini_api_key', val);
-  };
-
-  const handleSaveSupabase = async (url: any, key: any) => {
-    await saveSupabaseConfig(url, key);
   };
 
   const handleExportCSV = async () => {
@@ -269,34 +258,10 @@ export default function Settings() {
                <Text style={styles.cardText}>Supabase Sync Config</Text>
              </View>
              
-             <Text style={styles.inputLabel}>Supabase URL</Text>
-             <TextInput
-               style={[styles.keyInput, { marginBottom: 12 }]}
-               placeholder="https://your-project.supabase.co"
-               placeholderTextColor="#94a3b8"
-               value={supabaseUrl}
-               onChangeText={(val) => {
-                 setSupabaseUrl(val);
-                 handleSaveSupabase(val, supabaseKey);
-               }}
-               autoCapitalize="none"
-               autoCorrect={false}
-             />
-
-             <Text style={styles.inputLabel}>Anon Key</Text>
-             <TextInput
-               style={styles.keyInput}
-               placeholder="eyJhbGciOi..."
-               placeholderTextColor="#94a3b8"
-               value={supabaseKey}
-               onChangeText={(val) => {
-                 setSupabaseKey(val);
-                 handleSaveSupabase(supabaseUrl, val);
-               }}
-               autoCapitalize="none"
-               autoCorrect={false}
-               secureTextEntry
-             />
+             <View style={styles.envNote}>
+               <Ionicons name="lock-closed" size={14} color="#10b981" />
+               <Text style={styles.envNoteText}>Connected via secure environment configuration</Text>
+             </View>
 
              <Text style={[styles.helpText, { textAlign: 'left', marginTop: 15, fontWeight: '700', color: '#0f172a' }]}>iOS Shortcuts Integration Guide:</Text>
               <Text style={[styles.helpText, { textAlign: 'left', marginTop: 4, lineHeight: 16, color: '#475569' }]}>
@@ -419,7 +384,7 @@ export default function Settings() {
         </View>
 
         <Text style={styles.versionText}>Velo Flow v2.0.0 • Elite Edition</Text>
-        <View style={{ height: 100 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     </LinearGradient>
   );
@@ -443,6 +408,8 @@ const styles = StyleSheet.create({
   toggleText: { fontSize: 12, color: '#7c3aed', fontWeight: '700' },
   helpText: { fontSize: 11, color: '#94a3b8', marginTop: 12, textAlign: 'center' },
   dangerCard: { borderColor: 'rgba(225,29,72,0.1)' },
-  versionText: { textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 40, marginBottom: 60 },
+  versionText: { textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 20, marginBottom: 4 },
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, marginLeft: 2, marginTop: 8 },
+  envNote: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(16,185,129,0.08)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
+  envNoteText: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
 });

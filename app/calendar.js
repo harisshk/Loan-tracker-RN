@@ -12,9 +12,11 @@ import { useRouter } from 'expo-router';
 import { Calendar } from 'react-native-calendars';
 import { getLoans, getPayments, getInsurances } from '../utils/storage';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function CalendarScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [loans, setLoans] = useState([]);
   const [payments, setPayments] = useState([]);
   const [insurances, setInsurances] = useState([]);
@@ -190,7 +192,7 @@ export default function CalendarScreen() {
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <Text style={styles.backButton}>← Back</Text>

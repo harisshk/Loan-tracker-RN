@@ -8,10 +8,12 @@ import {
   Dimensions,
   RefreshControl,
   Alert,
+  TextInput,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BarChart, ProgressChart } from 'react-native-chart-kit';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
 import { getPayments, updateLoan, saveLoan, addPayment, deletePayment } from '../utils/storage';
@@ -21,9 +23,11 @@ const { width } = Dimensions.get('window');
 export default function LoanDetail() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
   const [extraPayments, setExtraPayments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [simulationAmount, setSimulationAmount] = useState('');
   
   React.useEffect(() => {
     loadPayments();
@@ -109,6 +113,59 @@ export default function LoanDetail() {
   console.log('Total Interest (Full Tenure):', breakdown.totalInterest.toFixed(2));
   console.log('Total Amount (Full Tenure):', breakdown.totalAmount.toFixed(2));
   console.log('===============================');
+
+  const getSimulationResult = () => {
+    if (!simulationAmount) return null;
+    const simAmount = parseFloat(simulationAmount.replace(/,/g, ''));
+    if (isNaN(simAmount) || simAmount <= 0) return null;
+
+    const simulatedExtra = [...extraPayments, { amount: simAmount, date: new Date().toISOString() }];
+    const simBreakdown = calculateEMIBreakdown(
+      loan.principal,
+      loan.interest,
+      loan.tenure,
+      monthsElapsed,
+      loan.emiAmount,
+      loan.loanType,
+      simulatedExtra
+    );
+
+    const interestSaved = Math.max(0, breakdown.remainingInterestAmount - simBreakdown.remainingInterestAmount);
+
+    let monthsShortened = 0;
+    if (loan.loanType !== 'bullet' && loan.emiAmount > 0) {
+      let simulatedRemainingMonths = 0;
+      let tempPrincipal = simBreakdown.remainingPrincipalAmount;
+      const monthlyRate = loan.interest / 12 / 100;
+      while (tempPrincipal > 0.01 && simulatedRemainingMonths < loan.tenure) {
+        const interest = tempPrincipal * monthlyRate;
+        const principalRed = Math.min(tempPrincipal, loan.emiAmount - interest);
+        if (principalRed <= 0) break;
+        tempPrincipal -= principalRed;
+        simulatedRemainingMonths++;
+      }
+
+      let currentRemainingMonths = 0;
+      let tempP = breakdown.remainingPrincipalAmount;
+      while (tempP > 0.01 && currentRemainingMonths < loan.tenure) {
+        const interest = tempP * monthlyRate;
+        const principalRed = Math.min(tempP, loan.emiAmount - interest);
+        if (principalRed <= 0) break;
+        tempP -= principalRed;
+        currentRemainingMonths++;
+      }
+
+      monthsShortened = Math.max(0, currentRemainingMonths - simulatedRemainingMonths);
+    }
+
+    return {
+      interestSaved,
+      monthsShortened,
+      newRemainingAmount: simBreakdown.remainingAmount,
+    };
+  };
+
+  const simResult = getSimulationResult();
 
   const progress = loan.tenure > 0 ? breakdown.paymentsMade / loan.tenure : 0;
 
@@ -242,7 +299,7 @@ export default function LoanDetail() {
       style={styles.container}
     >
       <ScrollView 
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}
         refreshControl={
           <RefreshControl 
             refreshing={refreshing} 
@@ -437,6 +494,64 @@ export default function LoanDetail() {
             </View>
           </View>
         </BlurView>
+
+        {/* Prepayment Simulator Card — active loans only */}
+        {params.status !== 'closed' && (
+          <BlurView intensity={20} tint="light" style={styles.simulatorCard}>
+            <View style={styles.cardContent}>
+              <Text style={styles.chartTitle}>🔮 Prepayment Simulator</Text>
+              <Text style={styles.chartSubtitle}>
+                See how much time and interest you save by prepaying principal.
+              </Text>
+              
+              <View style={styles.simInputContainer}>
+                <Text style={styles.simInputLabel}>Simulated Prepayment (₹)</Text>
+                <TextInput
+                  style={styles.simInput}
+                  keyboardType="numeric"
+                  placeholder="e.g. 10000"
+                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
+                  value={simulationAmount}
+                  onChangeText={(val) => setSimulationAmount(val.replace(/[^0-9]/g, ''))}
+                />
+              </View>
+
+              {simResult ? (
+                <View style={styles.simResultsContainer}>
+                  <View style={styles.simResultRow}>
+                    <View style={[styles.simResultCard, { backgroundColor: 'rgba(16, 185, 129, 0.08)' }]}>
+                      <Text style={styles.simResultLabel}>Interest Saved</Text>
+                      <Text style={[styles.simResultVal, { color: '#10b981' }]}>
+                        {formatCurrency(simResult.interestSaved)}
+                      </Text>
+                    </View>
+                    {loan.loanType !== 'bullet' && (
+                      <View style={[styles.simResultCard, { backgroundColor: 'rgba(56, 189, 248, 0.08)' }]}>
+                        <Text style={styles.simResultLabel}>Tenure Reduced</Text>
+                        <Text style={[styles.simResultVal, { color: '#0284c7' }]}>
+                          {simResult.monthsShortened} months
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.simNewDetails}>
+                    <Text style={styles.simNewText}>
+                      New Remaining Balance:{' '}
+                      <Text style={{ fontWeight: 'bold', color: '#e11d48' }}>
+                        {formatCurrency(simResult.newRemainingAmount)}
+                      </Text>
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.simPlaceholderText}>
+                  Enter an amount above to run the savings simulation.
+                </Text>
+              )}
+            </View>
+          </BlurView>
+        )}
 
         {/* Action Buttons */}
         <View style={styles.actionGrid}>
@@ -739,5 +854,73 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  simulatorCard: {
+    borderRadius: 30,
+    overflow: 'hidden',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  simInputContainer: {
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  simInputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.6)',
+    marginBottom: 8,
+  },
+  simInput: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    height: 48,
+    fontSize: 15,
+    color: '#0f172a',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  simResultsContainer: {
+    gap: 14,
+  },
+  simResultRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  simResultCard: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.03)',
+  },
+  simResultLabel: {
+    fontSize: 12,
+    color: 'rgba(15, 23, 42, 0.5)',
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  simResultVal: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  simNewDetails: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.04)',
+  },
+  simNewText: {
+    fontSize: 13,
+    color: 'rgba(15,23,42,0.6)',
+  },
+  simPlaceholderText: {
+    fontSize: 13,
+    color: 'rgba(15, 23, 42, 0.4)',
+    textAlign: 'center',
+    paddingVertical: 16,
+    fontStyle: 'italic',
   },
 });

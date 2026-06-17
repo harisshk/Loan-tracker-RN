@@ -585,6 +585,7 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
   let nextDueDate = null;
   let nextPaymentAmount = 0;
   let nextPaymentLoanName = '';
+  let totalInterestSaved = 0;
   
   let thisMonthDueAmount = 0;
   let thisMonthDueCount = 0;
@@ -642,6 +643,12 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     totalPaid += breakdown.totalPaid;
     totalPrincipalPaid += breakdown.principalPaid;
     totalInterestPaid += breakdown.interestPaid;
+
+    const standardInterest = loanType === 'bullet'
+      ? principal * (interest / 100) * (tenure / 12)
+      : (emiAmount * tenure) - principal;
+    const loanInterestSaved = Math.max(0, standardInterest - breakdown.totalInterest);
+    totalInterestSaved += loanInterestSaved;
     
     // Only add to upcoming EMI if loan is still active and not explicitly closed
     if (monthsElapsed < tenure && loan.status !== 'closed') {
@@ -766,6 +773,7 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     thisMonthEMIPaid,
     thisMonthExtraPaid,
     thisMonthTotalPaid: thisMonthEMIPaid + thisMonthExtraPaid,
+    totalInterestSaved,
   };
 };
 

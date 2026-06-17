@@ -131,6 +131,7 @@ export const calculateEMIBreakdown = (principal, annualInterest, tenure, monthsE
     remainingInterestAmount: simulatedInterestRemaining,
     totalInterest: stateAtElapsed.interestPaid + simulatedInterestRemaining,
     totalAmount: principal + stateAtElapsed.interestPaid + simulatedInterestRemaining,
-    isMatured: monthsElapsed >= tenure || finalRemainingPrincipal <= 0
+    isMatured: monthsElapsed >= tenure || finalRemainingPrincipal <= 0,
+    paymentsMade: Math.min(monthsElapsed, tenure)
   };
 };

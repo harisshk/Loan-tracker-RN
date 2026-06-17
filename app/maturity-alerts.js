@@ -12,6 +12,7 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { getLoans, getPayments, getInsurances } from '../utils/storage';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const fc = (v) =>
   `₹${parseFloat(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
@@ -67,6 +68,7 @@ function CountdownRing({ days, totalDays, color, size = 100 }) {
 
 export default function MaturityAlerts() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [bulletLoans, setBulletLoans]   = useState([]);
   const [nearingEMIs, setNearingEMIs]   = useState([]);
   const [refreshing, setRefreshing]     = useState(false);
@@ -168,7 +170,7 @@ export default function MaturityAlerts() {
   return (
     <LinearGradient colors={['#fff7ed', '#fef3c7', '#f8fafc']} style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Header */}

@@ -12,12 +12,14 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { saveInsurance } from '../utils/storage';
 import { scheduleInsuranceReminder } from '../utils/notifications';
 
 export default function AddInsurance() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -66,7 +68,7 @@ export default function AddInsurance() {
       colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <Text style={styles.backButton}>← Back</Text>

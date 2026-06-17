@@ -10,6 +10,7 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Keyboard,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -197,6 +198,21 @@ INSTRUCTIONS:
 
 export default function AIAdvisor() {
   const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSubscription = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
   const scrollRef = useRef<ScrollView>(null);
   const [contextType, setContextType] = useState<'loans' | 'spends'>('loans');
   const [messages, setMessages] = useState<{ role: string; text: string; isError?: boolean }[]>([
@@ -423,7 +439,16 @@ export default function AIAdvisor() {
           )}
         </ScrollView>
 
-        <BlurView intensity={40} tint="dark" style={styles.inputBar}>
+        <BlurView 
+          intensity={40} 
+          tint="dark" 
+          style={[
+            styles.inputBar, 
+            Platform.OS === 'ios' && {
+              paddingBottom: keyboardVisible ? 12 : insets.bottom + 65
+            }
+          ]}
+        >
           <TextInput 
             style={styles.input} 
             placeholder={contextType === 'loans' ? "Ask about your loans..." : "Ask about your spends/budgets..."} 

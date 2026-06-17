@@ -15,10 +15,12 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { addPayment, updateLoan, saveLoan } from '../utils/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function RenewLoan() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
   const action = params.action; // 'renew' or 'close'
 
   // Common State
@@ -168,7 +170,7 @@ export default function RenewLoan() {
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()}>
               <Text style={styles.backButton}>← Back</Text>
