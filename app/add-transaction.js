@@ -20,7 +20,7 @@ import { saveTransaction, getTransactions, updateTransaction, getBudgetLimit } f
 import { getLoans, addPayment } from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const CATEGORIES = ['Salary', 'Food', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Other'];
+const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Other'];
 
 export default function AddTransaction() {
   const router = useRouter();
@@ -230,7 +230,9 @@ export default function AddTransaction() {
           
           const existingDebits = txs.filter((t) => {
             const d = new Date(t.date);
-            return (t.type || '').toLowerCase() !== 'credit' && d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+            return (t.type || '').toLowerCase() !== 'credit' &&
+              t.category !== 'Credit Card Bill' &&
+              d.getMonth() === currentMonth && d.getFullYear() === currentYear;
           }).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
           
           const newTotal = existingDebits + amt;

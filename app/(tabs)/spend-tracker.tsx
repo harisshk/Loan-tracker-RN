@@ -54,6 +54,7 @@ const CATEGORY_ICONS = {
   Investment: { name: 'trending-up-outline', color: '#8b5cf6' },
   Entertainment: { name: 'film-outline', color: '#f43f5e' },
   Travel: { name: 'airplane-outline', color: '#06b6d4' },
+  'Credit Card Bill': { name: 'card-outline', color: '#6366f1' },
   Other: { name: 'cube-outline', color: '#64748b' },
 };
 
@@ -230,7 +231,9 @@ export default function SpendTracker() {
         if ((t.type || '').toLowerCase() === 'credit') {
           inc += amt;
         } else {
-          exp += amt;
+          if (t.category !== 'Credit Card Bill') {
+            exp += amt;
+          }
           if (t.category === 'EMI') emi += amt;
         }
       }
@@ -442,7 +445,11 @@ export default function SpendTracker() {
       if (endDate && (!dateObj || dateObj > endOfDay(endDate))) return acc;
       const amt = parseFloat(t.amount || 0);
       if ((t.type || '').toLowerCase() === 'credit') acc.income += amt;
-      else acc.expenses += amt;
+      else {
+        if (t.category !== 'Credit Card Bill') {
+          acc.expenses += amt;
+        }
+      }
       return acc;
     },
     { income: 0, expenses: 0 }
@@ -800,6 +807,30 @@ export default function SpendTracker() {
               <Ionicons name="close-circle" size={16} color="#94a3b8" />
             </TouchableOpacity>
           )}
+        </View>
+
+        {/* Quick Type Filter Tabs */}
+        <View style={styles.quickTypeTabs}>
+          {['all', 'debit', 'credit'].map((type) => {
+            const isActive = filterType === type;
+            const label = type === 'all' ? 'All' : type === 'debit' ? 'Debits Only' : 'Credits Only';
+            const activeColor = type === 'all' ? '#0f172a' : type === 'debit' ? '#e11d48' : '#059669';
+            return (
+              <TouchableOpacity
+                key={type}
+                style={[
+                  styles.quickTypeTab,
+                  isActive && { backgroundColor: activeColor, borderColor: 'transparent' }
+                ]}
+                onPress={() => setFilterType(type)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.quickTypeTabText, isActive && { color: '#ffffff', fontWeight: '700' }]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Transactions List */}
@@ -1192,5 +1223,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     flex: 1,
+  },
+  quickTypeTabs: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  quickTypeTab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.02,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  quickTypeTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
   },
 });

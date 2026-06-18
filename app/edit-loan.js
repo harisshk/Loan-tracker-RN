@@ -13,7 +13,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { updateLoan } from '../utils/storage';
+import { getLoans, updateLoan } from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function EditLoan() {
@@ -21,18 +21,57 @@ export default function EditLoan() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
 
-  const loanType = params.loanType || 'emi';
+  const [loading, setLoading] = useState(true);
+  const [formData, setFormData] = useState({
+    loanName: '',
+    loanType: 'emi',
+    principal: '',
+    interest: '',
+    emiAmount: '',
+    startDate: new Date().toISOString().split('T')[0],
+    tenure: '',
+  });
+
+  const loanType = formData.loanType || 'emi';
   const isBullet = loanType === 'bullet';
 
-  const [formData, setFormData] = useState({
-    loanName: params.loanName || '',
-    loanType,
-    principal: params.principal ? String(params.principal) : '',
-    interest: params.interest ? String(params.interest) : '',
-    emiAmount: params.emiAmount ? String(params.emiAmount) : '',
-    startDate: params.startDate || new Date().toISOString().split('T')[0],
-    tenure: params.tenure ? String(params.tenure) : '',
-  });
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const allLoans = await getLoans();
+      const found = allLoans.find(l => l.id === params.id);
+      if (found) {
+        setFormData({
+          loanName: found.loanName || '',
+          loanType: found.loanType || 'emi',
+          principal: found.principal ? String(found.principal) : '',
+          interest: found.interest ? String(found.interest) : '',
+          emiAmount: found.emiAmount ? String(found.emiAmount) : '',
+          startDate: found.startDate || new Date().toISOString().split('T')[0],
+          tenure: found.tenure ? String(found.tenure) : '',
+        });
+      } else {
+        // Fallback to params
+        setFormData({
+          loanName: params.loanName || '',
+          loanType: params.loanType || 'emi',
+          principal: params.principal ? String(params.principal) : '',
+          interest: params.interest ? String(params.interest) : '',
+          emiAmount: params.emiAmount ? String(params.emiAmount) : '',
+          startDate: params.startDate || new Date().toISOString().split('T')[0],
+          tenure: params.tenure ? String(params.tenure) : '',
+        });
+      }
+    } catch (e) {
+      console.error('Error loading loan details:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    loadData();
+  }, [params.id]);
 
   const handleInputChange = (field, value) => {
     let sanitizedValue = value;
@@ -83,6 +122,13 @@ export default function EditLoan() {
       Alert.alert('Error', 'Failed to update loan. Please try again.');
     }
   };
+
+  if (loading) {
+    return (
+      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient

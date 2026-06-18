@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,21 +13,43 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Alert } from 'react-native';
+import { getLoans } from '../utils/storage';
 
 export default function AmortizationSchedule() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const [refreshing, setRefreshing] = useState(false);
-  
-  // Parse loan data from params
-  const loan = {
-    loanName: params.loanName,
-    principal: parseFloat(params.principal) || 0,
-    interest: parseFloat(params.interest) || 0,
-    emiAmount: parseFloat(params.emiAmount) || 0,
-    tenure: parseInt(params.tenure) || 0,
-    startDate: params.startDate,
+  const [loading, setLoading] = useState(true);
+  const [loan, setLoan] = useState(null);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const allLoans = await getLoans();
+      const found = allLoans.find(l => l.id === params.id);
+      if (found) {
+        setLoan(found);
+      } else {
+        // Fallback to params
+        setLoan({
+          loanName: params.loanName || 'Loan Schedule',
+          principal: parseFloat(params.principal) || 0,
+          interest: parseFloat(params.interest) || 0,
+          emiAmount: parseFloat(params.emiAmount) || 0,
+          tenure: parseInt(params.tenure) || 0,
+          startDate: params.startDate || new Date().toISOString().split('T')[0],
+        });
+      }
+    } catch (e) {
+      console.error('Error loading loan schedule:', e);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => {
+    loadData();
+  }, [params.id]);
 
   const formatCurrency = (amount) => {
     return `₹${parseFloat(amount || 0).toLocaleString('en-IN', {
@@ -43,6 +65,13 @@ export default function AmortizationSchedule() {
       year: 'numeric',
     });
   };
+
+  if (loading || !loan) {
+    return (
+      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      </LinearGradient>
+    );
+  }
 
   // Calculate months elapsed
   const startDate = new Date(loan.startDate);
@@ -87,9 +116,10 @@ export default function AmortizationSchedule() {
   };
 
   const schedule = generateSchedule();
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 500);
+    await loadData();
+    setRefreshing(false);
   };
 
   const handleExportCSV = async () => {
@@ -274,51 +304,57 @@ export default function AmortizationSchedule() {
           </BlurView>
         </TouchableOpacity>
 
-        {/* Schedule Table Header */}
-        <BlurView intensity={25} tint="light" style={styles.tableHeader}>
-          <View style={styles.tableRow}>
-            <Text style={[styles.tableHeaderText, styles.colMonth]}>Month</Text>
-            <Text style={[styles.tableHeaderText, styles.colAmount]}>Principal</Text>
-            <Text style={[styles.tableHeaderText, styles.colAmount]}>Interest</Text>
-            <Text style={[styles.tableHeaderText, styles.colAmount]}>EMI</Text>
-            <Text style={[styles.tableHeaderText, styles.colBalance]}>Balance</Text>
-          </View>
-        </BlurView>
+        <Text style={styles.sectionTitle}>Amortization Details</Text>
 
         {/* Schedule Table Rows */}
         {schedule.map((row, index) => (
           <BlurView
             key={row.month}
-            intensity={row.isPaid ? 18 : 12}
+            intensity={row.isPaid ? 20 : 10}
             tint="light"
             style={[
-              styles.tableRowContainer,
-              row.isPaid && styles.paidRow,
+              styles.scheduleCard,
+              row.isPaid && styles.paidCard,
               index === schedule.length - 1 && styles.lastRow,
             ]}
           >
-            <View style={styles.tableRow}>
-              <View style={[styles.colMonth, { flexDirection: 'column', alignItems: 'flex-start', gap: 2 }]}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Text style={styles.monthText}>{row.month}</Text>
-                  {row.isPaid && <Text style={styles.checkMark}>✓</Text>}
+            <View style={styles.cardHeader}>
+              <View style={styles.cardHeaderLeft}>
+                <View style={[styles.monthBadge, { backgroundColor: row.isPaid ? '#10b981' : '#64748b' }]}>
+                  <Text style={styles.monthBadgeText}>{row.month}</Text>
                 </View>
-                <Text style={{ fontSize: 10, color: 'rgba(15, 23, 42, 0.6)' }}>
-                  {formatDate(row.date)}
+                <View>
+                  <Text style={styles.installmentDate}>{formatDate(row.date)}</Text>
+                  <Text style={[styles.installmentStatus, { color: row.isPaid ? '#10b981' : '#64748b' }]}>
+                    {row.isPaid ? '✓ Paid' : '⏳ Pending'}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.cardHeaderRight}>
+                <Text style={styles.emiLabel}>EMI AMOUNT</Text>
+                <Text style={styles.emiValue}>{formatCurrency(row.emi)}</Text>
+              </View>
+            </View>
+            
+            <View style={styles.cardDetailsGrid}>
+              <View style={styles.detailCol}>
+                <Text style={styles.detailColLabel}>Principal</Text>
+                <Text style={[styles.detailColVal, styles.principalText]}>
+                  {formatCurrency(row.principal)}
                 </Text>
               </View>
-              <Text style={[styles.tableText, styles.colAmount, styles.principalText]}>
-                {formatCurrency(row.principal)}
-              </Text>
-              <Text style={[styles.tableText, styles.colAmount, styles.interestText]}>
-                {formatCurrency(row.interest)}
-              </Text>
-              <Text style={[styles.tableText, styles.colAmount]}>
-                {formatCurrency(row.emi)}
-              </Text>
-              <Text style={[styles.tableText, styles.colBalance, styles.balanceText]}>
-                {formatCurrency(row.remainingPrincipal)}
-              </Text>
+              <View style={styles.detailCol}>
+                <Text style={styles.detailColLabel}>Interest</Text>
+                <Text style={[styles.detailColVal, styles.interestText]}>
+                  {formatCurrency(row.interest)}
+                </Text>
+              </View>
+              <View style={styles.detailCol}>
+                <Text style={styles.detailColLabel}>Balance</Text>
+                <Text style={[styles.detailColVal, styles.balanceText]}>
+                  {formatCurrency(row.remainingPrincipal)}
+                </Text>
+              </View>
             </View>
           </BlurView>
         ))}
@@ -401,67 +437,101 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#38bdf8',
   },
-  tableHeader: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.12)',
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 16,
+    marginTop: 8,
   },
-  tableRow: {
+  scheduleCard: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.06)',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    padding: 16,
+  },
+  paidCard: {
+    borderColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(16, 185, 129, 0.03)',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.04)',
+    paddingBottom: 10,
+  },
+  cardHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    gap: 12,
   },
-  tableRowContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 1,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.04)',
+  monthBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  paidRow: {
-    borderColor: 'rgba(16, 185, 129, 0.15)',
-    backgroundColor: 'rgba(16, 185, 129, 0.02)',
+  monthBadgeText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
   },
-  lastRow: {
-    marginBottom: 20,
-  },
-  tableHeaderText: {
-    fontSize: 11,
+  installmentDate: {
+    fontSize: 15,
     fontWeight: '700',
-    color: 'rgba(15, 23, 42, 0.6)',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  installmentStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  cardHeaderRight: {
+    alignItems: 'flex-end',
+  },
+  emiLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: 'rgba(15, 23, 42, 0.4)',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    marginBottom: 2,
   },
-  tableText: {
-    fontSize: 13,
-    color: '#0f172a',
-    fontWeight: '500',
-  },
-  colMonth: {
-    width: 75,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  colAmount: {
-    flex: 1,
-    textAlign: 'right',
-  },
-  colBalance: {
-    flex: 1.2,
-    textAlign: 'right',
-  },
-  monthText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-  },
-  checkMark: {
-    fontSize: 10,
+  emiValue: {
+    fontSize: 16,
+    fontWeight: '800',
     color: '#10b981',
+  },
+  cardDetailsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  detailCol: {
+    flex: 1,
+  },
+  detailColLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: 'rgba(15, 23, 42, 0.4)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    marginBottom: 4,
+  },
+  detailColVal: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  lastRow: {
+    marginBottom: 24,
   },
   principalText: {
     color: '#10b981',
@@ -471,7 +541,7 @@ const styles = StyleSheet.create({
   },
   balanceText: {
     color: '#e11d48',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   printButton: {
     borderRadius: 20,

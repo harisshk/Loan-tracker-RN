@@ -130,14 +130,16 @@ INSTRUCTIONS:
       if (t.type === 'credit') {
         inflow += amt;
       } else {
-        outflow += amt;
-        const mode = t.mode || 'UPI';
-        if (mode === 'Credit Card') {
-          cardOutflow += amt;
-        } else {
-          upiOutflow += amt;
+        if (t.category !== 'Credit Card Bill') {
+          outflow += amt;
+          const mode = t.mode || 'UPI';
+          if (mode === 'Credit Card') {
+            cardOutflow += amt;
+          } else {
+            upiOutflow += amt;
+          }
+          categories[t.category] = (categories[t.category] || 0) + amt;
         }
-        categories[t.category] = (categories[t.category] || 0) + amt;
       }
     });
 

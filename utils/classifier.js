@@ -1,16 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const CATEGORIES = ['Salary', 'Food', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Other'];
+const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Other'];
 
 const RULES = {
-  Food: ['zomato', 'swiggy', 'starbucks', 'restaurant', 'cafe', 'food', 'dining', 'mcdonald', 'burger', 'pizza', 'bakery', 'grocer', 'eats', 'instamart', 'blinkit', 'zepto', 'dosa', 'tea', 'chai', 'coffee', 'hotel', 'sweet', 'bakery', 'kitchen'],
-  Shopping: ['amazon', 'flipkart', 'myntra', 'hm', 'zara', 'grocery', 'supermarket', 'mall', 'retail', 'reliance', 'mart', 'clothing', 'ajio', 'meesho', 'nykaa', 'decathlon', 'shoppe', 'bazaar', 'dmart', 'retailer', 'trends'],
+  Food: ['zomato', 'swiggy', 'starbucks', 'restaurant', 'cafe', 'food', 'dining', 'mcdonald', 'burger', 'pizza', 'bakery', 'eats', 'dosa', 'tea', 'chai', 'coffee', 'hotel', 'sweet', 'kitchen'],
+  Grocery: ['grocery', 'supermarket', 'mart', 'dmart', 'grocer', 'instamart', 'blinkit', 'zepto', 'groceries', 'provision', 'bazaar'],
+  Shopping: ['amazon', 'flipkart', 'myntra', 'hm', 'zara', 'mall', 'retail', 'reliance', 'clothing', 'ajio', 'meesho', 'nykaa', 'decathlon', 'shoppe', 'retailer', 'trends'],
   EMI: ['loan', 'emi', 'hdfc loan', 'sbi loan', 'mortgage', 'finance', 'credcard', 'cred'],
   Bills: ['electricity', 'water', 'gas', 'recharge', 'jio', 'airtel', 'bill', 'utility', 'insurance', 'broadband', 'wifi', 'bsnl', 'vi ', 'bescom', 'insurance', 'lic', 'tata play', 'dth', 'postpaid'],
   Investment: ['zerodha', 'groww', 'mutual fund', 'sip', 'stock', 'investment', 'etf', 'crypto', 'coin', 'wazirx', 'binance', 'upstox', 'angelone', 'indmoney', 'kuvera'],
   Entertainment: ['netflix', 'spotify', 'prime video', 'hotstar', 'movie', 'cinema', 'theatre', 'booking', 'game', 'arcade', 'bookmyshow', 'disney', 'playstation', 'xbox', 'steam', 'youtube premium', 'sub', 'membership'],
   Travel: ['uber', 'ola', 'rapido', 'metro', 'irctc', 'flight', 'airline', 'fuel', 'petrol', 'diesel', 'cabs', 'taxi', 'makemytrip', 'goibibo', 'easemytrip', 'railways', 'shell fuel', 'hpcl', 'iocl', 'bpcl', 'toll', 'tollbooth', 'fastag'],
-  Salary: ['salary', 'salary credited', 'payroll', 'stipend', 'wages', 'dividend', 'interest credited', 'pension']
+  Salary: ['salary', 'salary credited', 'payroll', 'stipend', 'wages', 'dividend', 'interest credited', 'pension'],
+  'Credit Card Bill': ['credit card bill', 'cc bill', 'cc payment', 'credit card payment', 'card payment', 'card settlement', 'cc outstanding', 'creditcard bill']
 };
 
 export const classifyCategoryOffline = (description) => {
@@ -32,7 +34,7 @@ export const classifyCategoryAI = async (description, apiKey) => {
   if (!apiKey || !description) return 'Other';
   
   try {
-    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: Salary, Food, Shopping, EMI, Bills, Investment, Entertainment, Travel, Other. 
+    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Other. 
 Reply with ONLY the category name. Do not include punctuation, quotes, markdown formatting or explanations.`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -108,7 +110,7 @@ export const bulkClassifyCategories = async (txs) => {
       description: t.description
     }));
 
-    const prompt = `You are a personal finance manager. Classify each of the following transaction descriptions into exactly one of these categories: Salary, Food, Shopping, EMI, Bills, Investment, Entertainment, Travel, Other.
+    const prompt = `You are a personal finance manager. Classify each of the following transaction descriptions into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Other.
 Return the result strictly as a JSON array of objects, where each object has "index" (number matching the list) and "category" (string matching one of the categories above). Do not include any markdown quotes or explanations outside the JSON array.
 
 Transactions:

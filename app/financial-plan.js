@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -185,11 +185,19 @@ export default function FinancialPlan() {
   const [payments, setPayments]     = useState([]);
 
   const loadAll = useCallback(async () => {
-    const [l, i, p, s] = await Promise.all([getLoans(), getInsurances(), getPayments(), AsyncStorage.getItem(PLAN_SETTINGS_KEY)]);
-    setLoans(l); setInsurances(i); setPayments(p);
-    if (s) { setSettings(JSON.parse(s)); setShowSetup(false); } 
-    else { setShowSetup(true); }
-    setLoading(false);
+    try {
+      const l = await getLoans();
+      const i = await getInsurances();
+      const p = await getPayments();
+      const s = await AsyncStorage.getItem(PLAN_SETTINGS_KEY);
+      setLoans(l); setInsurances(i); setPayments(p);
+      if (s) { setSettings(JSON.parse(s)); setShowSetup(false); } 
+      else { setShowSetup(true); }
+    } catch (e) {
+      console.error('Error loading financial plan:', e);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useFocusEffect(useCallback(() => { loadAll(); }, [loadAll]));

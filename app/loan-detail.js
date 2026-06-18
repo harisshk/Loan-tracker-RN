@@ -16,7 +16,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BarChart, ProgressChart } from 'react-native-chart-kit';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
-import { getPayments, updateLoan, saveLoan, addPayment, deletePayment } from '../utils/storage';
+import { getLoans, getPayments, updateLoan, saveLoan, addPayment, deletePayment } from '../utils/storage';
 
 const { width } = Dimensions.get('window');
 
@@ -28,28 +28,40 @@ export default function LoanDetail() {
   const [extraPayments, setExtraPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [simulationAmount, setSimulationAmount] = useState('');
+  const [loan, setLoan] = useState(null);
   
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const allLoans = await getLoans();
+      const allPayments = await getPayments();
+      const foundLoan = allLoans.find(l => l.id === params.id);
+      if (foundLoan) {
+        setLoan(foundLoan);
+      } else {
+        // Fallback to params
+        const lType = params.loanType || 'emi';
+        setLoan({
+          loanName: params.loanName || 'Loan Detail',
+          principal: parseFloat(params.principal) || 0,
+          interest: parseFloat(params.interest) || 0,
+          emiAmount: parseFloat(params.emiAmount) || 0,
+          tenure: parseInt(params.tenure) || 0,
+          startDate: params.startDate || new Date().toISOString().split('T')[0],
+          loanType: lType,
+        });
+      }
+      setExtraPayments(allPayments.filter(p => p.loanId === params.id));
+    } catch (e) {
+      console.error('Error loading loan details:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   React.useEffect(() => {
-    loadPayments();
+    loadData();
   }, [params.id]);
-
-  const loadPayments = async () => {
-    const allP = await getPayments();
-    setExtraPayments(allP.filter(p => p.loanId === params.id));
-    setLoading(false);
-  };
-
-  // Parse loan data from params
-  const loanType = params.loanType || 'emi';
-  const loan = {
-    loanName: params.loanName,
-    principal: parseFloat(params.principal) || 0,
-    interest: parseFloat(params.interest) || 0,
-    emiAmount: parseFloat(params.emiAmount) || 0,
-    tenure: parseInt(params.tenure) || 0,
-    startDate: params.startDate,
-    loanType,
-  };
 
   const formatCurrency = (amount) => {
     return `₹${parseFloat(amount || 0).toLocaleString('en-IN', {
@@ -57,6 +69,15 @@ export default function LoanDetail() {
       maximumFractionDigits: 0,
     })}`;
   };
+
+  if (loading || !loan) {
+    return (
+      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      </LinearGradient>
+    );
+  }
+
+  const loanType = loan.loanType || 'emi';
 
   // Calculate months elapsed
   const startDate = new Date(loan.startDate);
@@ -171,16 +192,9 @@ export default function LoanDetail() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadPayments();
+    await loadData();
     setRefreshing(false);
   };
-
-  if (loading) {
-    return (
-      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      </LinearGradient>
-    );
-  }
 
   const handleCloseLoan = () => {
     // Only pay the remaining balance to completely close the loan
@@ -215,7 +229,7 @@ export default function LoanDetail() {
                 date: new Date().toISOString().split('T')[0],
                 note: 'Extra Payment'
               });
-              loadPayments();
+              await loadData();
               Alert.alert('Success', 'Payment logged successfully');
             } catch (err) {
               Alert.alert('Error', 'Failed to save payment');
@@ -335,32 +349,39 @@ export default function LoanDetail() {
           <Text style={styles.headerTitle}>{loan.loanName}</Text>
         </View>
 
-        {/* Loan Summary Card */}
-        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
-          <View style={styles.cardContent}>
-            <Text style={styles.summaryLabel}>Total Loan Amount</Text>
-            <Text style={styles.summaryAmount}>
+        {/* Loan Summary Card (Vibrant Gradient UI) */}
+        <LinearGradient
+          colors={['#0f172a', '#1e293b']}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={styles.heroCardDetail}
+        >
+          <View style={styles.heroGlowDetail1} />
+          <View style={styles.heroGlowDetail2} />
+          <View style={styles.cardContentDetail}>
+            <Text style={styles.heroSubtitleDetail}>Total Loan Amount</Text>
+            <Text style={styles.heroTitleDetail}>
               {formatCurrency(breakdown.totalAmount)}
             </Text>
-            <View style={styles.summaryRow}>
-              <View style={styles.summaryItem}>
-                <Text style={styles.summaryItemLabel}>Principal</Text>
-                <Text style={styles.summaryItemValue}>
+            <View style={styles.heroDividerDetail} />
+            <View style={styles.summaryRowDetail}>
+              <View style={styles.summaryItemDetail}>
+                <Text style={styles.summaryItemLabelDetail}>Principal</Text>
+                <Text style={styles.summaryItemValueDetail}>
                   {formatCurrency(loan.principal)}
                 </Text>
               </View>
-              <View style={styles.summaryItem}>
-                <Text style={styles.summaryItemLabel}>Interest</Text>
-                <Text style={[styles.summaryItemValue, styles.interestValue]}>
+              <View style={styles.summaryItemDetail}>
+                <Text style={styles.summaryItemLabelDetail}>Interest</Text>
+                <Text style={[styles.summaryItemValueDetail, { color: '#fb923c' }]}>
                   {formatCurrency(breakdown.totalInterest)}
                 </Text>
               </View>
             </View>
           </View>
-        </BlurView>
+        </LinearGradient>
 
-        {/* Amount Paid Breakdown */}
-        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
+        {/* Amount Paid Breakdown (Soft Success Tint Card) */}
+        <BlurView intensity={20} tint="light" style={styles.summaryCardPaid}>
           <View style={styles.cardContent}>
             <Text style={styles.summaryLabel}>Total Paid Till Now</Text>
             <Text style={[styles.summaryAmount, { color: '#10b981' }]}>
@@ -383,7 +404,29 @@ export default function LoanDetail() {
           </View>
         </BlurView>
 
-
+        {/* Total Remaining Balance Card (Soft Alert Tint Card) */}
+        <BlurView intensity={20} tint="light" style={styles.summaryCardOutstanding}>
+          <View style={styles.cardContent}>
+            <Text style={styles.summaryLabel}>Total Outstanding Balance</Text>
+            <Text style={[styles.summaryAmount, { color: '#e11d48' }]}>
+              {formatCurrency(breakdown.remainingAmount)}
+            </Text>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryItemLabel}>Remaining Principal</Text>
+                <Text style={[styles.summaryItemValue, { color: '#e11d48' }]}>
+                  {formatCurrency(breakdown.remainingPrincipalAmount)}
+                </Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryItemLabel}>Remaining Interest</Text>
+                <Text style={[styles.summaryItemValue, styles.interestValue]}>
+                  {formatCurrency(breakdown.remainingInterestAmount)}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </BlurView>
         {/* Payment Progress — EMI loans only */}
         {loanType !== 'bullet' && (
           <BlurView intensity={20} tint="light" style={styles.chartCard}>
@@ -579,6 +622,7 @@ export default function LoanDetail() {
             onPress={() => router.push({
               pathname: '/amortization',
               params: {
+                id: params.id,
                 loanName: loan.loanName,
                 principal: loan.principal,
                 interest: loan.interest,
@@ -642,6 +686,94 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  summaryCardPaid: {
+    borderRadius: 28,
+    overflow: 'hidden',
+    marginBottom: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+  },
+  summaryCardOutstanding: {
+    borderRadius: 28,
+    overflow: 'hidden',
+    marginBottom: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(225, 29, 72, 0.15)',
+    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+  },
+  heroCardDetail: {
+    borderRadius: 28,
+    padding: 24,
+    overflow: 'hidden',
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  heroGlowDetail1: {
+    position: 'absolute',
+    top: -50,
+    right: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(56,189,248,0.15)',
+  },
+  heroGlowDetail2: {
+    position: 'absolute',
+    bottom: -50,
+    left: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(16,185,129,0.1)',
+  },
+  cardContentDetail: {
+    backgroundColor: 'transparent',
+  },
+  heroSubtitleDetail: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.6)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  heroTitleDetail: {
+    fontSize: 38,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: -1,
+  },
+  heroDividerDetail: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    marginVertical: 18,
+  },
+  summaryRowDetail: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  summaryItemDetail: {
+    flex: 1,
+    padding: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  summaryItemLabelDetail: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.5)',
+    marginBottom: 4,
+  },
+  summaryItemValueDetail: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#10b981',
   },
   cardContent: {
     padding: 24,

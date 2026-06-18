@@ -14,7 +14,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { PieChart } from 'react-native-chart-kit';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../../utils/storage';
-import { getTransactions, getBudgetLimit, syncWithSupabase } from '../../utils/transactions';
+import { getTransactions, getBudgetLimit } from '../../utils/transactions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PulseSkeleton } from '../../components/ui/skeleton';
 
@@ -58,6 +58,17 @@ export default function DashboardView() {
   const [spentThisMonth, setSpentThisMonth] = useState(0);
   const [budgetLimit, setBudgetLimit] = useState(50000);
   const [spends, setSpends] = useState<any[]>([]);
+  const [showAlerts, setShowAlerts] = useState(true);
+
+  const nextInsurance = useMemo(() => {
+    if (!insurances || insurances.length === 0) return null;
+    const sorted = [...insurances]
+      .filter(ins => ins.nextDue)
+      .sort((a, b) => new Date(a.nextDue).getTime() - new Date(b.nextDue).getTime());
+    return sorted[0] || null;
+  }, [insurances]);
+
+  const hasUpcomingAlerts = !!(stats.nextDueDate || nextInsurance);
 
   const bulletUrgentCount = loans.filter((l: any) => {
     if (l.status === 'closed' || l.loanType !== 'bullet') return false;
@@ -76,7 +87,25 @@ export default function DashboardView() {
       const insurancesData = await getInsurances();
       setLoans(loansData);
       setPayments(paymentsData);
-      setInsurances(insurancesData);
+
+      // Map nextDue date for dashboard display
+      const todayDate = new Date();
+      todayDate.setHours(0, 0, 0, 0);
+      const mappedInsurances = insurancesData.map((ins: any) => {
+        if (!ins.startDate) return { ...ins, nextDue: null };
+        const start = new Date(ins.startDate);
+        let step = 12;
+        if (ins.frequency === 'monthly')     step = 1;
+        if (ins.frequency === 'quarterly')   step = 3;
+        if (ins.frequency === 'half-yearly') step = 6;
+
+        let next = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+        while (next < todayDate) {
+          next.setMonth(next.getMonth() + step);
+        }
+        return { ...ins, nextDue: next };
+      });
+      setInsurances(mappedInsurances);
       
       const calculatedStats = calculateLoanStats(loansData, paymentsData, insurancesData);
       setStats(calculatedStats);
@@ -92,12 +121,13 @@ export default function DashboardView() {
       const currentYear = now.getFullYear();
       const currentMonthDebits = txs.filter((t: any) => {
         const d = new Date(t.date);
-        return (t.type || '').toLowerCase() !== 'credit' && d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+        return (t.type || '').toLowerCase() !== 'credit' &&
+          t.category !== 'Credit Card Bill' &&
+          d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       }).reduce((sum: number, t: any) => sum + parseFloat(t.amount || 0), 0);
       setSpentThisMonth(currentMonthDebits);
 
-      // Silent sync
-      syncWithSupabase().catch(e => console.warn('Silent sync failed:', e));
+      // Transactions synced via getTransactions call above
     } catch (e) {
       console.error('Error loading data on home:', e);
     } finally {
@@ -219,6 +249,7 @@ export default function DashboardView() {
     spends.filter((t: any) => {
       const d = new Date(t.date);
       return (t.type || '').toLowerCase() !== 'credit' &&
+        t.category !== 'Credit Card Bill' &&
         d.getMonth() === currentMonth && d.getFullYear() === currentYear;
     }).forEach((t: any) => {
       const cat = t.category || 'Other';
@@ -341,21 +372,76 @@ export default function DashboardView() {
       >
         {/* Header Section */}
         <View style={styles.headerRow}>
-          <View style={{ width: 48 }} />
+          <View style={{ width: 98 }} />
           <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={styles.greeting}>Overview</Text>
             <Text style={styles.dateLabel}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
           </View>
-          <TouchableOpacity
-            style={styles.addBtnWrap}
-            onPress={() => router.push('/add-loan')}
-            activeOpacity={0.8}
-          >
-            <LinearGradient colors={['#10b981', '#059669']} style={styles.addBtnInside}>
-              <Ionicons name="add" size={26} color="#fff" />
-            </LinearGradient>
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.bellBtnWrap}
+              onPress={() => setShowAlerts(prev => !prev)}
+              activeOpacity={0.8}
+            >
+              <BlurView intensity={25} tint="light" style={styles.bellBtnInside}>
+                <Ionicons name={showAlerts ? "notifications" : "notifications-outline"} size={20} color="#4f46e5" />
+                {hasUpcomingAlerts && <View style={styles.bellBadge} />}
+              </BlurView>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.addBtnWrap}
+              onPress={() => router.push('/add-loan')}
+              activeOpacity={0.8}
+            >
+              <LinearGradient colors={['#10b981', '#059669']} style={styles.addBtnInside}>
+                <Ionicons name="add" size={26} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </View>
+
+        {/* Alerts Dropdown */}
+        {showAlerts && hasUpcomingAlerts && (
+          <BlurView intensity={40} tint="light" style={styles.alertsDropdown}>
+            <View style={styles.alertsDropdownHeader}>
+              <Text style={styles.alertsDropdownTitle}>📅 Upcoming Dues</Text>
+              <TouchableOpacity onPress={() => setShowAlerts(false)}>
+                <Text style={styles.alertsCloseBtn}>Close</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {/* Next EMI */}
+            {stats.nextDueDate && (
+              <View style={styles.alertItem}>
+                <View style={[styles.alertIconBg, { backgroundColor: 'rgba(79, 70, 229, 0.1)' }]}>
+                  <Ionicons name="analytics" size={18} color="#4f46e5" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertItemTitle}>Next EMI: {stats.nextPaymentLoanName}</Text>
+                  <Text style={styles.alertItemSubtitle}>Due on {fd(stats.nextDueDate)}</Text>
+                </View>
+                <Text style={[styles.alertItemAmount, { color: '#4f46e5' }]}>{fc(stats.nextPaymentAmount)}</Text>
+              </View>
+            )}
+
+            {/* Divider */}
+            {stats.nextDueDate && nextInsurance && <View style={styles.alertDivider} />}
+
+            {/* Next Insurance */}
+            {nextInsurance && (
+              <View style={styles.alertItem}>
+                <View style={[styles.alertIconBg, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
+                  <Ionicons name="shield-checkmark" size={18} color="#f59e0b" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertItemTitle}>Next Insurance: {nextInsurance.name}</Text>
+                  <Text style={styles.alertItemSubtitle}>Due on {fd(nextInsurance.nextDue)}</Text>
+                </View>
+                <Text style={[styles.alertItemAmount, { color: '#f59e0b' }]}>{fc(nextInsurance.premiumAmount)}</Text>
+              </View>
+            )}
+          </BlurView>
+        )}
 
         {/* Intelligence Banner */}
         <TouchableOpacity style={styles.insightBanner} onPress={() => router.push('/ai-advisor')}>
@@ -715,4 +801,110 @@ const styles = StyleSheet.create({
   savingsIconWrap: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center' },
   savingsLabel: { fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', fontWeight: '700', letterSpacing: 0.5 },
   savingsValue: { fontSize: 15, color: '#fff', fontWeight: '700', marginTop: 1 },
+  alertsDropdown: {
+    marginHorizontal: 20,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: 'rgba(79, 70, 229, 0.15)',
+    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+    overflow: 'hidden',
+    marginBottom: 20,
+    padding: 16,
+    shadowColor: '#4f46e5',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  alertsDropdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  alertsDropdownTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  alertsCloseBtn: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  alertItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+  },
+  alertIconBg: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  alertItemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  alertItemSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  alertItemAmount: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  alertPlaceholder: {
+    fontSize: 13,
+    color: '#94a3b8',
+    textAlign: 'center',
+    paddingVertical: 10,
+    fontWeight: '500',
+  },
+  alertDivider: {
+    height: 1,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    marginVertical: 4,
+  },
+  bellBtnWrap: {
+    shadowColor: '#4f46e5',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+  bellBtnInside: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(79, 70, 229, 0.15)',
+    overflow: 'hidden',
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#e11d48',
+    borderWidth: 1,
+    borderColor: '#ffffff',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    width: 98,
+    justifyContent: 'flex-end',
+  },
 });

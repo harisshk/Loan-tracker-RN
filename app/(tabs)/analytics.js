@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -38,12 +38,16 @@ export default function EMIPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [l, p] = await Promise.all([getLoans(), getPayments()]);
-    setLoans(l);
-    setPayments(p);
+    try {
+      const l = await getLoans();
+      const p = await getPayments();
+      setLoans(l);
+      setPayments(p);
+    } catch (e) {
+      console.error('Error loading data on analytics:', e);
+    }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
   const onRefresh = async () => {
@@ -215,20 +219,17 @@ export default function EMIPage() {
         <Text style={styles.sectionTitle}>This Month</Text>
         <BlurView intensity={30} tint="light" style={styles.card}>
           <View style={styles.trackTop}>
-            <View style={styles.trackCol}>
-              <View style={[styles.trackDot, { backgroundColor: '#10b981' }]} />
+            <View style={[styles.trackColCard, { borderLeftColor: '#10b981' }]}>
               <Text style={styles.trackLabel}>EMI Paid</Text>
-              <Text style={styles.trackValue}>{fc(thisMonthStats.emiPaid)}</Text>
+              <Text style={[styles.trackValue, { color: '#10b981' }]}>{fc(thisMonthStats.emiPaid)}</Text>
             </View>
-            <View style={styles.trackCol}>
-              <View style={[styles.trackDot, { backgroundColor: '#8b5cf6' }]} />
+            <View style={[styles.trackColCard, { borderLeftColor: '#8b5cf6' }]}>
               <Text style={styles.trackLabel}>Extra Paid</Text>
-              <Text style={styles.trackValue}>{fc(thisMonthStats.extraPaid)}</Text>
+              <Text style={[styles.trackValue, { color: '#8b5cf6' }]}>{fc(thisMonthStats.extraPaid)}</Text>
             </View>
-            <View style={styles.trackCol}>
-              <View style={[styles.trackDot, { backgroundColor: '#f59e0b' }]} />
+            <View style={[styles.trackColCard, { borderLeftColor: '#f59e0b' }]}>
               <Text style={styles.trackLabel}>Pending</Text>
-              <Text style={styles.trackValue}>{fc(thisMonthStats.pending)}</Text>
+              <Text style={[styles.trackValue, { color: '#f59e0b' }]}>{fc(thisMonthStats.pending)}</Text>
             </View>
           </View>
 
@@ -293,20 +294,28 @@ export default function EMIPage() {
                       </View>
                     </View>
 
-                    <View style={styles.emiMetaRow}>
-                      <View style={styles.emiMetaCol}>
-                        <Text style={styles.emiMetaLabel}>EMI Amount</Text>
-                        <Text style={styles.emiMetaValue}>{fc(item.emiAmount)}</Text>
+                    <View style={styles.emiMetaGrid}>
+                      <View style={styles.emiMetaRow}>
+                        <View style={styles.emiMetaCol}>
+                          <Text style={styles.emiMetaLabel}>EMI Amount</Text>
+                          <Text style={styles.emiMetaValue}>{fc(item.emiAmount)}</Text>
+                        </View>
+                        <View style={styles.emiMetaCol}>
+                          <Text style={styles.emiMetaLabel}>Due Date</Text>
+                          <Text style={styles.emiMetaValue}>{fd(item.nextDueDate)}</Text>
+                        </View>
                       </View>
-                      <View style={styles.emiMetaCol}>
-                        <Text style={styles.emiMetaLabel}>Due Date</Text>
-                        <Text style={styles.emiMetaValue}>{fd(item.nextDueDate)}</Text>
-                      </View>
-                      <View style={styles.emiMetaCol}>
-                        <Text style={styles.emiMetaLabel}>Outstanding</Text>
-                        <Text style={[styles.emiMetaValue, { color: '#e11d48' }]}>
-                          {fc(item.bd.remainingPrincipalAmount)}
-                        </Text>
+                      <View style={[styles.emiMetaRow, { marginTop: 6 }]}>
+                        <View style={styles.emiMetaCol}>
+                          <Text style={styles.emiMetaLabel}>Rem. Principal</Text>
+                          <Text style={[styles.emiMetaValue, { color: '#64748b' }]}>{fc(item.bd.remainingPrincipalAmount)}</Text>
+                        </View>
+                        <View style={styles.emiMetaCol}>
+                          <Text style={styles.emiMetaLabel}>Total Outstanding</Text>
+                          <Text style={[styles.emiMetaValue, { color: '#e11d48' }]}>
+                            {fc(item.bd.remainingAmount)}
+                          </Text>
+                        </View>
                       </View>
                     </View>
                   </View>
@@ -423,11 +432,23 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 14, color: '#94a3b8', fontWeight: '500' },
   // This Month
-  trackTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
-  trackCol: { alignItems: 'flex-start' },
-  trackDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 6 },
-  trackLabel: { fontSize: 11, color: '#64748b', marginBottom: 2, fontWeight: '500' },
-  trackValue: { fontSize: 16, color: '#0f172a', fontWeight: '700' },
+  trackTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginBottom: 16 },
+  trackColCard: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 12,
+    borderLeftWidth: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.04)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.02,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  trackLabel: { fontSize: 11, color: '#64748b', marginBottom: 4, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.3 },
+  trackValue: { fontSize: 15, fontWeight: '800' },
   progressContainer: {
     height: 8,
     backgroundColor: 'rgba(0,0,0,0.04)',
@@ -443,28 +464,29 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(0,0,0,0.04)',
     paddingTop: 12,
   },
-  footerLabel: { fontSize: 12, color: '#64748b' },
+  footerLabel: { fontSize: 12, color: '#64748b', fontWeight: '500' },
   // EMI cards
   emiCard: {
     marginHorizontal: 20,
-    borderRadius: 20,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.04)',
     overflow: 'hidden',
-    marginBottom: 10,
+    marginBottom: 12,
     flexDirection: 'row',
     alignItems: 'stretch',
     paddingRight: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
   },
-  emiAccent: { width: 4, borderRadius: 2, marginRight: 14 },
-  emiBody: { flex: 1, paddingVertical: 14 },
+  emiAccent: { width: 5, marginRight: 14 },
+  emiBody: { flex: 1, paddingVertical: 16 },
   emiTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
   },
-  emiLoanName: { fontSize: 15, fontWeight: '700', color: '#0f172a', flex: 1, marginRight: 8 },
+  emiLoanName: { fontSize: 16, fontWeight: '700', color: '#0f172a', flex: 1, marginRight: 8 },
   urgencyBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -472,9 +494,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   urgencyText: { fontSize: 11, fontWeight: '700' },
-  emiMetaRow: { flexDirection: 'row', gap: 16 },
-  emiMetaCol: {},
-  emiMetaLabel: { fontSize: 10, color: '#94a3b8', fontWeight: '500', marginBottom: 2, textTransform: 'uppercase' },
+  emiMetaGrid: { gap: 10 },
+  emiMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  emiMetaCol: { flex: 1 },
+  emiMetaLabel: { fontSize: 9, color: '#94a3b8', fontWeight: '600', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
   emiMetaValue: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
   // History
   historyRow: {

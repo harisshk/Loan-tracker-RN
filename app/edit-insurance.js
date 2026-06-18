@@ -14,7 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { updateInsurance } from '../utils/storage';
+import { getInsurances, updateInsurance } from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function EditInsurance() {
@@ -23,13 +23,48 @@ export default function EditInsurance() {
   const insets = useSafeAreaInsets();
 
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
-    name: params.name || '',
-    insuranceType: params.insuranceType || 'life',
-    premiumAmount: params.premiumAmount || '',
-    frequency: params.frequency || 'yearly',
-    startDate: params.startDate || new Date().toISOString().split('T')[0],
+    name: '',
+    insuranceType: 'life',
+    premiumAmount: '',
+    frequency: 'yearly',
+    startDate: new Date().toISOString().split('T')[0],
   });
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const allInsurances = await getInsurances();
+      const found = allInsurances.find(ins => ins.id === params.id);
+      if (found) {
+        setFormData({
+          name: found.name || '',
+          insuranceType: found.insuranceType || 'life',
+          premiumAmount: found.premiumAmount ? String(found.premiumAmount) : '',
+          frequency: found.frequency || 'yearly',
+          startDate: found.startDate || new Date().toISOString().split('T')[0],
+        });
+      } else {
+        // Fallback to params
+        setFormData({
+          name: params.name || '',
+          insuranceType: params.insuranceType || 'life',
+          premiumAmount: params.premiumAmount ? String(params.premiumAmount) : '',
+          frequency: params.frequency || 'yearly',
+          startDate: params.startDate || new Date().toISOString().split('T')[0],
+        });
+      }
+    } catch (e) {
+      console.error('Error loading insurance data:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    loadData();
+  }, [params.id]);
 
   const frequencies = [
     { id: 'yearly', label: 'Yearly' },
@@ -64,6 +99,13 @@ export default function EditInsurance() {
       Alert.alert('Error', 'Failed to update insurance policy');
     }
   };
+
+  if (loading) {
+    return (
+      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
