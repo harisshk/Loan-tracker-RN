@@ -1,8 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Other'];
+const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Fruits & Vegetables', 'Electronics', 'Milk & Dairy', 'Other'];
 
 const RULES = {
+  'Milk & Dairy': ['milk', 'dairy', 'curd', 'paneer', 'butter', 'cheese', 'yogurt', 'amul', 'milkman', 'ghee', 'lassi', 'buttermilk', 'mother dairy'],
+  'Fruits & Vegetables': ['fruit', 'vegetable', 'apple', 'banana', 'mango', 'orange', 'grape', 'onion', 'potato', 'tomato', 'veggies', 'sabji', 'sabzi', 'coconut', 'lemon'],
+  Electronics: ['electronics', 'gadget', 'phone', 'mobile', 'laptop', 'computer', 'headphone', 'earphone', 'charger', 'macbook', 'ipad', 'tv', 'television', 'monitor', 'keyboard', 'mouse', 'apple store', 'icloud', 'itunes', 'apple.com'],
   Food: ['zomato', 'swiggy', 'starbucks', 'restaurant', 'cafe', 'food', 'dining', 'mcdonald', 'burger', 'pizza', 'bakery', 'eats', 'dosa', 'tea', 'chai', 'coffee', 'hotel', 'sweet', 'kitchen'],
   Grocery: ['grocery', 'supermarket', 'mart', 'dmart', 'grocer', 'instamart', 'blinkit', 'zepto', 'groceries', 'provision', 'bazaar'],
   Shopping: ['amazon', 'flipkart', 'myntra', 'hm', 'zara', 'mall', 'retail', 'reliance', 'clothing', 'ajio', 'meesho', 'nykaa', 'decathlon', 'shoppe', 'retailer', 'trends'],
@@ -34,7 +37,7 @@ export const classifyCategoryAI = async (description, apiKey) => {
   if (!apiKey || !description) return 'Other';
   
   try {
-    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Other. 
+    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Other. 
 Reply with ONLY the category name. Do not include punctuation, quotes, markdown formatting or explanations.`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -110,7 +113,7 @@ export const bulkClassifyCategories = async (txs) => {
       description: t.description
     }));
 
-    const prompt = `You are a personal finance manager. Classify each of the following transaction descriptions into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Other.
+    const prompt = `You are a personal finance manager. Classify each of the following transaction descriptions into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Other.
 Return the result strictly as a JSON array of objects, where each object has "index" (number matching the list) and "category" (string matching one of the categories above). Do not include any markdown quotes or explanations outside the JSON array.
 
 Transactions:

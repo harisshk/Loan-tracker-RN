@@ -55,6 +55,9 @@ const CATEGORY_ICONS = {
   Entertainment: { name: 'film-outline', color: '#f43f5e' },
   Travel: { name: 'airplane-outline', color: '#06b6d4' },
   'Credit Card Bill': { name: 'card-outline', color: '#6366f1' },
+  'Fruits & Vegetables': { name: 'leaf-outline', color: '#10b981' },
+  Electronics: { name: 'laptop-outline', color: '#0d9488' },
+  'Milk & Dairy': { name: 'water-outline', color: '#38bdf8' },
   Other: { name: 'cube-outline', color: '#64748b' },
 };
 

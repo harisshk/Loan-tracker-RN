@@ -40,6 +40,18 @@ const getCleanUrl = (url) => {
   return clean;
 };
 
+export const normalizeMode = (m) => {
+  if (!m) return 'UPI';
+  const clean = m.trim().toLowerCase();
+  if (clean === 'card' || clean === 'credit card' || clean === 'cc') {
+    return 'Credit Card';
+  }
+  if (clean === 'cash') {
+    return 'Cash';
+  }
+  return 'UPI';
+};
+
 const getAllTransactionsRaw = async () => {
   return [];
 };
@@ -99,6 +111,7 @@ export const getTransactions = async () => {
       ...t,
       amount: parseFloat(t.amount || 0),
       type: (t.type || 'debit').toLowerCase(),
+      mode: normalizeMode(t.mode),
       synced: true,
     }));
 
@@ -122,7 +135,7 @@ export const saveTransaction = async (transaction) => {
       amount: parseFloat(transaction.amount || 0),
       type: (transaction.type || 'debit').toLowerCase(),
       category: finalCategory,
-      mode: transaction.mode || 'UPI',
+      mode: normalizeMode(transaction.mode),
       date: transaction.date || new Date().toISOString(),
       description: transaction.description || `${transaction.type === 'credit' ? 'Inflow' : 'Outflow'} - ${finalCategory}`,
       source: transaction.source || 'manual',
@@ -375,7 +388,7 @@ export const updateTransaction = async (updatedTx) => {
         category: finalCategory,
         date: updatedTx.date,
         description: updatedTx.description,
-        mode: updatedTx.mode || 'UPI',
+        mode: normalizeMode(updatedTx.mode),
       };
       // Stamp ownership so the row shows up for this account going forward.
       if (withEmail) p.user_email = userEmail;

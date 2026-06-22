@@ -20,7 +20,7 @@ import { saveTransaction, getTransactions, updateTransaction, getBudgetLimit } f
 import { getLoans, addPayment } from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Other'];
+const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Fruits & Vegetables', 'Electronics', 'Milk & Dairy', 'Other'];
 
 export default function AddTransaction() {
   const router = useRouter();

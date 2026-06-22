@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { calculateEMIBreakdown } from './emiCalculator';
 import { cancelAllLoanNotifications, scheduleEMIReminder, scheduleInsuranceReminder } from './notifications';
-import { getTransactions, getSupabaseConfig, isUserEmailColumnSupported } from './transactions';
+import { getTransactions, getSupabaseConfig, isUserEmailColumnSupported, normalizeMode } from './transactions';
 
 const BUDGET_LIMIT_KEY = '@budget_limit';
 
@@ -891,7 +891,7 @@ export const importAllData = async (jsonString) => {
         amount: cleanNumeric(t.amount),
         type: String(t.type || 'debit').toLowerCase(),
         category: t.category || 'Other',
-        mode: t.mode || 'UPI',
+        mode: normalizeMode(t.mode),
         date: t.date || t.created_at || new Date().toISOString(),
         description: t.description || '',
         source: t.source || 'manual',

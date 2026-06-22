@@ -243,7 +243,11 @@ export default function DashboardView() {
     const categoryColors: Record<string, string> = {
       Food: '#fb923c', Shopping: '#ec4899', EMI: '#6366f1',
       Bills: '#3b82f6', Investment: '#8b5cf6', Entertainment: '#f43f5e',
-      Travel: '#06b6d4', Other: '#64748b',
+      Travel: '#06b6d4',
+      'Fruits & Vegetables': '#10b981',
+      Electronics: '#0d9488',
+      'Milk & Dairy': '#38bdf8',
+      Other: '#64748b',
     };
     const totals: Record<string, number> = {};
     spends.filter((t: any) => {
