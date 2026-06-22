@@ -35,8 +35,8 @@ eas update --branch <BRANCH>  →  CHANNEL  →  installed BUILD
 | Profile       | Channel        | Distribution | Notes                         |
 |---------------|----------------|--------------|-------------------------------|
 | `development` | `development`  | internal     | dev client                    |
-| `preview`     | `preview`      | internal     | sideload/internal testing     |
-| `production`  | `production`   | store        | autoIncrement versionCode     |
+| `preview`     | `preview`      | internal     | points to `production` branch  |
+| `production`  | `production`   | store        | points to `production` branch  |
 
 `app.json`:
 - `runtimeVersion.policy: "appVersion"` → runtime version = `version` field (currently `1.0.0`). **Bumping `version` creates a new runtime → old installs stop receiving updates until rebuilt.**
@@ -51,10 +51,10 @@ Channels auto-link to a same-named branch on first build.
 ```bash
 git add -A && git commit -m "<short message>"
 git push origin main
-eas update --branch <production|preview> --message "<short message>"
+eas update --branch production --message "<short message>"
 ```
 
-Pick the **branch that matches the channel of the build the user has installed**. If unsure, see "Diagnose" below.
+Publish updates exclusively to the **`production`** branch. The `preview` channel has been re-pointed to `production`, so both preview/test builds and production builds pull their OTA updates from this single branch.
 
 ### B. Make a new installable build
 
@@ -123,12 +123,13 @@ eas device:create                                 # register the iPhone's UDID f
 eas build --platform ios --profile preview        # ad-hoc build installs directly on registered device
 ```
 
-After any real build is installed, `eas update --branch <production|preview>` OTA updates flow to it automatically (channel + runtime already match).
+After any real build is installed, `eas update --branch production` OTA updates flow to it automatically (channel + runtime already match).
 
 ### Decision the owner still needs to make
 The blocker is the **Apple Developer account**. If a future agent is asked to "deploy for iOS," confirm the owner has (or will create) an Apple Developer account before starting — without it, only the Mac iOS Simulator build is possible (free, but not a real device).
 
-### Status as of 2026-06-17
-- Channels added to `eas.json` (`development`/`preview`/`production`); `production` and `preview` channels created and linked to branches.
-- `eas update` published to both `production` and `preview` branches (runtime `1.0.0`, android+ios).
-- **No standalone build exists yet that can receive these updates.** Android needs an interactive keystore generation; iOS needs an Apple Developer account. Both first builds must run interactively.
+### Status as of 2026-06-22
+- The `preview` branch was deleted to simplify the OTA update pipeline to a single branch.
+- The `preview` channel was updated to point directly to the `production` branch.
+- Both `production` and `preview` build channels are now powered by the `production` update branch (runtime `1.0.0`, android+ios).
+- Standard OTA updates are published using: `eas update --branch production --message "<msg>"`.
