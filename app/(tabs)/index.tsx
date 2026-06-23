@@ -247,6 +247,11 @@ export default function DashboardView() {
       'Fruits & Vegetables': '#10b981',
       Electronics: '#0d9488',
       'Milk & Dairy': '#38bdf8',
+      'Rent & Housing': '#0d9488',
+      'Health & Medical': '#e11d48',
+      Insurance: '#fbbf24',
+      Education: '#a78bfa',
+      'Gifts & Donations': '#f472b6',
       Other: '#64748b',
     };
     const totals: Record<string, number> = {};

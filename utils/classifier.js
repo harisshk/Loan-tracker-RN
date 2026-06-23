@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Fruits & Vegetables', 'Electronics', 'Milk & Dairy', 'Other'];
+const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Fruits & Vegetables', 'Electronics', 'Milk & Dairy', 'Rent & Housing', 'Health & Medical', 'Insurance', 'Education', 'Gifts & Donations', 'Other'];
 
 const RULES = {
   'Milk & Dairy': ['milk', 'dairy', 'curd', 'paneer', 'butter', 'cheese', 'yogurt', 'amul', 'milkman', 'ghee', 'lassi', 'buttermilk', 'mother dairy'],
@@ -10,12 +10,17 @@ const RULES = {
   Grocery: ['grocery', 'supermarket', 'mart', 'dmart', 'grocer', 'instamart', 'blinkit', 'zepto', 'groceries', 'provision', 'bazaar'],
   Shopping: ['amazon', 'flipkart', 'myntra', 'hm', 'zara', 'mall', 'retail', 'reliance', 'clothing', 'ajio', 'meesho', 'nykaa', 'decathlon', 'shoppe', 'retailer', 'trends'],
   EMI: ['loan', 'emi', 'hdfc loan', 'sbi loan', 'mortgage', 'finance', 'credcard', 'cred'],
-  Bills: ['electricity', 'water', 'gas', 'recharge', 'jio', 'airtel', 'bill', 'utility', 'insurance', 'broadband', 'wifi', 'bsnl', 'vi ', 'bescom', 'insurance', 'lic', 'tata play', 'dth', 'postpaid'],
+  Bills: ['electricity', 'water', 'gas', 'recharge', 'jio', 'airtel', 'bill', 'utility', 'broadband', 'wifi', 'bsnl', 'vi ', 'bescom', 'tata play', 'dth', 'postpaid'],
   Investment: ['zerodha', 'groww', 'mutual fund', 'sip', 'stock', 'investment', 'etf', 'crypto', 'coin', 'wazirx', 'binance', 'upstox', 'angelone', 'indmoney', 'kuvera'],
   Entertainment: ['netflix', 'spotify', 'prime video', 'hotstar', 'movie', 'cinema', 'theatre', 'booking', 'game', 'arcade', 'bookmyshow', 'disney', 'playstation', 'xbox', 'steam', 'youtube premium', 'sub', 'membership'],
   Travel: ['uber', 'ola', 'rapido', 'metro', 'irctc', 'flight', 'airline', 'fuel', 'petrol', 'diesel', 'cabs', 'taxi', 'makemytrip', 'goibibo', 'easemytrip', 'railways', 'shell fuel', 'hpcl', 'iocl', 'bpcl', 'toll', 'tollbooth', 'fastag'],
   Salary: ['salary', 'salary credited', 'payroll', 'stipend', 'wages', 'dividend', 'interest credited', 'pension'],
-  'Credit Card Bill': ['credit card bill', 'cc bill', 'cc payment', 'credit card payment', 'card payment', 'card settlement', 'cc outstanding', 'creditcard bill']
+  'Credit Card Bill': ['credit card bill', 'cc bill', 'cc payment', 'credit card payment', 'card payment', 'card settlement', 'cc outstanding', 'creditcard bill'],
+  'Rent & Housing': ['rent', 'pg rent', 'house rent', 'maintenance charges', 'landlord', 'society maintenance', 'flat rent', 'room rent'],
+  'Health & Medical': ['pharmacy', 'medicine', 'hospital', 'clinic', 'doctor', 'lab test', 'medical', 'chemist', 'apolo', 'pharmeasy', 'medplus', 'dentist', 'physio', 'vaccine', 'injection'],
+  Insurance: ['insurance premium', 'lic', 'star health', 'hdfc life', 'term insurance', 'tata aia', 'general insurance', 'health insurance', 'car insurance', 'bike insurance', 'care health', 'niva bupa', 'icici lombard'],
+  Education: ['fees', 'tuition', 'school fee', 'college fee', 'udemy', 'coursera', 'coaching', 'training', 'books', 'stationery', 'school admission', 'exam fee'],
+  'Gifts & Donations': ['gift', 'shagun', 'donation', 'charity', 'temple', 'birthday', 'anniversary', 'wedding', 'marriage', 'shadi', 'giftcard']
 };
 
 export const classifyCategoryOffline = (description) => {
@@ -37,7 +42,7 @@ export const classifyCategoryAI = async (description, apiKey) => {
   if (!apiKey || !description) return 'Other';
   
   try {
-    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Other. 
+    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Rent & Housing, Health & Medical, Insurance, Education, Gifts & Donations, Other. 
 Reply with ONLY the category name. Do not include punctuation, quotes, markdown formatting or explanations.`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -113,7 +118,7 @@ export const bulkClassifyCategories = async (txs) => {
       description: t.description
     }));
 
-    const prompt = `You are a personal finance manager. Classify each of the following transaction descriptions into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Other.
+    const prompt = `You are a personal finance manager. Classify each of the following transaction descriptions into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Rent & Housing, Health & Medical, Insurance, Education, Gifts & Donations, Other.
 Return the result strictly as a JSON array of objects, where each object has "index" (number matching the list) and "category" (string matching one of the categories above). Do not include any markdown quotes or explanations outside the JSON array.
 
 Transactions:

@@ -42,6 +42,7 @@ import {
 } from '../../utils/transactions';
 import { syncGmailTransactions } from '../../utils/gmail';
 import { getLoans } from '../../utils/storage';
+import { PieChart } from 'react-native-chart-kit';
 
 const { width } = Dimensions.get('window');
 
@@ -58,6 +59,11 @@ const CATEGORY_ICONS = {
   'Fruits & Vegetables': { name: 'leaf-outline', color: '#10b981' },
   Electronics: { name: 'laptop-outline', color: '#0d9488' },
   'Milk & Dairy': { name: 'water-outline', color: '#38bdf8' },
+  'Rent & Housing': { name: 'home-outline', color: '#0d9488' },
+  'Health & Medical': { name: 'medical-outline', color: '#e11d48' },
+  Insurance: { name: 'shield-checkmark-outline', color: '#fbbf24' },
+  Education: { name: 'book-outline', color: '#a78bfa' },
+  'Gifts & Donations': { name: 'gift-outline', color: '#f472b6' },
   Other: { name: 'cube-outline', color: '#64748b' },
 };
 
@@ -147,6 +153,7 @@ export default function SpendTracker() {
   const [filterCategory, setFilterCategory] = useState('all');
   const [loansCount, setLoansCount] = useState(0);
   const [isClassifying, setIsClassifying] = useState(false);
+  const [chartExpanded, setChartExpanded] = useState(true);
   // Banking-style From/To date range (max 6 months). Defaults to the last month:
   // from one month + a day ago (e.g. 16 May when today is 17 Jun) up to today.
   const [startDate, setStartDate] = useState<Date | null>(() => {
@@ -459,6 +466,30 @@ export default function SpendTracker() {
   );
   const rangeBalance = rangeStats.income - rangeStats.expenses;
 
+  const spendPieData = useMemo(() => {
+    const totals: Record<string, number> = {};
+    filteredTransactions.forEach((t: any) => {
+      if ((t.type || '').toLowerCase() === 'credit' || t.category === 'Credit Card Bill') return;
+      const cat = t.category || 'Other';
+      totals[cat] = (totals[cat] || 0) + (parseFloat(t.amount) || 0);
+    });
+
+    return Object.entries(totals)
+      .filter(([, v]) => v > 0)
+      .map(([name, population]) => {
+        const iconInfo = CATEGORY_ICONS[name as keyof typeof CATEGORY_ICONS] || CATEGORY_ICONS.Other;
+        return {
+          name,
+          population,
+          color: iconInfo.color,
+          legendFontColor: '#64748b',
+          legendFontSize: 11,
+        };
+      })
+      .sort((a, b) => b.population - a.population)
+      .slice(0, 6);
+  }, [filteredTransactions]);
+
   const rangeLabel =
     startDate || endDate
       ? `${startDate ? fmtDate(startDate) : 'Start'} – ${endDate ? fmtDate(endDate) : 'Today'}`
@@ -696,6 +727,53 @@ export default function SpendTracker() {
             )}
           </BlurView>
         </View>
+
+        {/* Dynamic Category Spend Breakdown Pie Chart */}
+        {spendPieData.length > 0 && (
+          <View style={styles.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Spend Breakdown</Text>
+              <TouchableOpacity 
+                style={styles.toggleChartBtn} 
+                onPress={() => setChartExpanded(prev => !prev)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.toggleChartText}>
+                  {chartExpanded ? 'Hide Chart' : 'Show Chart'}
+                </Text>
+                <Ionicons 
+                  name={chartExpanded ? 'chevron-up' : 'chevron-down'} 
+                  size={14} 
+                  color="#6366f1" 
+                  style={{ marginLeft: 4 }}
+                />
+              </TouchableOpacity>
+            </View>
+
+            {chartExpanded && (
+              <BlurView intensity={35} tint="light" style={styles.chartCard}>
+                <PieChart
+                  data={spendPieData}
+                  width={width - 80}
+                  height={150}
+                  chartConfig={{
+                    backgroundGradientFrom: '#ffffff',
+                    backgroundGradientTo: '#ffffff',
+                    backgroundGradientFromOpacity: 0,
+                    backgroundGradientToOpacity: 0,
+                    color: (opacity = 1) => `rgba(99,102,241,${opacity})`,
+                    decimalPlaces: 0,
+                    labelColor: (opacity = 1) => `rgba(15,23,42,${opacity})`,
+                  }}
+                  accessor="population"
+                  backgroundColor="transparent"
+                  paddingLeft="10"
+                  absolute
+                />
+              </BlurView>
+            )}
+          </View>
+        )}
 
         {/* Filters */}
         <View style={styles.filterCard}>
@@ -1254,5 +1332,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#64748b',
+  },
+  toggleChartBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  toggleChartText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6366f1',
+  },
+  chartCard: {
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.04)',
+    overflow: 'hidden',
+    alignItems: 'center',
   },
 });
