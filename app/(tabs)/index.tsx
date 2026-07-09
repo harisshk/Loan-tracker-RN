@@ -134,13 +134,15 @@ export default function DashboardView() {
       setLoading(false);
     }
   };
+  const hasLoadedOnce = React.useRef(false);
 
   useFocusEffect(
     React.useCallback(() => {
       let active = true;
       (async () => {
         if (active) {
-          await loadData(true);
+          await loadData(!hasLoadedOnce.current);
+          hasLoadedOnce.current = true;
         }
       })();
       return () => {

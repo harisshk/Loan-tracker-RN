@@ -282,16 +282,20 @@ export default function SpendTracker() {
       setRefreshing(false);
     }
   };
+  const hasLoadedOnce = React.useRef(false);
 
   useFocusEffect(
     React.useCallback(() => {
       let active = true;
       (async () => {
-        setLoading(true);
+        if (!hasLoadedOnce.current) {
+          setLoading(true);
+        }
         try {
           await syncEmiTransactions();
           if (active) {
             await loadData(false);
+            hasLoadedOnce.current = true;
           }
         } catch (e) {
           console.error('Error on focus spend tracker:', e);
