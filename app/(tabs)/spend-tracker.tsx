@@ -154,15 +154,15 @@ export default function SpendTracker() {
   const [loansCount, setLoansCount] = useState(0);
   const [isClassifying, setIsClassifying] = useState(false);
   const [chartExpanded, setChartExpanded] = useState(true);
-  // Banking-style From/To date range (max 6 months). Defaults to the last month:
-  // from one month + a day ago (e.g. 16 May when today is 17 Jun) up to today.
+  // Defaults strictly to the current calendar month: from the 1st of the month to the last day of the month.
   const [startDate, setStartDate] = useState<Date | null>(() => {
     const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    d.setDate(d.getDate() - 1);
-    return d;
+    return new Date(d.getFullYear(), d.getMonth(), 1);
   });
-  const [endDate, setEndDate] = useState<Date | null>(() => new Date());
+  const [endDate, setEndDate] = useState<Date | null>(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  });
   const [picker, setPicker] = useState<null | 'start' | 'end'>(null);
 
   const addMonths = (d: Date, n: number) => {
@@ -495,15 +495,29 @@ export default function SpendTracker() {
       ? `${startDate ? fmtDate(startDate) : 'Start'} – ${endDate ? fmtDate(endDate) : 'Today'}`
       : 'All time';
 
+  const isDefaultRange = useMemo(() => {
+    if (!startDate || !endDate) return false;
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return startDate.getDate() === 1 &&
+           startDate.getMonth() === now.getMonth() &&
+           startDate.getFullYear() === now.getFullYear() &&
+           endDate.getDate() === lastDay.getDate() &&
+           endDate.getMonth() === now.getMonth() &&
+           endDate.getFullYear() === now.getFullYear();
+  }, [startDate, endDate]);
+
   const hasActiveFilters =
-    filterType !== 'all' || filterCategory !== 'all' || searchQuery !== '' || !!startDate || !!endDate;
+    filterType !== 'all' || filterCategory !== 'all' || searchQuery !== '' || !isDefaultRange;
 
   const clearFilters = () => {
     setFilterType('all');
     setFilterCategory('all');
     setSearchQuery('');
-    setStartDate(null);
-    setEndDate(null);
+    const d = new Date();
+    setStartDate(new Date(d.getFullYear(), d.getMonth(), 1));
+    setEndDate(new Date(d.getFullYear(), d.getMonth() + 1, 0));
   };
 
   const fc = (amount: any) => {
