@@ -164,13 +164,14 @@ export default function CalendarScreen() {
     spends.forEach((spend) => {
       const date = parseDateToLocal(spend.date);
       const dateStr = toLocalISOString(date);
+      const isCredit = (spend.type || '').toLowerCase() === 'credit';
 
       if (!map[dateStr]) map[dateStr] = [];
       map[dateStr].push({
         id: spend.id,
-        loanName: spend.description || 'Spend',
+        loanName: spend.description || (isCredit ? 'Received' : 'Spend'),
         amount: spend.amount,
-        type: 'spend',
+        type: isCredit ? 'credit_tx' : 'spend',
         category: spend.category || 'Other',
         isPaid: true,
         date: date
@@ -180,17 +181,10 @@ export default function CalendarScreen() {
     return map;
   }, [loans, payments, insurances, spends]);
 
-  // Get items specifically for the selected month to show all month schedules
-  const monthItems = useMemo(() => {
-    const items = [];
-    Object.keys(scheduleMap).forEach(dateStr => {
-      if (dateStr.startsWith(currentMonthStr)) {
-        items.push(...scheduleMap[dateStr]);
-      }
-    });
-    // Sort chronologically
-    return items.sort((a, b) => a.date - b.date);
-  }, [scheduleMap, currentMonthStr]);
+  // Get items specifically for the selected date alone
+  const dayItems = useMemo(() => {
+    return scheduleMap[selectedDate] || [];
+  }, [scheduleMap, selectedDate]);
 
   const markedDates = useMemo(() => {
     const marks = {};
@@ -238,9 +232,8 @@ export default function CalendarScreen() {
     setCurrentMonthStr(month.dateString.slice(0, 7));
   };
 
-  // Convert currentMonthStr "YYYY-MM" to readable label
-  const monthDate = new Date(currentMonthStr + '-01');
-  const readableMonth = monthDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  const selectedDateObj = parseDateToLocal(selectedDate);
+  const readableDay = selectedDateObj.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
@@ -278,16 +271,15 @@ export default function CalendarScreen() {
 
         <View style={styles.agendaContainer}>
           <Text style={styles.agendaTitle}>
-            Schedules in {readableMonth}
+            Schedules on {readableDay}
           </Text>
 
-          {monthItems.length === 0 ? (
+          {dayItems.length === 0 ? (
             <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No events or payments due this month.</Text>
+              <Text style={styles.emptyText}>No events, payments, or spends recorded on this day.</Text>
             </BlurView>
           ) : (
-            monthItems.map((item, index) => {
-              const isSelectedDay = toLocalISOString(item.date) === selectedDate;
+            dayItems.map((item, index) => {
               return (
                 <BlurView 
                   key={index} 
@@ -295,8 +287,10 @@ export default function CalendarScreen() {
                   tint="light" 
                   style={[
                     styles.agendaCard, 
-                    item.type === 'spend' ? styles.agendaCardSpend : (item.isPaid ? styles.agendaCardPaid : styles.agendaCardPending),
-                    isSelectedDay && styles.agendaCardSelected
+                    item.type === 'spend' ? styles.agendaCardSpend : 
+                    item.type === 'credit_tx' ? styles.agendaCardCredit : 
+                    (item.isPaid ? styles.agendaCardPaid : styles.agendaCardPending),
+                    styles.agendaCardSelected
                   ]}
                 >
                   <View style={styles.agendaLeft}>
@@ -306,13 +300,19 @@ export default function CalendarScreen() {
                       </Text>
                       <View style={[
                         styles.statusBadge, 
-                        item.type === 'spend' ? styles.badgeSpend : (item.isPaid ? styles.badgePaid : styles.badgePending)
+                        item.type === 'spend' ? styles.badgeSpend : 
+                        item.type === 'credit_tx' ? styles.badgeCredit :
+                        (item.isPaid ? styles.badgePaid : styles.badgePending)
                       ]}>
                         <Text style={[
                           styles.badgeText, 
-                          item.type === 'spend' ? styles.badgeTextSpend : (item.isPaid ? styles.badgeTextPaid : styles.badgeTextPending)
+                          item.type === 'spend' ? styles.badgeTextSpend : 
+                          item.type === 'credit_tx' ? styles.badgeTextCredit :
+                          (item.isPaid ? styles.badgeTextPaid : styles.badgeTextPending)
                         ]}>
-                          {item.type === 'spend' ? '💸 SPEND' : (item.isPaid ? '✓ COMPLETED' : '⏳ PENDING')}
+                          {item.type === 'spend' ? '💸 SPEND' : 
+                           item.type === 'credit_tx' ? '📥 INWARD' : 
+                           (item.isPaid ? '✓ COMPLETED' : '⏳ PENDING')}
                         </Text>
                       </View>
                     </View>
@@ -321,14 +321,19 @@ export default function CalendarScreen() {
                       {item.type === 'bullet' ? 'Bullet Repayment Due' : 
                        item.type === 'insurance' ? `${item.frequency.toUpperCase()} PREMIUM` :
                        item.type === 'spend' ? `SPEND • ${item.category.toUpperCase()}` :
+                       item.type === 'credit_tx' ? `INWARD • ${item.category.toUpperCase()}` :
                        'Monthly EMI'}
                     </Text>
                   </View>
                   <Text style={[
                     styles.agendaAmount, 
-                    item.type === 'spend' ? styles.amountSpend : (item.isPaid ? styles.amountPaid : styles.amountPending)
+                    item.type === 'spend' ? styles.amountSpend : 
+                    item.type === 'credit_tx' ? styles.amountCredit :
+                    (item.isPaid ? styles.amountPaid : styles.amountPending)
                   ]}>
-                    {item.type === 'spend' ? `-${formatCurrency(item.amount)}` : formatCurrency(item.amount)}
+                    {item.type === 'spend' ? `-${formatCurrency(item.amount)}` : 
+                     item.type === 'credit_tx' ? `+${formatCurrency(item.amount)}` : 
+                     formatCurrency(item.amount)}
                   </Text>
                 </BlurView>
               );
@@ -371,6 +376,9 @@ const styles = StyleSheet.create({
   agendaCardSpend: {
     borderColor: 'rgba(239, 68, 68, 0.15)',
   },
+  agendaCardCredit: {
+    borderColor: 'rgba(16, 185, 129, 0.15)',
+  },
   agendaCardSelected: {
     borderColor: 'rgba(0, 0, 0, 0.2)',
     backgroundColor: '#f8fafc',
@@ -383,10 +391,12 @@ const styles = StyleSheet.create({
   badgePaid: { backgroundColor: 'rgba(16, 185, 129, 0.15)' },
   badgePending: { backgroundColor: 'rgba(245, 158, 11, 0.15)' },
   badgeSpend: { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
+  badgeCredit: { backgroundColor: 'rgba(16, 185, 129, 0.12)' },
   badgeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   badgeTextPaid: { color: '#10b981' },
   badgeTextPending: { color: '#f59e0b' },
   badgeTextSpend: { color: '#ef4444' },
+  badgeTextCredit: { color: '#10b981' },
   
   agendaLoanName: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
   agendaType: { fontSize: 12, color: 'rgba(15, 23, 42, 0.5)', textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -394,4 +404,5 @@ const styles = StyleSheet.create({
   amountPending: { color: '#f59e0b' },
   amountPaid: { color: '#10b981' },
   amountSpend: { color: '#ef4444' },
+  amountCredit: { color: '#10b981' },
 });

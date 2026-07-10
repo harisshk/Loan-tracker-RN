@@ -163,11 +163,12 @@ export default function AddTransaction() {
       
       if (amountMatch) {
         const detectedAmount = amountMatch[1].replace(/,/g, '');
-        const isDebit = /spent|debited|paid|transfer/i.test(content);
-        const isCredit = /received|credited|refund/i.test(content);
-        
         let detectedType = 'debit';
-        if (isCredit && !isDebit) detectedType = 'credit';
+        if (/received|credited|refund|added/i.test(content)) {
+          detectedType = 'credit';
+        } else if (/spent|debited|paid|transfer|sent/i.test(content)) {
+          detectedType = 'debit';
+        }
 
         // Extract merchant/source
         let detectedDesc = '';

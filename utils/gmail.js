@@ -123,10 +123,12 @@ const parseGmailMessage = (bodyText, dateStr) => {
   if (isNaN(amount) || amount <= 0) return null;
 
   // 2. Type Match (Debit vs Credit)
-  const isDebit = /spent|debited|paid|transfer|sent/i.test(bodyText);
-  const isCredit = /received|credited|refund|added/i.test(bodyText);
   let type = 'debit';
-  if (isCredit && !isDebit) type = 'credit';
+  if (/received|credited|refund|added/i.test(bodyText)) {
+    type = 'credit';
+  } else if (/spent|debited|paid|transfer|sent/i.test(bodyText)) {
+    type = 'debit';
+  }
 
   // 3. Mode Match (Credit Card vs UPI)
   const isCard = /card/i.test(bodyText);
