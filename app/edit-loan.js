@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -35,7 +35,7 @@ export default function EditLoan() {
   const loanType = formData.loanType || 'emi';
   const isBullet = loanType === 'bullet';
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const allLoans = await getLoans();
@@ -67,11 +67,20 @@ export default function EditLoan() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [
+    params.id,
+    params.loanName,
+    params.loanType,
+    params.principal,
+    params.interest,
+    params.emiAmount,
+    params.startDate,
+    params.tenure,
+  ]);
 
   React.useEffect(() => {
     loadData();
-  }, [params.id]);
+  }, [loadData]);
 
   const handleInputChange = (field, value) => {
     let sanitizedValue = value;

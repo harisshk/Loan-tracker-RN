@@ -1,25 +1,26 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { Calendar } from 'react-native-calendars';
-import { getLoans, getPayments, getInsurances } from '../utils/storage';
-import { calculateEMIBreakdown } from '../utils/emiCalculator';
+import { getLoans, getPayments, getInsurances } from '../../utils/storage';
+import { getTransactions } from '../../utils/transactions';
+import { calculateEMIBreakdown } from '../../utils/emiCalculator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function CalendarScreen() {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [loans, setLoans] = useState([]);
   const [payments, setPayments] = useState([]);
   const [insurances, setInsurances] = useState([]);
+  const [spends, setSpends] = useState([]);
+  const [focusTrigger, setFocusTrigger] = useState(0);
 
   const toLocalISOString = (d) => {
     const y = d.getFullYear();
@@ -28,23 +29,46 @@ export default function CalendarScreen() {
     return `${y}-${m}-${day}`;
   };
 
+  const parseDateToLocal = (dateStr) => {
+    if (!dateStr) return new Date();
+    // If it's a date-only string like YYYY-MM-DD
+    if (dateStr.length >= 10 && dateStr.substring(0, 10).match(/^\d{4}-\d{2}-\d{2}$/)) {
+      const parts = dateStr.substring(0, 10).split('-');
+      return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    }
+    return new Date(dateStr);
+  };
+
   // Default to current month using local timezone
   const todayDateString = toLocalISOString(new Date());
   const [selectedDate, setSelectedDate] = useState(todayDateString);
   const [currentMonthStr, setCurrentMonthStr] = useState(todayDateString.slice(0, 7)); // e.g. "2023-01"
-  
-  useEffect(() => {
-    loadData();
-  }, []);
 
-  const loadData = async () => {
-    const loansData = await getLoans();
-    const paymentsData = await getPayments();
-    const insurancesData = await getInsurances();
-    setLoans(loansData);
-    setPayments(paymentsData);
-    setInsurances(insurancesData);
+  useFocusEffect(
+    useCallback(() => {
+      setFocusTrigger((prev) => prev + 1);
+    }, [])
+  );
+
+  const loadData = async (month) => {
+    try {
+      const loansData = await getLoans();
+      const paymentsData = await getPayments();
+      const insurancesData = await getInsurances();
+      setLoans(loansData || []);
+      setPayments(paymentsData || []);
+      setInsurances(insurancesData || []);
+
+      const spendsData = await getTransactions(month);
+      setSpends(spendsData || []);
+    } catch (e) {
+      console.error('Error loading calendar data:', e);
+    }
   };
+
+  useEffect(() => {
+    loadData(currentMonthStr);
+  }, [currentMonthStr, focusTrigger]);
 
   const scheduleMap = useMemo(() => {
     const map = {};
@@ -59,7 +83,7 @@ export default function CalendarScreen() {
       const emiAmount = parseFloat(loan.emiAmount) || 0;
       const extraPayments = payments.filter((p) => p.loanId === loan.id);
       
-      const startDate = new Date(loan.startDate);
+      const startDate = parseDateToLocal(loan.startDate);
       let monthsElapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + 
                           (today.getMonth() - startDate.getMonth());
       if (today.getDate() >= startDate.getDate()) monthsElapsed += 1;
@@ -104,7 +128,7 @@ export default function CalendarScreen() {
 
     // Process Insurances (Project for the next 5 years to keep it fast)
     insurances.forEach((ins) => {
-      const startDate = new Date(ins.startDate);
+      const startDate = parseDateToLocal(ins.startDate);
       const premium = parseFloat(ins.premiumAmount) || 0;
       const freq = ins.frequency; // 'yearly', 'half-yearly', 'quarterly', 'monthly'
       
@@ -120,7 +144,7 @@ export default function CalendarScreen() {
         const due = new Date(startDate.getFullYear(), startDate.getMonth() + m, startDate.getDate());
         const dateStr = toLocalISOString(due);
         
-        // Very basic "isPaid" logic: if the due date is in the past, assume paid. (User can log actual payments later if built)
+        // Very basic "isPaid" logic: if the due date is in the past, assume paid
         const isPaid = due < today;
         
         if (!map[dateStr]) map[dateStr] = [];
@@ -136,8 +160,25 @@ export default function CalendarScreen() {
       }
     });
 
+    // Process Spends for the month
+    spends.forEach((spend) => {
+      const date = parseDateToLocal(spend.date);
+      const dateStr = toLocalISOString(date);
+
+      if (!map[dateStr]) map[dateStr] = [];
+      map[dateStr].push({
+        id: spend.id,
+        loanName: spend.description || 'Spend',
+        amount: spend.amount,
+        type: 'spend',
+        category: spend.category || 'Other',
+        isPaid: true,
+        date: date
+      });
+    });
+
     return map;
-  }, [loans, payments, insurances]);
+  }, [loans, payments, insurances, spends]);
 
   // Get items specifically for the selected month to show all month schedules
   const monthItems = useMemo(() => {
@@ -155,12 +196,23 @@ export default function CalendarScreen() {
     const marks = {};
     Object.keys(scheduleMap).forEach((date) => {
       const dayItems = scheduleMap[date];
-      const hasPending = dayItems.some(i => !i.isPaid);
+      const hasPending = dayItems.some((i) => !i.isPaid);
+      const hasSpend = dayItems.some((i) => i.type === 'spend');
       
       if (hasPending) {
         marks[date] = {
           marked: true,
-          dotColor: '#f59e0b',
+          dotColor: '#f59e0b', // Yellow/Orange for pending
+        };
+      } else if (hasSpend) {
+        marks[date] = {
+          marked: true,
+          dotColor: '#ef4444', // Red for spend
+        };
+      } else {
+        marks[date] = {
+          marked: true,
+          dotColor: '#10b981', // Green for completed/paid
         };
       }
     });
@@ -194,11 +246,8 @@ export default function CalendarScreen() {
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={styles.backButton}>← Back</Text>
-          </TouchableOpacity>
           <Text style={styles.headerTitle}>Calendar Schedule</Text>
-          <Text style={styles.headerSubtitle}>View and track your monthly payments</Text>
+          <Text style={styles.headerSubtitle}>View and track your monthly payments & spends</Text>
         </View>
 
         <BlurView intensity={20} tint="light" style={styles.calendarCard}>
@@ -206,7 +255,6 @@ export default function CalendarScreen() {
             current={selectedDate}
             onDayPress={(day) => {
               setSelectedDate(day.dateString);
-              // Also ensure we are looking at the right month if tapped from a different month
               setCurrentMonthStr(day.dateString.slice(0, 7));
             }}
             onMonthChange={handleMonthChange}
@@ -235,7 +283,7 @@ export default function CalendarScreen() {
 
           {monthItems.length === 0 ? (
             <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No payments due this month.</Text>
+              <Text style={styles.emptyText}>No events or payments due this month.</Text>
             </BlurView>
           ) : (
             monthItems.map((item, index) => {
@@ -247,7 +295,7 @@ export default function CalendarScreen() {
                   tint="light" 
                   style={[
                     styles.agendaCard, 
-                    item.isPaid ? styles.agendaCardPaid : styles.agendaCardPending,
+                    item.type === 'spend' ? styles.agendaCardSpend : (item.isPaid ? styles.agendaCardPaid : styles.agendaCardPending),
                     isSelectedDay && styles.agendaCardSelected
                   ]}
                 >
@@ -256,9 +304,15 @@ export default function CalendarScreen() {
                       <Text style={styles.agendaDate}>
                         {item.date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                       </Text>
-                      <View style={[styles.statusBadge, item.isPaid ? styles.badgePaid : styles.badgePending]}>
-                        <Text style={[styles.badgeText, item.isPaid ? styles.badgeTextPaid : styles.badgeTextPending]}>
-                          {item.isPaid ? '✓ COMPLETED' : '⏳ PENDING'}
+                      <View style={[
+                        styles.statusBadge, 
+                        item.type === 'spend' ? styles.badgeSpend : (item.isPaid ? styles.badgePaid : styles.badgePending)
+                      ]}>
+                        <Text style={[
+                          styles.badgeText, 
+                          item.type === 'spend' ? styles.badgeTextSpend : (item.isPaid ? styles.badgeTextPaid : styles.badgeTextPending)
+                        ]}>
+                          {item.type === 'spend' ? '💸 SPEND' : (item.isPaid ? '✓ COMPLETED' : '⏳ PENDING')}
                         </Text>
                       </View>
                     </View>
@@ -266,11 +320,15 @@ export default function CalendarScreen() {
                     <Text style={styles.agendaType}>
                       {item.type === 'bullet' ? 'Bullet Repayment Due' : 
                        item.type === 'insurance' ? `${item.frequency.toUpperCase()} PREMIUM` :
+                       item.type === 'spend' ? `SPEND • ${item.category.toUpperCase()}` :
                        'Monthly EMI'}
                     </Text>
                   </View>
-                  <Text style={[styles.agendaAmount, item.isPaid ? styles.amountPaid : styles.amountPending]}>
-                    {formatCurrency(item.amount)}
+                  <Text style={[
+                    styles.agendaAmount, 
+                    item.type === 'spend' ? styles.amountSpend : (item.isPaid ? styles.amountPaid : styles.amountPending)
+                  ]}>
+                    {item.type === 'spend' ? `-${formatCurrency(item.amount)}` : formatCurrency(item.amount)}
                   </Text>
                 </BlurView>
               );
@@ -286,7 +344,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 40 },
   header: { marginBottom: 24 },
-  backButton: { fontSize: 16, fontWeight: '600', color: '#2563eb', marginBottom: 12 },
   headerTitle: { fontSize: 34, fontWeight: '700', color: '#0f172a' },
   headerSubtitle: { fontSize: 14, color: 'rgba(15, 23, 42, 0.6)', marginTop: 4 },
   calendarCard: { borderRadius: 30, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.08)', marginBottom: 24, paddingBottom: 10 },
@@ -311,6 +368,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(16, 185, 129, 0.2)',
     opacity: 0.8,
   },
+  agendaCardSpend: {
+    borderColor: 'rgba(239, 68, 68, 0.15)',
+  },
   agendaCardSelected: {
     borderColor: 'rgba(0, 0, 0, 0.2)',
     backgroundColor: '#f8fafc',
@@ -322,13 +382,16 @@ const styles = StyleSheet.create({
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   badgePaid: { backgroundColor: 'rgba(16, 185, 129, 0.15)' },
   badgePending: { backgroundColor: 'rgba(245, 158, 11, 0.15)' },
+  badgeSpend: { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
   badgeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   badgeTextPaid: { color: '#10b981' },
   badgeTextPending: { color: '#f59e0b' },
+  badgeTextSpend: { color: '#ef4444' },
   
   agendaLoanName: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
   agendaType: { fontSize: 12, color: 'rgba(15, 23, 42, 0.5)', textTransform: 'uppercase', letterSpacing: 0.5 },
   agendaAmount: { fontSize: 24, fontWeight: '700' },
   amountPending: { color: '#f59e0b' },
   amountPaid: { color: '#10b981' },
+  amountSpend: { color: '#ef4444' },
 });

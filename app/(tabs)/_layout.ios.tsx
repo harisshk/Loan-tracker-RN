@@ -24,6 +24,11 @@ export default function TabLayout() {
         <Label>EMI</Label>
       </NativeTabTrigger>
 
+      <NativeTabTrigger name="calendar">
+        <Icon sf="calendar" />
+        <Label>Calendar</Label>
+      </NativeTabTrigger>
+
       <NativeTabTrigger name="ai-advisor">
         <Icon sf="sparkles" />
         <Label>AI Advisor</Label>

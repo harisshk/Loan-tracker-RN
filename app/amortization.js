@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,13 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { Alert } from 'react-native';
 import { getLoans } from '../utils/storage';
 
 export default function AmortizationSchedule() {
@@ -22,7 +22,7 @@ export default function AmortizationSchedule() {
   const [loading, setLoading] = useState(true);
   const [loan, setLoan] = useState(null);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const allLoans = await getLoans();
@@ -45,11 +45,19 @@ export default function AmortizationSchedule() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [
+    params.id,
+    params.loanName,
+    params.principal,
+    params.interest,
+    params.emiAmount,
+    params.tenure,
+    params.startDate,
+  ]);
 
   useEffect(() => {
     loadData();
-  }, [params.id]);
+  }, [loadData]);
 
   const formatCurrency = (amount) => {
     return `₹${parseFloat(amount || 0).toLocaleString('en-IN', {

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -229,24 +229,31 @@ export default function AIAdvisor() {
   const [usage, setUsage] = useState({ count: 0, date: '' });
   const [activeKey, setActiveKey] = useState('');
 
-  useEffect(() => { 
-    const init = async () => {
-      const userKey = await AsyncStorage.getItem('@user_gemini_api_key');
-      if (userKey) {
-        setActiveKey(userKey);
-      } else {
-        setMessages(prev => [...prev, { 
-          role: 'assistant', 
-          text: "👋 **Welcome!** To start chatting, please head to **Settings** and add your Gemini API Key. \n\nThis keeps your personal AI powered and secure!",
-          isError: true 
-        }]);
-      }
-    };
-    init();
-    loadLoans(); 
-    loadTransactions();
-    loadUsage();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      const init = async () => {
+        const userKey = await AsyncStorage.getItem('@user_gemini_api_key');
+        if (userKey) {
+          setActiveKey(userKey);
+          setMessages(prev => prev.filter(m => !m.isError));
+        } else {
+          setActiveKey('');
+          setMessages(prev => {
+            if (prev.some(m => m.isError)) return prev;
+            return [...prev, { 
+              role: 'assistant', 
+              text: "👋 **Welcome!** To start chatting, please head to **Settings** and add your Gemini API Key. \n\nThis keeps your personal AI powered and secure!",
+              isError: true 
+            }];
+          });
+        }
+      };
+      init();
+      loadLoans(); 
+      loadTransactions();
+      loadUsage();
+    }, [])
+  );
 
   const loadLoans = async () => { try { const data = await getLoans(); setLoans(data || []); } catch (e) {} };
   const loadTransactions = async () => { try { const data = await getTransactions(); setTransactions(data || []); } catch (e) {} };

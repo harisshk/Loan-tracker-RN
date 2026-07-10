@@ -56,7 +56,7 @@ const getAllTransactionsRaw = async () => {
   return [];
 };
 
-export const getTransactions = async () => {
+export const getTransactions = async (monthStr) => {
   try {
     const { url, key } = await getSupabaseConfig();
     if (!url || !key) {
@@ -67,11 +67,31 @@ export const getTransactions = async () => {
     const cleanUrl = getCleanUrl(url);
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     
+    let dateFilter = '';
+    if (monthStr) {
+      const parts = monthStr.split('-');
+      const year = parseInt(parts[0]);
+      const month = parseInt(parts[1]);
+      
+      const start = `${year}-${String(month).padStart(2, '0')}-01`;
+      
+      // Get first day of next month
+      let nextYear = year;
+      let nextMonth = month + 1;
+      if (nextMonth > 12) {
+        nextMonth = 1;
+        nextYear += 1;
+      }
+      const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+      
+      dateFilter = `&date=gte.${start}&date=lt.${end}`;
+    }
+
     let fetchUrl;
     if (isUserEmailColumnSupported) {
-      fetchUrl = `${cleanUrl}/rest/v1/transactions?select=*&user_email=eq.${encodeURIComponent(userEmail)}&order=date.desc`;
+      fetchUrl = `${cleanUrl}/rest/v1/transactions?select=*&user_email=eq.${encodeURIComponent(userEmail)}${dateFilter}&order=date.desc`;
     } else {
-      fetchUrl = `${cleanUrl}/rest/v1/transactions?select=*&order=date.desc`;
+      fetchUrl = `${cleanUrl}/rest/v1/transactions?select=*${dateFilter}&order=date.desc`;
     }
 
     let response = await fetch(fetchUrl, {
@@ -88,7 +108,7 @@ export const getTransactions = async () => {
       if (response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
         console.warn('user_email column is missing in Supabase transactions table. Falling back to non-filtered GET.');
         await markUserEmailMissing();
-        const fallbackUrl = `${cleanUrl}/rest/v1/transactions?select=*&order=date.desc`;
+        const fallbackUrl = `${cleanUrl}/rest/v1/transactions?select=*${dateFilter}&order=date.desc`;
         const fallbackResponse = await fetch(fallbackUrl, {
           method: 'GET',
           headers: {

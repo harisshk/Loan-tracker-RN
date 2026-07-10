@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -32,7 +32,7 @@ export default function EditInsurance() {
     startDate: new Date().toISOString().split('T')[0],
   });
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const allInsurances = await getInsurances();
@@ -60,11 +60,18 @@ export default function EditInsurance() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [
+    params.id,
+    params.name,
+    params.insuranceType,
+    params.premiumAmount,
+    params.frequency,
+    params.startDate,
+  ]);
 
   React.useEffect(() => {
     loadData();
-  }, [params.id]);
+  }, [loadData]);
 
   const frequencies = [
     { id: 'yearly', label: 'Yearly' },

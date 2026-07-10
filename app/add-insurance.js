@@ -15,7 +15,6 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { saveInsurance } from '../utils/storage';
-import { scheduleInsuranceReminder } from '../utils/notifications';
 
 export default function AddInsurance() {
   const router = useRouter();
@@ -38,7 +37,7 @@ export default function AddInsurance() {
 
     try {
       const dataToSave = { ...formData, premiumAmount: sanitizedAmount };
-      const newInsurance = await saveInsurance(dataToSave);
+      await saveInsurance(dataToSave);
       Alert.alert('Success', 'Insurance policy saved successfully', [
         { text: 'OK', onPress: () => router.back() }
       ]);
