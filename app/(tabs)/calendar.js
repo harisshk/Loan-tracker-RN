@@ -186,6 +186,26 @@ export default function CalendarScreen() {
     return scheduleMap[selectedDate] || [];
   }, [scheduleMap, selectedDate]);
 
+  // Compute daily summary: spend, inflow, and bills/EMIs
+  const dailySummary = useMemo(() => {
+    let spend = 0;
+    let credit = 0;
+    let bills = 0;
+
+    dayItems.forEach((item) => {
+      const amt = parseFloat(item.amount) || 0;
+      if (item.type === 'spend') {
+        spend += amt;
+      } else if (item.type === 'credit_tx') {
+        credit += amt;
+      } else if (['emi', 'bullet', 'insurance'].includes(item.type)) {
+        bills += amt;
+      }
+    });
+
+    return { spend, credit, bills };
+  }, [dayItems]);
+
   const markedDates = useMemo(() => {
     const marks = {};
     Object.keys(scheduleMap).forEach((date) => {
@@ -273,6 +293,41 @@ export default function CalendarScreen() {
           <Text style={styles.agendaTitle}>
             Schedules on {readableDay}
           </Text>
+
+          {dayItems.length > 0 && (
+            <BlurView intensity={30} tint="light" style={styles.summaryCard}>
+              <View style={styles.summaryRow}>
+                <View style={styles.summaryItem}>
+                  <Text style={styles.summaryLabel}>Total Spend</Text>
+                  <Text style={[styles.summaryValue, styles.spendText]}>
+                    {formatCurrency(dailySummary.spend)}
+                  </Text>
+                </View>
+                {dailySummary.bills > 0 && (
+                  <>
+                    <View style={styles.summaryDivider} />
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Bills & EMIs</Text>
+                      <Text style={[styles.summaryValue, styles.billsText]}>
+                        {formatCurrency(dailySummary.bills)}
+                      </Text>
+                    </View>
+                  </>
+                )}
+                {dailySummary.credit > 0 && (
+                  <>
+                    <View style={styles.summaryDivider} />
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Inflow</Text>
+                      <Text style={[styles.summaryValue, styles.creditText]}>
+                        {formatCurrency(dailySummary.credit)}
+                      </Text>
+                    </View>
+                  </>
+                )}
+              </View>
+            </BlurView>
+          )}
 
           {dayItems.length === 0 ? (
             <BlurView intensity={15} tint="light" style={styles.emptyCard}>
@@ -405,4 +460,49 @@ const styles = StyleSheet.create({
   amountPaid: { color: '#10b981' },
   amountSpend: { color: '#ef4444' },
   amountCredit: { color: '#10b981' },
+  
+  summaryCard: {
+    padding: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.06)',
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+  },
+  summaryItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: 'rgba(15, 23, 42, 0.6)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  summaryDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  spendText: {
+    color: '#ef4444',
+  },
+  billsText: {
+    color: '#f59e0b',
+  },
+  creditText: {
+    color: '#10b981',
+  },
 });
