@@ -21,6 +21,7 @@ import { getLoans } from '../../utils/storage';
 import { getGmailConfig, saveGmailTokens, clearGmailTokens, saveGmailSearchQuery, syncGmailTransactions } from '../../utils/gmail';
 import Config from '../../utils/Config';
 import { clearAuthUser } from '../../utils/auth';
+import { DEFAULT_BULK_PROMPT } from '../../utils/classifier';
 
 const isGoogleSigninSupported = !!NativeModules?.RNGoogleSignin;
 const GoogleSignin = isGoogleSigninSupported
@@ -41,6 +42,7 @@ export default function Settings() {
   const [currency, setCurrency] = useState(Config.DEFAULT_CURRENCY || '₹');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [classifierPrompt, setClassifierPrompt] = useState(DEFAULT_BULK_PROMPT);
 
   // Gmail states
   const [gmailConfig, setGmailConfig] = useState({ email: '', query: '', isConnected: false });
@@ -117,9 +119,32 @@ export default function Settings() {
     const savedKey = await AsyncStorage.getItem('@user_gemini_api_key');
     if (savedKey) setApiKey(savedKey);
 
+    const savedPrompt = await AsyncStorage.getItem('@user_classifier_prompt');
+    if (savedPrompt) setClassifierPrompt(savedPrompt);
+
     const gConfig = await getGmailConfig();
     setGmailConfig(gConfig);
     setGmailQuery(gConfig.query);
+  };
+
+  const handleSaveClassifierPrompt = async () => {
+    await AsyncStorage.setItem('@user_classifier_prompt', classifierPrompt);
+    Alert.alert('Saved', 'AI Classifier Prompt updated successfully!');
+  };
+
+  const handleResetClassifierPrompt = async () => {
+    Alert.alert('Reset Prompt', 'Are you sure you want to reset the prompt to the default?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        style: 'destructive',
+        onPress: async () => {
+          setClassifierPrompt(DEFAULT_BULK_PROMPT);
+          await AsyncStorage.setItem('@user_classifier_prompt', DEFAULT_BULK_PROMPT);
+          Alert.alert('Reset', 'AI Classifier Prompt reset to default.');
+        }
+      }
+    ]);
   };
 
   const saveApiKey = async (val: any) => {
@@ -247,6 +272,32 @@ export default function Settings() {
                <Text style={styles.toggleText}>{showKey ? 'Hide Key' : 'Show Key'}</Text>
              </TouchableOpacity>
              <Text style={styles.helpText}>Get one for free at aistudio.google.com</Text>
+          </BlurView>
+
+          <BlurView intensity={20} style={[styles.aiCard, { marginTop: 10 }]}>
+             <View style={styles.aiHeader}>
+                <View style={[styles.iconWrap, { backgroundColor: '#8b5cf6' }]}><Ionicons name="options-outline" size={18} color="#fff" /></View>
+                <Text style={styles.cardText}>Transaction Classifier Prompt</Text>
+             </View>
+             <TextInput
+               style={styles.promptInput}
+               placeholder="Enter transaction classification prompt..."
+               placeholderTextColor="#94a3b8"
+               value={classifierPrompt}
+               onChangeText={setClassifierPrompt}
+               multiline={true}
+               numberOfLines={6}
+               autoCapitalize="none"
+               autoCorrect={false}
+             />
+             <View style={styles.promptBtnRow}>
+               <TouchableOpacity onPress={handleSaveClassifierPrompt} style={styles.savePromptBtn}>
+                 <Text style={styles.savePromptText}>Save Prompt</Text>
+               </TouchableOpacity>
+               <TouchableOpacity onPress={handleResetClassifierPrompt} style={styles.resetPromptBtn}>
+                 <Text style={styles.resetPromptText}>Reset Default</Text>
+               </TouchableOpacity>
+             </View>
           </BlurView>
         </View>
 
@@ -412,4 +463,50 @@ const styles = StyleSheet.create({
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, marginLeft: 2, marginTop: 8 },
   envNote: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(16,185,129,0.08)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
   envNoteText: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
+  promptInput: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 13,
+    color: '#0f172a',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    minHeight: 120,
+    textAlignVertical: 'top',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginTop: 8,
+  },
+  promptBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  savePromptBtn: {
+    flex: 1,
+    backgroundColor: '#7c3aed',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  savePromptText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  resetPromptBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  resetPromptText: {
+    color: '#475569',
+    fontWeight: '600',
+    fontSize: 13,
+  },
 });

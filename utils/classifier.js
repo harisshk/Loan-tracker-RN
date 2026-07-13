@@ -118,8 +118,10 @@ export const bulkClassifyCategories = async (txs) => {
       description: t.description
     }));
 
-    const prompt = `You are a personal finance manager. Classify each of the following transaction descriptions into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Rent & Housing, Health & Medical, Insurance, Education, Gifts & Donations, Other.
-Return the result strictly as a JSON array of objects, where each object has "index" (number matching the list) and "category" (string matching one of the categories above). Do not include any markdown quotes or explanations outside the JSON array.
+    const savedPrompt = await AsyncStorage.getItem('@user_classifier_prompt');
+    const systemPrompt = savedPrompt || DEFAULT_BULK_PROMPT;
+
+    const prompt = `${systemPrompt}
 
 Transactions:
 ${JSON.stringify(listToClassify)}`;
