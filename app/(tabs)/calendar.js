@@ -298,7 +298,7 @@ export default function CalendarScreen() {
             <BlurView intensity={30} tint="light" style={styles.summaryCard}>
               <View style={styles.summaryRow}>
                 <View style={styles.summaryItem}>
-                  <Text style={styles.summaryLabel}>Total Spend</Text>
+                  <Text style={styles.summaryLabel}>💸 Total Spend</Text>
                   <Text style={[styles.summaryValue, styles.spendText]}>
                     {formatCurrency(dailySummary.spend)}
                   </Text>
@@ -307,7 +307,7 @@ export default function CalendarScreen() {
                   <>
                     <View style={styles.summaryDivider} />
                     <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>Bills & EMIs</Text>
+                      <Text style={styles.summaryLabel}>📅 Bills & EMIs</Text>
                       <Text style={[styles.summaryValue, styles.billsText]}>
                         {formatCurrency(dailySummary.bills)}
                       </Text>
@@ -318,7 +318,7 @@ export default function CalendarScreen() {
                   <>
                     <View style={styles.summaryDivider} />
                     <View style={styles.summaryItem}>
-                      <Text style={styles.summaryLabel}>Inflow</Text>
+                      <Text style={styles.summaryLabel}>📥 Inflow</Text>
                       <Text style={[styles.summaryValue, styles.creditText]}>
                         {formatCurrency(dailySummary.credit)}
                       </Text>
