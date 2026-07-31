@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { PieChart } from 'react-native-chart-kit';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../../utils/storage';
 import { getTransactions, getBudgetLimit } from '../../utils/transactions';
+import { getCategoryIcon } from '../../constants/categories';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PulseSkeleton } from '../../components/ui/skeleton';
 
@@ -242,20 +243,6 @@ export default function DashboardView() {
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
-    const categoryColors: Record<string, string> = {
-      Food: '#fb923c', Shopping: '#ec4899', EMI: '#6366f1',
-      Bills: '#3b82f6', Investment: '#8b5cf6', Entertainment: '#f43f5e',
-      Travel: '#06b6d4',
-      'Fruits & Vegetables': '#10b981',
-      Electronics: '#0d9488',
-      'Milk & Dairy': '#38bdf8',
-      'Rent & Housing': '#0d9488',
-      'Health & Medical': '#e11d48',
-      Insurance: '#fbbf24',
-      Education: '#a78bfa',
-      'Gifts & Donations': '#f472b6',
-      Other: '#64748b',
-    };
     const totals: Record<string, number> = {};
     spends.filter((t: any) => {
       const d = new Date(t.date);
@@ -271,7 +258,7 @@ export default function DashboardView() {
       .map(([name, population]) => ({
         name,
         population,
-        color: categoryColors[name] || '#64748b',
+        color: getCategoryIcon(name).color,
         legendFontColor: '#64748b',
         legendFontSize: 11,
       }))

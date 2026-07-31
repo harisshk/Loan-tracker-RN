@@ -43,29 +43,9 @@ import {
 import { syncGmailTransactions } from '../../utils/gmail';
 import { getLoans } from '../../utils/storage';
 import { PieChart } from 'react-native-chart-kit';
+import { CATEGORY_ICONS, getCategoryIcon } from '../../constants/categories';
 
 const { width } = Dimensions.get('window');
-
-const CATEGORY_ICONS = {
-  Salary: { name: 'cash-outline', color: '#10b981' },
-  Food: { name: 'fast-food-outline', color: '#fb923c' },
-  Shopping: { name: 'cart-outline', color: '#ec4899' },
-  EMI: { name: 'wallet-outline', color: '#6366f1' },
-  Bills: { name: 'receipt-outline', color: '#3b82f6' },
-  Investment: { name: 'trending-up-outline', color: '#8b5cf6' },
-  Entertainment: { name: 'film-outline', color: '#f43f5e' },
-  Travel: { name: 'airplane-outline', color: '#06b6d4' },
-  'Credit Card Bill': { name: 'card-outline', color: '#6366f1' },
-  'Fruits & Vegetables': { name: 'leaf-outline', color: '#10b981' },
-  Electronics: { name: 'laptop-outline', color: '#0d9488' },
-  'Milk & Dairy': { name: 'water-outline', color: '#38bdf8' },
-  'Rent & Housing': { name: 'home-outline', color: '#0d9488' },
-  'Health & Medical': { name: 'medical-outline', color: '#e11d48' },
-  Insurance: { name: 'shield-checkmark-outline', color: '#fbbf24' },
-  Education: { name: 'book-outline', color: '#a78bfa' },
-  'Gifts & Donations': { name: 'gift-outline', color: '#f472b6' },
-  Other: { name: 'cube-outline', color: '#64748b' },
-};
 
 // Drag at least this far (px) to trigger an automatic delete on release-less full swipe.
 const FULL_SWIPE_THRESHOLD = width * 0.55;
@@ -481,7 +461,7 @@ export default function SpendTracker() {
     return Object.entries(totals)
       .filter(([, v]) => v > 0)
       .map(([name, population]) => {
-        const iconInfo = CATEGORY_ICONS[name as keyof typeof CATEGORY_ICONS] || CATEGORY_ICONS.Other;
+        const iconInfo = getCategoryIcon(name);
         return {
           name,
           population,
@@ -533,7 +513,7 @@ export default function SpendTracker() {
   const percentUsed = Math.min(100, (stats.expenses / Math.max(1, budgetLimit)) * 100);
 
   const renderTxItem = ({ item }: { item: any }) => {
-    const categoryDetails = CATEGORY_ICONS[item.category as keyof typeof CATEGORY_ICONS] || CATEGORY_ICONS.Other;
+    const categoryDetails = getCategoryIcon(item.category);
     return (
       <ReanimatedSwipeable
         friction={1.5}
@@ -819,9 +799,9 @@ export default function SpendTracker() {
           {/* Category */}
           <Text style={[styles.filterLabel, { marginTop: 16 }]}>CATEGORY</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
-            {(['all', ...Object.keys(CATEGORY_ICONS)] as string[]).map((cat) => {
+            {(['all', ...Object.keys(CATEGORY_ICONS).filter((k) => k !== 'Vehicle Spends')] as string[]).map((cat) => {
               const isActive = filterCategory === cat;
-              const iconInfo = cat !== 'all' ? CATEGORY_ICONS[cat as keyof typeof CATEGORY_ICONS] : null;
+              const iconInfo = cat !== 'all' ? getCategoryIcon(cat) : null;
               return (
                 <TouchableOpacity
                   key={cat}

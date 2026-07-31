@@ -1,6 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CATEGORIES } from '../constants/categories';
 
-const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Fruits & Vegetables', 'Electronics', 'Milk & Dairy', 'Rent & Housing', 'Health & Medical', 'Insurance', 'Education', 'Gifts & Donations', 'Other'];
+export { CATEGORIES };
+
+export const DEFAULT_BULK_PROMPT = `You are a personal finance assistant. Classify each of the following transaction descriptions into exactly one of these categories: ${CATEGORIES.join(', ')}. Return ONLY a JSON array of objects with "index" and "category" keys matching the input items.`;
 
 const RULES = {
   'Milk & Dairy': ['milk', 'dairy', 'curd', 'paneer', 'butter', 'cheese', 'yogurt', 'amul', 'milkman', 'ghee', 'lassi', 'buttermilk', 'mother dairy'],
@@ -9,11 +12,12 @@ const RULES = {
   Food: ['zomato', 'swiggy', 'starbucks', 'restaurant', 'cafe', 'food', 'dining', 'mcdonald', 'burger', 'pizza', 'bakery', 'eats', 'dosa', 'tea', 'chai', 'coffee', 'hotel', 'sweet', 'kitchen'],
   Grocery: ['grocery', 'supermarket', 'mart', 'dmart', 'grocer', 'instamart', 'blinkit', 'zepto', 'groceries', 'provision', 'bazaar'],
   Shopping: ['amazon', 'flipkart', 'myntra', 'hm', 'zara', 'mall', 'retail', 'reliance', 'clothing', 'ajio', 'meesho', 'nykaa', 'decathlon', 'shoppe', 'retailer', 'trends'],
+  Vehicle: ['car', 'bike', 'vehicle', 'auto', 'mechanic', 'service', 'garage', 'servicing', 'repair', 'tyre', 'tire', 'parking', 'car wash', 'wash', 'spare parts', 'automobile', 'puc', 'challan', 'traffic fine', 'fastag', 'fuel', 'petrol', 'diesel', 'shell fuel', 'hpcl', 'iocl', 'bpcl', 'motor', 'vehicle spends'],
   EMI: ['loan', 'emi', 'hdfc loan', 'sbi loan', 'mortgage', 'finance', 'credcard', 'cred'],
   Bills: ['electricity', 'water', 'gas', 'recharge', 'jio', 'airtel', 'bill', 'utility', 'broadband', 'wifi', 'bsnl', 'vi ', 'bescom', 'tata play', 'dth', 'postpaid'],
   Investment: ['zerodha', 'groww', 'mutual fund', 'sip', 'stock', 'investment', 'etf', 'crypto', 'coin', 'wazirx', 'binance', 'upstox', 'angelone', 'indmoney', 'kuvera'],
   Entertainment: ['netflix', 'spotify', 'prime video', 'hotstar', 'movie', 'cinema', 'theatre', 'booking', 'game', 'arcade', 'bookmyshow', 'disney', 'playstation', 'xbox', 'steam', 'youtube premium', 'sub', 'membership'],
-  Travel: ['uber', 'ola', 'rapido', 'metro', 'irctc', 'flight', 'airline', 'fuel', 'petrol', 'diesel', 'cabs', 'taxi', 'makemytrip', 'goibibo', 'easemytrip', 'railways', 'shell fuel', 'hpcl', 'iocl', 'bpcl', 'toll', 'tollbooth', 'fastag'],
+  Travel: ['uber', 'ola', 'rapido', 'metro', 'irctc', 'flight', 'airline', 'cabs', 'taxi', 'makemytrip', 'goibibo', 'easemytrip', 'railways', 'hotel', 'trip', 'tour', 'train', 'bus', 'booking.com', 'agoda', 'airbnb'],
   Salary: ['salary', 'salary credited', 'payroll', 'stipend', 'wages', 'dividend', 'interest credited', 'pension'],
   'Credit Card Bill': ['credit card bill', 'cc bill', 'cc payment', 'credit card payment', 'card payment', 'card settlement', 'cc outstanding', 'creditcard bill'],
   'Rent & Housing': ['rent', 'pg rent', 'house rent', 'maintenance charges', 'landlord', 'society maintenance', 'flat rent', 'room rent'],
@@ -42,7 +46,7 @@ export const classifyCategoryAI = async (description, apiKey) => {
   if (!apiKey || !description) return 'Other';
   
   try {
-    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: Salary, Food, Grocery, Shopping, EMI, Bills, Investment, Entertainment, Travel, Credit Card Bill, Fruits & Vegetables, Electronics, Milk & Dairy, Rent & Housing, Health & Medical, Insurance, Education, Gifts & Donations, Other. 
+    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: ${CATEGORIES.join(', ')}. 
 Reply with ONLY the category name. Do not include punctuation, quotes, markdown formatting or explanations.`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;

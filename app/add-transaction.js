@@ -19,8 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { saveTransaction, getTransactions, updateTransaction, getBudgetLimit } from '../utils/transactions';
 import { getLoans, addPayment } from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const CATEGORIES = ['Salary', 'Food', 'Grocery', 'Shopping', 'EMI', 'Bills', 'Investment', 'Entertainment', 'Travel', 'Credit Card Bill', 'Fruits & Vegetables', 'Electronics', 'Milk & Dairy', 'Rent & Housing', 'Health & Medical', 'Insurance', 'Education', 'Gifts & Donations', 'Other'];
+import { CATEGORIES, getCategoryIcon } from '../constants/categories';
 
 export default function AddTransaction() {
   const router = useRouter();
@@ -417,17 +416,30 @@ export default function AddTransaction() {
           {/* Category Selector */}
           <Text style={[styles.label, { marginTop: 20 }]}>CATEGORY</Text>
           <View style={styles.categoryGrid}>
-            {CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                style={[styles.categoryBtn, category === cat && styles.categoryBtnActive]}
-                onPress={() => setCategory(cat)}
-              >
-                <Text style={[styles.categoryText, category === cat && styles.categoryTextActive]}>
-                  {cat}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {CATEGORIES.map((cat) => {
+              const iconInfo = getCategoryIcon(cat);
+              const isSelected = category === cat;
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  style={[
+                    styles.categoryBtn,
+                    isSelected && { backgroundColor: iconInfo.color, borderColor: iconInfo.color },
+                  ]}
+                  onPress={() => setCategory(cat)}
+                >
+                  <Ionicons
+                    name={iconInfo.name}
+                    size={14}
+                    color={isSelected ? '#fff' : iconInfo.color}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[styles.categoryText, isSelected && styles.categoryTextActive]}>
+                    {cat}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           {/* Select Loan/Debt (only when category is EMI) */}
@@ -514,7 +526,7 @@ const styles = StyleSheet.create({
   typeBtnTextActive: { color: '#fff' },
   input: { backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 14, padding: 14, fontSize: 15, color: '#0f172a', borderParent: 1, borderColor: 'rgba(0,0,0,0.05)' },
   categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  categoryBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.6)', borderParent: 1, borderColor: 'rgba(0,0,0,0.05)' },
+  categoryBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
   categoryBtnActive: { backgroundColor: '#0f172a' },
   categoryText: { fontSize: 13, fontWeight: '600', color: '#475569' },
   categoryTextActive: { color: '#fff' },

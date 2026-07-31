@@ -1,10 +1,10 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, ViewStyle } from 'react-native';
+import { Animated, DimensionValue, ViewStyle } from 'react-native';
 
 interface SkeletonProps {
   style?: ViewStyle | ViewStyle[];
-  width?: number | string;
-  height?: number | string;
+  width?: DimensionValue;
+  height?: DimensionValue;
   borderRadius?: number;
 }
 
@@ -47,7 +47,7 @@ export function PulseSkeleton({ style, width, height, borderRadius }: SkeletonPr
           width: width ?? '100%',
           height: height ?? 20,
           borderRadius: borderRadius ?? 8,
-        },
+        } as any,
         style,
       ]}
     />
