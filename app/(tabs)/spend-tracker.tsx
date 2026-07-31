@@ -867,7 +867,14 @@ export default function SpendTracker() {
                     ))}
                   </View>
 
-                  <Text style={styles.chartSubTitle}>{trendChartData.title}</Text>
+                  <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={styles.chartSubTitle}>{trendChartData.title}</Text>
+                    <View style={styles.periodTotalBadge}>
+                      <Text style={styles.periodTotalBadgeText}>
+                        Period Total: {fc(trendChartData.values.reduce((a, b) => a + b, 0))}
+                      </Text>
+                    </View>
+                  </View>
 
                   <BarChart
                     data={{
@@ -1561,5 +1568,17 @@ const styles = StyleSheet.create({
     color: '#64748b',
     textAlign: 'center',
     marginBottom: 4,
+  },
+  periodTotalBadge: {
+    backgroundColor: 'rgba(99,102,241,0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginTop: 2,
+  },
+  periodTotalBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6366f1',
   },
 });
