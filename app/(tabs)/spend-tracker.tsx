@@ -42,7 +42,7 @@ import {
 } from '../../utils/transactions';
 import { syncGmailTransactions } from '../../utils/gmail';
 import { getLoans } from '../../utils/storage';
-import { PieChart } from 'react-native-chart-kit';
+import { PieChart, BarChart } from 'react-native-chart-kit';
 import { CATEGORY_ICONS, getCategoryIcon } from '../../constants/categories';
 
 const { width } = Dimensions.get('window');
@@ -134,6 +134,89 @@ export default function SpendTracker() {
   const [loansCount, setLoansCount] = useState(0);
   const [isClassifying, setIsClassifying] = useState(false);
   const [chartExpanded, setChartExpanded] = useState(true);
+  const [chartMode, setChartMode] = useState<'trend' | 'category'>('trend');
+  const [trendGranularity, setTrendGranularity] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+
+  const trendChartData = useMemo(() => {
+    const debitTxs = transactions.filter((t: any) => {
+      const isCredit = (t.type || '').toLowerCase() === 'credit';
+      return !isCredit && t.category !== 'Credit Card Bill';
+    });
+
+    const now = new Date();
+
+    if (trendGranularity === 'daily') {
+      const labels: string[] = [];
+      const values: number[] = [];
+
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+        const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
+        const dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+        const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+        labels.push(label);
+
+        const total = debitTxs.reduce((sum, t) => {
+          const txDate = t.date ? new Date(t.date) : null;
+          if (txDate && txDate >= dayStart && txDate <= dayEnd) {
+            return sum + (parseFloat(t.amount) || 0);
+          }
+          return sum;
+        }, 0);
+
+        values.push(total);
+      }
+
+      return { labels, values, title: 'Daily Spend (Last 7 Days)' };
+    } else if (trendGranularity === 'weekly') {
+      const labels: string[] = [];
+      const values: number[] = [];
+
+      for (let i = 3; i >= 0; i--) {
+        const wEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i * 7, 23, 59, 59, 999);
+        const wStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (i + 1) * 7 + 1, 0, 0, 0);
+
+        labels.push(`W${4 - i}`);
+
+        const total = debitTxs.reduce((sum, t) => {
+          const txDate = t.date ? new Date(t.date) : null;
+          if (txDate && txDate >= wStart && txDate <= wEnd) {
+            return sum + (parseFloat(t.amount) || 0);
+          }
+          return sum;
+        }, 0);
+
+        values.push(total);
+      }
+
+      return { labels, values, title: 'Weekly Spend (Last 4 Weeks)' };
+    } else {
+      const labels: string[] = [];
+      const values: number[] = [];
+
+      for (let i = 5; i >= 0; i--) {
+        const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const mStart = new Date(mDate.getFullYear(), mDate.getMonth(), 1, 0, 0, 0);
+        const mEnd = new Date(mDate.getFullYear(), mDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+        const label = mDate.toLocaleDateString('en-IN', { month: 'short' });
+        labels.push(label);
+
+        const total = debitTxs.reduce((sum, t) => {
+          const txDate = t.date ? new Date(t.date) : null;
+          if (txDate && txDate >= mStart && txDate <= mEnd) {
+            return sum + (parseFloat(t.amount) || 0);
+          }
+          return sum;
+        }, 0);
+
+        values.push(total);
+      }
+
+      return { labels, values, title: 'Monthly Spend (Last 6 Months)' };
+    }
+  }, [transactions, trendGranularity]);
   // Defaults strictly to the current calendar month: from the 1st of the month to the last day of the month.
   const [startDate, setStartDate] = useState<Date | null>(() => {
     const d = new Date();
@@ -726,52 +809,122 @@ export default function SpendTracker() {
           </BlurView>
         </View>
 
-        {/* Dynamic Category Spend Breakdown Pie Chart */}
-        {spendPieData.length > 0 && (
-          <View style={styles.section}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Spend Breakdown</Text>
-              <TouchableOpacity 
-                style={styles.toggleChartBtn} 
-                onPress={() => setChartExpanded(prev => !prev)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.toggleChartText}>
-                  {chartExpanded ? 'Hide Chart' : 'Show Chart'}
-                </Text>
-                <Ionicons 
-                  name={chartExpanded ? 'chevron-up' : 'chevron-down'} 
-                  size={14} 
-                  color="#6366f1" 
-                  style={{ marginLeft: 4 }}
-                />
-              </TouchableOpacity>
-            </View>
-
-            {chartExpanded && (
-              <BlurView intensity={35} tint="light" style={styles.chartCard}>
-                <PieChart
-                  data={spendPieData}
-                  width={width - 80}
-                  height={150}
-                  chartConfig={{
-                    backgroundGradientFrom: '#ffffff',
-                    backgroundGradientTo: '#ffffff',
-                    backgroundGradientFromOpacity: 0,
-                    backgroundGradientToOpacity: 0,
-                    color: (opacity = 1) => `rgba(99,102,241,${opacity})`,
-                    decimalPlaces: 0,
-                    labelColor: (opacity = 1) => `rgba(15,23,42,${opacity})`,
-                  }}
-                  accessor="population"
-                  backgroundColor="transparent"
-                  paddingLeft="10"
-                  absolute
-                />
-              </BlurView>
-            )}
+        {/* Dynamic Spend Analytics (Trend & Category Charts) */}
+        <View style={styles.section}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Spend Analytics</Text>
+            <TouchableOpacity 
+              style={styles.toggleChartBtn} 
+              onPress={() => setChartExpanded(prev => !prev)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.toggleChartText}>
+                {chartExpanded ? 'Hide Chart' : 'Show Chart'}
+              </Text>
+              <Ionicons 
+                name={chartExpanded ? 'chevron-up' : 'chevron-down'} 
+                size={14} 
+                color="#6366f1" 
+                style={{ marginLeft: 4 }}
+              />
+            </TouchableOpacity>
           </View>
-        )}
+
+          {chartExpanded && (
+            <BlurView intensity={35} tint="light" style={styles.chartCard}>
+              {/* View Switcher: Trend (Bar Chart) vs Category (Pie Chart) */}
+              <View style={styles.chartTabRow}>
+                <TouchableOpacity
+                  style={[styles.chartTabBtn, chartMode === 'trend' && styles.chartTabBtnActive]}
+                  onPress={() => setChartMode('trend')}
+                >
+                  <Ionicons name="bar-chart-outline" size={14} color={chartMode === 'trend' ? '#fff' : '#6366f1'} style={{ marginRight: 4 }} />
+                  <Text style={[styles.chartTabText, chartMode === 'trend' && styles.chartTabTextActive]}>Spend Trend</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.chartTabBtn, chartMode === 'category' && styles.chartTabBtnActive]}
+                  onPress={() => setChartMode('category')}
+                >
+                  <Ionicons name="pie-chart-outline" size={14} color={chartMode === 'category' ? '#fff' : '#6366f1'} style={{ marginRight: 4 }} />
+                  <Text style={[styles.chartTabText, chartMode === 'category' && styles.chartTabTextActive]}>By Category</Text>
+                </TouchableOpacity>
+              </View>
+
+              {chartMode === 'trend' ? (
+                <>
+                  {/* Granularity Switcher: Daily | Weekly | Monthly */}
+                  <View style={styles.granularityRow}>
+                    {(['daily', 'weekly', 'monthly'] as const).map((g) => (
+                      <TouchableOpacity
+                        key={g}
+                        style={[styles.granularityBtn, trendGranularity === g && styles.granularityBtnActive]}
+                        onPress={() => setTrendGranularity(g)}
+                      >
+                        <Text style={[styles.granularityText, trendGranularity === g && styles.granularityTextActive]}>
+                          {g === 'daily' ? 'Days' : g === 'weekly' ? 'Weeks' : 'Months'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.chartSubTitle}>{trendChartData.title}</Text>
+
+                  <BarChart
+                    data={{
+                      labels: trendChartData.labels,
+                      datasets: [{ data: trendChartData.values.length > 0 ? trendChartData.values : [0] }]
+                    }}
+                    width={width - 76}
+                    height={180}
+                    yAxisLabel="₹"
+                    yAxisSuffix=""
+                    chartConfig={{
+                      backgroundColor: '#ffffff',
+                      backgroundGradientFrom: '#ffffff',
+                      backgroundGradientTo: '#ffffff',
+                      backgroundGradientFromOpacity: 0,
+                      backgroundGradientToOpacity: 0,
+                      decimalPlaces: 0,
+                      color: (opacity = 1) => `rgba(99, 102, 241, ${opacity})`,
+                      labelColor: (opacity = 1) => `rgba(100, 116, 139, ${opacity})`,
+                      style: { borderRadius: 16 },
+                      barPercentage: trendGranularity === 'daily' ? 0.55 : 0.65,
+                    }}
+                    style={{
+                      marginVertical: 6,
+                      borderRadius: 16,
+                    }}
+                    showValuesOnTopOfBars={trendChartData.labels.length <= 7}
+                    fromZero
+                  />
+                </>
+              ) : (
+                spendPieData.length > 0 ? (
+                  <PieChart
+                    data={spendPieData}
+                    width={width - 80}
+                    height={160}
+                    chartConfig={{
+                      backgroundGradientFrom: '#ffffff',
+                      backgroundGradientTo: '#ffffff',
+                      backgroundGradientFromOpacity: 0,
+                      backgroundGradientToOpacity: 0,
+                      color: (opacity = 1) => `rgba(99,102,241,${opacity})`,
+                      decimalPlaces: 0,
+                      labelColor: (opacity = 1) => `rgba(15,23,42,${opacity})`,
+                    }}
+                    accessor="population"
+                    backgroundColor="transparent"
+                    paddingLeft="10"
+                    absolute
+                  />
+                ) : (
+                  <Text style={{ color: '#94a3b8', fontStyle: 'italic', paddingVertical: 20 }}>No spend data available for category breakdown.</Text>
+                )
+              )}
+            </BlurView>
+          )}
+        </View>
 
         {/* Filters */}
         <View style={styles.filterCard}>
@@ -1351,5 +1504,62 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0,0,0,0.04)',
     overflow: 'hidden',
     alignItems: 'center',
+  },
+  chartTabRow: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 12,
+    width: '100%',
+  },
+  chartTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  chartTabBtnActive: {
+    backgroundColor: '#6366f1',
+  },
+  chartTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  chartTabTextActive: {
+    color: '#ffffff',
+  },
+  granularityRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  granularityBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: 'rgba(99,102,241,0.08)',
+  },
+  granularityBtnActive: {
+    backgroundColor: '#0f172a',
+  },
+  granularityText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6366f1',
+  },
+  granularityTextActive: {
+    color: '#ffffff',
+  },
+  chartSubTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 4,
   },
 });
