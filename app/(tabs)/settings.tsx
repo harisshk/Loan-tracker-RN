@@ -117,7 +117,12 @@ export default function Settings() {
 
   const loadSettings = async () => {
     const savedKey = await AsyncStorage.getItem('@user_gemini_api_key');
-    if (savedKey) setApiKey(savedKey);
+    const envKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+    if (savedKey) {
+      setApiKey(savedKey);
+    } else if (envKey) {
+      setApiKey(envKey);
+    }
 
     const savedPrompt = await AsyncStorage.getItem('@user_classifier_prompt');
     if (savedPrompt) setClassifierPrompt(savedPrompt);
@@ -147,9 +152,26 @@ export default function Settings() {
     ]);
   };
 
-  const saveApiKey = async (val: any) => {
+  const saveApiKey = async (val: string) => {
     setApiKey(val);
-    await AsyncStorage.setItem('@user_gemini_api_key', val);
+    const trimmed = (val || '').trim();
+    if (trimmed) {
+      await AsyncStorage.setItem('@user_gemini_api_key', trimmed);
+    } else {
+      await AsyncStorage.removeItem('@user_gemini_api_key');
+    }
+  };
+
+  const handleSaveApiKeyExplicit = async () => {
+    const trimmed = (apiKey || '').trim();
+    if (trimmed) {
+      await AsyncStorage.setItem('@user_gemini_api_key', trimmed);
+      setApiKey(trimmed);
+      Alert.alert('Key Saved', 'Gemini API Key saved successfully!');
+    } else {
+      await AsyncStorage.removeItem('@user_gemini_api_key');
+      Alert.alert('Key Cleared', 'Gemini API Key cleared.');
+    }
   };
 
   const handleExportCSV = async () => {
@@ -268,9 +290,14 @@ export default function Settings() {
                autoCapitalize="none"
                autoCorrect={false}
              />
-             <TouchableOpacity onPress={() => setShowKey(!showKey)} style={styles.toggleBtn}>
-               <Text style={styles.toggleText}>{showKey ? 'Hide Key' : 'Show Key'}</Text>
-             </TouchableOpacity>
+             <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+               <TouchableOpacity onPress={() => setShowKey(!showKey)} style={[styles.toggleBtn, { flex: 1, marginTop: 0 }]}>
+                 <Text style={styles.toggleText}>{showKey ? 'Hide Key' : 'Show Key'}</Text>
+               </TouchableOpacity>
+               <TouchableOpacity onPress={handleSaveApiKeyExplicit} style={[styles.savePromptBtn, { paddingVertical: 8, paddingHorizontal: 16 }]}>
+                 <Text style={styles.savePromptText}>Save Key</Text>
+               </TouchableOpacity>
+             </View>
              <Text style={styles.helpText}>Get one for free at aistudio.google.com</Text>
           </BlurView>
 

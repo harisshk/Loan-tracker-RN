@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
+  Clipboard,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -25,10 +26,13 @@ import { getTransactions } from '../../utils/transactions';
 const USAGE_KEY = '@ai_usage_limit';
 
 const MODELS = [
-  { id: 'gemini-3.1-flash-lite-preview', name: '3.1 Flash Lite', desc: 'Default • 500 RPD • 15 RPM', rpm: 15, rpd: 500 },
+  { id: 'gemini-3.5-flash-preview', name: '3.5 Flash', desc: 'Next Gen • Fast & Intelligent • 500 RPD', rpm: 15, rpd: 500 },
+  { id: 'gemini-3.5-pro-preview', name: '3.5 Pro', desc: 'Next Gen • Advanced Reasoning • 50 RPD', rpm: 2, rpd: 50 },
+  { id: 'gemini-3.1-flash-lite-preview', name: '3.1 Flash Lite', desc: 'Preview • 500 RPD • 15 RPM', rpm: 15, rpd: 500 },
   { id: 'gemini-3-flash-preview', name: '3.0 Flash', desc: 'Active • 20 RPD • 5 RPM', rpm: 5, rpd: 20 },
-  { id: 'gemini-2.5-flash-lite-preview', name: '2.5 Flash Lite', desc: 'Active • 20 RPD • 10 RPM', rpm: 10, rpd: 20 },
-  { id: 'gemini-2.5-flash-preview', name: '2.5 Flash', desc: 'Active • 20 RPD • 5 RPM', rpm: 5, rpd: 20 }
+  { id: 'gemini-2.5-flash', name: '2.5 Flash', desc: 'Recommended • 1500 RPD', rpm: 15, rpd: 1500 },
+  { id: 'gemini-2.5-flash-lite', name: '2.5 Flash Lite', desc: 'Ultra Fast • 1500 RPD', rpm: 30, rpd: 1500 },
+  { id: 'gemini-2.5-pro', name: '2.5 Pro', desc: 'Deep Reasoning • 50 RPD', rpm: 2, rpd: 50 },
 ];
 
 const LOAN_SUGGESTIONS = [
@@ -228,18 +232,29 @@ export default function AIAdvisor() {
   const [lastUserQuery, setLastUserQuery] = useState('');
   const [usage, setUsage] = useState({ count: 0, date: '' });
   const [activeKey, setActiveKey] = useState('');
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+
+  const handleCopy = (text: string, idx: number) => {
+    if (!text) return;
+    Clipboard.setString(text);
+    setCopiedIdx(idx);
+    setTimeout(() => setCopiedIdx(null), 2000);
+  };
 
   useFocusEffect(
     useCallback(() => {
       const init = async () => {
         const userKey = await AsyncStorage.getItem('@user_gemini_api_key');
-        if (userKey) {
-          setActiveKey(userKey);
-          setMessages(prev => prev.filter(m => !m.isError));
+        const envKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+        const effectiveKey = ((userKey || envKey) || '').trim();
+
+        if (effectiveKey) {
+          setActiveKey(effectiveKey);
+          setMessages(prev => prev.filter(m => !m.isError || !m.text.includes('Gemini API Key')));
         } else {
           setActiveKey('');
           setMessages(prev => {
-            if (prev.some(m => m.isError)) return prev;
+            if (prev.some(m => m.isError && m.text.includes('Gemini API Key'))) return prev;
             return [...prev, { 
               role: 'assistant', 
               text: "👋 **Welcome!** To start chatting, please head to **Settings** and add your Gemini API Key. \n\nThis keeps your personal AI powered and secure!",
@@ -316,13 +331,17 @@ export default function AIAdvisor() {
     setLoading(true);
 
     try {
-      if (!activeKey) {
+      const storedKey = await AsyncStorage.getItem('@user_gemini_api_key');
+      const envKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+      const keyToUse = ((activeKey || storedKey || envKey) || '').trim();
+
+      if (!keyToUse) {
         Alert.alert('Settings Required', 'Please add your Gemini API Key in the Settings page first.');
         setLoading(false);
         return;
       }
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${activeKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${keyToUse}`;
       const history = newMessages.filter((m, i) => !(i === 0 && m.role === 'assistant')).slice(-8);
 
       const prompt = contextType === 'loans' ? buildLoansPrompt(loans) : buildSpendsPrompt(transactions);
@@ -419,11 +438,35 @@ export default function AIAdvisor() {
 
         <ScrollView ref={scrollRef} style={styles.chatArea} contentContainerStyle={styles.chatContent} keyboardShouldPersistTaps="handled">
           {messages.map((msg: any, idx) => (
-            <View key={idx} style={{ gap: 8 }}>
+            <View key={idx} style={{ gap: 6 }}>
               <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
-                {msg.role === 'assistant' && <Text style={styles.aiLabel}>{msg.isError ? 'ERROR' : 'ADVISOR'}</Text>}
+                <View style={styles.bubbleHeader}>
+                  <Text style={[styles.aiLabel, msg.role === 'user' && styles.userLabel]}>
+                    {msg.role === 'user' ? 'YOU' : (msg.isError ? 'ERROR' : 'ADVISOR')}
+                  </Text>
+                  <TouchableOpacity 
+                    style={[styles.copyBtn, msg.role === 'user' && styles.userCopyBtn]} 
+                    onPress={() => handleCopy(msg.text, idx)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons 
+                      name={copiedIdx === idx ? "checkmark-circle" : "copy-outline"} 
+                      size={13} 
+                      color={copiedIdx === idx ? "#10b981" : (msg.role === 'user' ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.5)")} 
+                    />
+                    <Text style={[
+                      styles.copyBtnText, 
+                      msg.role === 'user' && { color: 'rgba(255,255,255,0.9)' },
+                      copiedIdx === idx && { color: '#10b981' }
+                    ]}>
+                      {copiedIdx === idx ? "Copied" : "Copy"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
                 {msg.role === 'user' ? (
-                  <Text style={{ color: '#fff', fontSize: 16 }}>{msg.text}</Text>
+                  <Text selectable style={{ color: '#fff', fontSize: 16 }}>{msg.text}</Text>
                 ) : (
                   <Markdown style={markdownStyles}>{msg.text || ""}</Markdown>
                 )}
@@ -507,7 +550,12 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '88%', padding: 14, borderRadius: 18 },
   aiBubble: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.08)' },
   userBubble: { alignSelf: 'flex-end', backgroundColor: '#10b981' },
-  aiLabel: { fontSize: 10, fontWeight: 'bold', color: '#10b981', marginBottom: 4 },
+  bubbleHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, gap: 10 },
+  aiLabel: { fontSize: 10, fontWeight: 'bold', color: '#10b981', letterSpacing: 0.5 },
+  userLabel: { color: 'rgba(255,255,255,0.9)' },
+  copyBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8 },
+  userCopyBtn: { backgroundColor: 'rgba(0,0,0,0.15)' },
+  copyBtnText: { fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.6)' },
   retryBtn: { alignSelf: 'flex-start', marginLeft: 10, backgroundColor: 'rgba(225, 29, 72, 0.15)', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(225, 29, 72, 0.3)' },
   retryBtnText: { color: '#fb7185', fontSize: 13, fontWeight: 'bold' },
   suggestGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 20 },
