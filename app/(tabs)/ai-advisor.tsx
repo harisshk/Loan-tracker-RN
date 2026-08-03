@@ -70,32 +70,54 @@ const fetchWithRetry = async (url: string, options: any, retries = 3, backoff = 
 
 const buildLoansPrompt = (loans: any[]) => {
   const today = new Date();
+  
+  if (!loans || loans.length === 0) {
+    return `You are a professional Indian Financial Advisor specializing in Loan Optimization. Help users understand their loans, minimize interest payments, plan prepayments, and reach debt freedom.
+Today: ${today.toDateString()}
+
+USER ACTIVE LOAN PORTFOLIO:
+No active loans currently found in the user's portfolio database.
+
+INSTRUCTIONS:
+- Inform the user that no active loans were found in their portfolio.
+- Guide them to add their loans in the "Loans" tab.
+- Keep your response short and concise.`;
+  }
+
   const activeLoans = loans.filter(l => {
-    if (l.status === 'closed') return false;
-    if (l.startDate && l.tenure) {
-      const start = new Date(l.startDate);
-      const monthsDiff = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
-      if (monthsDiff >= parseInt(l.tenure)) return false;
-    }
+    if (!l) return false;
+    const status = String(l.status || 'active').toLowerCase();
+    if (status === 'closed' || status === 'paid' || status === 'completed') return false;
     return true;
   });
 
-  const context = activeLoans.map(l => 
-    `- ${l.loanName}: ₹${parseFloat(l.principal || 0).toLocaleString('en-IN')} @ ${l.interest}% interest. EMI: ₹${parseFloat(l.emiAmount || 0).toLocaleString('en-IN')}. Tenure: ${l.tenure} months. Started: ${l.startDate}`
-  ).join('\n');
+  const loansToUse = activeLoans.length > 0 ? activeLoans : loans;
+
+  const context = loansToUse.map((l, i) => {
+    const name = l.loanName || l.loanname || l.loan_name || `Loan #${i + 1}`;
+    const principal = parseFloat(l.principal || 0);
+    const interest = parseFloat(l.interest || 0);
+    const emi = parseFloat(l.emiAmount || l.emiamount || l.emi_amount || 0);
+    const tenure = parseInt(l.tenure || 0);
+    const type = l.loanType || l.loantype || l.loan_type || 'emi';
+    const startDate = l.startDate || l.startdate || l.start_date || 'N/A';
+    const status = l.status || 'active';
+
+    return `- ${name}: Principal ₹${principal.toLocaleString('en-IN')}, Interest ${interest}%, Monthly EMI ₹${emi.toLocaleString('en-IN')}, Tenure ${tenure} months, Type: ${type}, Started: ${startDate}, Status: ${status}`;
+  }).join('\n');
 
   return `You are a professional Indian Financial Advisor specializing in Loan Optimization. Help users understand their loans, minimize interest payments, plan prepayments, and reach debt freedom.
 Today: ${today.toDateString()}
 
-USER ACTIVE LOAN PORTFOLIO (Only current debts):
-${context || 'No active loans currently.'}
+USER ACTIVE LOAN PORTFOLIO (${loansToUse.length} active loans):
+${context}
 
 INSTRUCTIONS:
-- ONLY calculate based on the ACTIVE loans listed above.
-- Ignore any mention of past/finished car or property loans if they aren't in the list.
+- ONLY calculate and advise based on the ACTIVE loans listed above.
+- Provide clear, actionable advice on prepayment strategies, interest reduction, and debt payoff priority.
 - Use Markdown for responses (# for headers, **bold** for emphasis, - for lists).
 - Use Indian currency format (₹).
-- Keep your response short and concise. Do not explain much until asked by the user.`;
+- Keep your response clear, concise, and structured.`;
 };
 
 const buildSpendsPrompt = (transactions: any[]) => {
@@ -344,7 +366,12 @@ export default function AIAdvisor() {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${keyToUse}`;
       const history = newMessages.filter((m, i) => !(i === 0 && m.role === 'assistant')).slice(-8);
 
-      const prompt = contextType === 'loans' ? buildLoansPrompt(loans) : buildSpendsPrompt(transactions);
+      const latestLoans = await getLoans().catch(() => loans);
+      const latestTransactions = await getTransactions().catch(() => transactions);
+
+      const prompt = contextType === 'loans' 
+        ? buildLoansPrompt(latestLoans && latestLoans.length > 0 ? latestLoans : loans) 
+        : buildSpendsPrompt(latestTransactions && latestTransactions.length > 0 ? latestTransactions : transactions);
 
       const { res, data } = await fetchWithRetry(url, {
         method: 'POST',
