@@ -140,7 +140,7 @@ export default function SpendTracker() {
   const trendChartData = useMemo(() => {
     const debitTxs = transactions.filter((t: any) => {
       const isCredit = (t.type || '').toLowerCase() === 'credit';
-      return !isCredit && t.category !== 'Credit Card Bill';
+      return !isCredit && t.category !== 'Credit Card Bill' && t.calculate_budget !== false;
     });
 
     const now = new Date();
@@ -304,7 +304,7 @@ export default function SpendTracker() {
         if ((t.type || '').toLowerCase() === 'credit') {
           inc += amt;
         } else {
-          if (t.category !== 'Credit Card Bill') {
+          if (t.category !== 'Credit Card Bill' && t.calculate_budget !== false) {
             exp += amt;
           }
           if (t.category === 'EMI') emi += amt;
@@ -523,7 +523,7 @@ export default function SpendTracker() {
       const amt = parseFloat(t.amount || 0);
       if ((t.type || '').toLowerCase() === 'credit') acc.income += amt;
       else {
-        if (t.category !== 'Credit Card Bill') {
+        if (t.category !== 'Credit Card Bill' && t.calculate_budget !== false) {
           acc.expenses += amt;
         }
       }
@@ -536,7 +536,7 @@ export default function SpendTracker() {
   const spendPieData = useMemo(() => {
     const totals: Record<string, number> = {};
     filteredTransactions.forEach((t: any) => {
-      if ((t.type || '').toLowerCase() === 'credit' || t.category === 'Credit Card Bill') return;
+      if ((t.type || '').toLowerCase() === 'credit' || t.category === 'Credit Card Bill' || t.calculate_budget === false) return;
       const cat = t.category || 'Other';
       totals[cat] = (totals[cat] || 0) + (parseFloat(t.amount) || 0);
     });
@@ -629,6 +629,7 @@ export default function SpendTracker() {
                 })}
                 {item.source === 'shortcut' && ' • Automated'}
                 {item.source === 'emi-auto' && ' • Auto EMI'}
+                {item.calculate_budget === false && ' • Excluded'}
               </Text>
               <Ionicons
                 name={item.synced ? "cloud-done" : "cloud-offline"}

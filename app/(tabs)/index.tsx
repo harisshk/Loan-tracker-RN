@@ -124,6 +124,7 @@ export default function DashboardView() {
         const d = new Date(t.date);
         return (t.type || '').toLowerCase() !== 'credit' &&
           t.category !== 'Credit Card Bill' &&
+          t.calculate_budget !== false &&
           d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       }).reduce((sum: number, t: any) => sum + parseFloat(t.amount || 0), 0);
       setSpentThisMonth(currentMonthDebits);
@@ -248,6 +249,7 @@ export default function DashboardView() {
       const d = new Date(t.date);
       return (t.type || '').toLowerCase() !== 'credit' &&
         t.category !== 'Credit Card Bill' &&
+        t.calculate_budget !== false &&
         d.getMonth() === currentMonth && d.getFullYear() === currentYear;
     }).forEach((t: any) => {
       const cat = t.category || 'Other';

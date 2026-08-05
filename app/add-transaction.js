@@ -10,6 +10,7 @@ import {
   Platform,
   Clipboard,
   KeyboardAvoidingView,
+  Switch,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -34,6 +35,7 @@ export default function AddTransaction() {
   const [mode, setMode] = useState('UPI'); // UPI, Credit Card, or Cash
   const [loans, setLoans] = useState([]);
   const [selectedLoanId, setSelectedLoanId] = useState('');
+  const [calculateBudget, setCalculateBudget] = useState(true);
   // Guard so the form is only pre-filled once. useLocalSearchParams() returns a
   // fresh object every render, so without this the effect re-ran on every
   // keystroke and reset the fields back to their original values.
@@ -83,6 +85,7 @@ export default function AddTransaction() {
           if (existingTx.date) {
             setDate(new Date(existingTx.date));
           }
+          setCalculateBudget(existingTx.calculate_budget !== false);
         } else {
           console.warn('Edit: transaction not found for id', params.id);
         }
@@ -232,6 +235,7 @@ export default function AddTransaction() {
             const d = new Date(t.date);
             return (t.type || '').toLowerCase() !== 'credit' &&
               t.category !== 'Credit Card Bill' &&
+              t.calculate_budget !== false &&
               d.getMonth() === currentMonth && d.getFullYear() === currentYear;
           }).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
           
@@ -272,6 +276,7 @@ export default function AddTransaction() {
         description: description || `${type === 'credit' ? 'Inflow' : 'Outflow'} - ${category}`,
         date: date.toISOString(),
         mode,
+        calculate_budget: calculateBudget,
         loanId: category === 'EMI' ? selectedLoanId : undefined,
         loanName: (category === 'EMI' && selectedLoan) ? selectedLoan.loanName : undefined,
       };
@@ -413,6 +418,23 @@ export default function AddTransaction() {
             numberOfLines={4}
           />
 
+          {/* Calculate for Budget Switch */}
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.toggleLabel}>CALCULATE FOR BUDGET</Text>
+              <Text style={styles.toggleDesc}>
+                Include this transaction in monthly budget limits and statistics.
+              </Text>
+            </View>
+            <Switch
+              trackColor={{ false: '#cbd5e1', true: '#10b981' }}
+              thumbColor={calculateBudget ? '#ffffff' : '#f4f4f5'}
+              ios_backgroundColor="#cbd5e1"
+              onValueChange={setCalculateBudget}
+              value={calculateBudget}
+            />
+          </View>
+
           {/* Category Selector */}
           <Text style={[styles.label, { marginTop: 20 }]}>CATEGORY</Text>
           <View style={styles.categoryGrid}>
@@ -539,4 +561,25 @@ const styles = StyleSheet.create({
   loanOptionSelected: { backgroundColor: '#10b981', borderColor: '#10b981' },
   loanOptionText: { fontSize: 13, fontWeight: '600', color: 'rgba(15,23,42,0.6)' },
   loanOptionTextSelected: { color: '#ffffff' },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 20,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.05)',
+  },
+  toggleLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  toggleDesc: {
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 16,
+  },
 });

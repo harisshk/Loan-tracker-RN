@@ -156,7 +156,7 @@ INSTRUCTIONS:
       if (t.type === 'credit') {
         inflow += amt;
       } else {
-        if (t.category !== 'Credit Card Bill') {
+        if (t.category !== 'Credit Card Bill' && t.calculate_budget !== false) {
           outflow += amt;
           const mode = t.mode || 'UPI';
           if (mode === 'Credit Card') {

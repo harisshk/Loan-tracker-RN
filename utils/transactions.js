@@ -26,6 +26,29 @@ const markUserEmailMissing = async () => {
   }
 };
 
+export let isCalculateBudgetColumnSupported = true;
+
+const initCalculateBudgetSupport = async () => {
+  try {
+    const val = await AsyncStorage.getItem('@supabase_missing_calculate_budget');
+    if (val === 'true') {
+      isCalculateBudgetColumnSupported = false;
+    }
+  } catch (e) {
+    // ignore
+  }
+};
+initCalculateBudgetSupport();
+
+const markCalculateBudgetColumnMissing = async () => {
+  isCalculateBudgetColumnSupported = false;
+  try {
+    await AsyncStorage.setItem('@supabase_missing_calculate_budget', 'true');
+  } catch (e) {
+    // ignore
+  }
+};
+
 const TRANSACTIONS_KEY = '@transactions';
 const BUDGET_LIMIT_KEY = '@budget_limit';
 const SUPABASE_URL_KEY = '@supabase_url';
@@ -127,13 +150,31 @@ export const getTransactions = async (monthStr) => {
       data = await response.json();
     }
 
-    const formatted = data.map((t) => ({
-      ...t,
-      amount: parseFloat(t.amount || 0),
-      type: (t.type || 'debit').toLowerCase(),
-      mode: normalizeMode(t.mode),
-      synced: true,
-    }));
+    let overrides = {};
+    try {
+      const overridesJson = await AsyncStorage.getItem('@local_calculate_budget_overrides');
+      if (overridesJson) {
+        overrides = JSON.parse(overridesJson);
+      }
+    } catch (e) {
+      console.warn('Error reading local budget overrides:', e);
+    }
+
+    const formatted = data.map((t) => {
+      const idStr = String(t.id);
+      const hasOverride = overrides[idStr] !== undefined;
+      const calculate_budget = hasOverride
+        ? overrides[idStr]
+        : (t.calculate_budget !== undefined ? (t.calculate_budget !== false) : true);
+      return {
+        ...t,
+        amount: parseFloat(t.amount || 0),
+        type: (t.type || 'debit').toLowerCase(),
+        mode: normalizeMode(t.mode),
+        calculate_budget,
+        synced: true,
+      };
+    });
 
     return formatted;
   } catch (e) {
@@ -161,6 +202,22 @@ export const saveTransaction = async (transaction) => {
       source: transaction.source || 'manual',
     };
 
+    const isCalcBudgetVal = transaction.calculate_budget !== false;
+
+    // Save to overrides list as well
+    try {
+      const overridesJson = await AsyncStorage.getItem('@local_calculate_budget_overrides');
+      const overrides = overridesJson ? JSON.parse(overridesJson) : {};
+      overrides[String(txData.id)] = isCalcBudgetVal;
+      await AsyncStorage.setItem('@local_calculate_budget_overrides', JSON.stringify(overrides));
+    } catch (e) {
+      console.warn('Error saving local budget override:', e);
+    }
+
+    if (isCalculateBudgetColumnSupported) {
+      txData.calculate_budget = isCalcBudgetVal;
+    }
+
     if (isUserEmailColumnSupported) {
       txData.user_email = userEmail;
     }
@@ -184,6 +241,49 @@ export const saveTransaction = async (transaction) => {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
+      
+      // Fallback 1: if calculate_budget column is missing
+      if (isCalculateBudgetColumnSupported && response.status === 400 && (errText.includes('calculate_budget') || errText.includes('column'))) {
+        await markCalculateBudgetColumnMissing();
+        const { calculate_budget, ...fallbackTx } = txData;
+        let retryResponse = await fetch(`${cleanUrl}/rest/v1/transactions`, {
+          method: 'POST',
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation',
+          },
+          body: JSON.stringify(fallbackTx),
+        });
+        if (!retryResponse.ok) {
+          const retryErrText = await retryResponse.text().catch(() => '');
+          if (isUserEmailColumnSupported && retryResponse.status === 400 && (retryErrText.includes('user_email') || retryErrText.includes('column'))) {
+            await markUserEmailMissing();
+            const { user_email, ...fallbackTx2 } = fallbackTx;
+            let retryResponse2 = await fetch(`${cleanUrl}/rest/v1/transactions`, {
+              method: 'POST',
+              headers: {
+                'apikey': key,
+                'Authorization': `Bearer ${key}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation',
+              },
+              body: JSON.stringify(fallbackTx2),
+            });
+            if (!retryResponse2.ok) {
+              throw new Error(`Failed to save transaction to Supabase (retry 2): ${retryResponse2.status}`);
+            }
+            const data = await retryResponse2.json();
+            return { ...data[0], synced: true, calculate_budget: isCalcBudgetVal };
+          }
+          throw new Error(`Failed to save transaction to Supabase (retry): ${retryResponse.status} - ${retryErrText}`);
+        }
+        const data = await retryResponse.json();
+        return { ...data[0], synced: true, calculate_budget: isCalcBudgetVal };
+      }
+      
+      // Fallback 2: if user_email column is missing
       if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
         await markUserEmailMissing();
         const { user_email, ...fallbackTx } = txData;
@@ -201,14 +301,14 @@ export const saveTransaction = async (transaction) => {
           throw new Error(`Failed to save transaction to Supabase (retry): ${retryResponse.status}`);
         }
         const data = await retryResponse.json();
-        return { ...data[0], synced: true };
-      } else {
-        throw new Error(`Failed to save transaction to Supabase: ${response.status} - ${errText}`);
+        return { ...data[0], synced: true, calculate_budget: isCalcBudgetVal };
       }
+      
+      throw new Error(`Failed to save transaction to Supabase: ${response.status} - ${errText}`);
     }
 
     const data = await response.json();
-    return { ...data[0], synced: true };
+    return { ...data[0], synced: true, calculate_budget: isCalcBudgetVal };
   } catch (e) {
     console.error('Error saving transaction:', e);
     throw e;
@@ -304,6 +404,19 @@ export const syncEmiTransactions = async () => {
 
 export const deleteTransaction = async (id) => {
   try {
+    try {
+      const overridesJson = await AsyncStorage.getItem('@local_calculate_budget_overrides');
+      if (overridesJson) {
+        const overrides = JSON.parse(overridesJson);
+        if (overrides[String(id)] !== undefined) {
+          delete overrides[String(id)];
+          await AsyncStorage.setItem('@local_calculate_budget_overrides', JSON.stringify(overrides));
+        }
+      }
+    } catch (e) {
+      console.warn('Error deleting local budget override:', e);
+    }
+
     const { url, key } = await getSupabaseConfig();
     if (!url || !key) {
       throw new Error('Supabase credentials not configured');
@@ -401,7 +514,19 @@ export const updateTransaction = async (updatedTx) => {
     // but nothing changed.
     const patchUrl = `${cleanUrl}/rest/v1/transactions?id=eq.${encodeURIComponent(updatedTx.id)}`;
 
-    const buildPayload = (withEmail) => {
+    const isCalcBudgetVal = updatedTx.calculate_budget !== false;
+
+    // Save to overrides list as well
+    try {
+      const overridesJson = await AsyncStorage.getItem('@local_calculate_budget_overrides');
+      const overrides = overridesJson ? JSON.parse(overridesJson) : {};
+      overrides[String(updatedTx.id)] = isCalcBudgetVal;
+      await AsyncStorage.setItem('@local_calculate_budget_overrides', JSON.stringify(overrides));
+    } catch (e) {
+      console.warn('Error saving local budget override:', e);
+    }
+
+    const buildPayload = (withEmail, withCalcBudget) => {
       const p = {
         amount: parseFloat(updatedTx.amount || 0),
         type: (updatedTx.type || 'debit').toLowerCase(),
@@ -412,10 +537,11 @@ export const updateTransaction = async (updatedTx) => {
       };
       // Stamp ownership so the row shows up for this account going forward.
       if (withEmail) p.user_email = userEmail;
+      if (withCalcBudget) p.calculate_budget = isCalcBudgetVal;
       return p;
     };
 
-    const sendPatch = async (withEmail) => {
+    const sendPatch = async (withEmail, withCalcBudget) => {
       const res = await fetch(patchUrl, {
         method: 'PATCH',
         headers: {
@@ -424,20 +550,48 @@ export const updateTransaction = async (updatedTx) => {
           'Content-Type': 'application/json',
           'Prefer': 'return=representation',
         },
-        body: JSON.stringify(buildPayload(withEmail)),
+        body: JSON.stringify(buildPayload(withEmail, withCalcBudget)),
       });
       return res;
     };
 
-    let response = await sendPatch(isUserEmailColumnSupported);
+    let response = await sendPatch(isUserEmailColumnSupported, isCalculateBudgetColumnSupported);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
-        await markUserEmailMissing();
-        response = await sendPatch(false);
+      
+      // Fallback 1: calculate_budget missing
+      if (isCalculateBudgetColumnSupported && response.status === 400 && (errText.includes('calculate_budget') || errText.includes('column'))) {
+        await markCalculateBudgetColumnMissing();
+        response = await sendPatch(isUserEmailColumnSupported, false);
         if (!response.ok) {
-          throw new Error(`Failed to update transaction on Supabase (retry): ${response.status}`);
+          const retryErrText = await response.text().catch(() => '');
+          if (isUserEmailColumnSupported && response.status === 400 && (retryErrText.includes('user_email') || retryErrText.includes('column'))) {
+            await markUserEmailMissing();
+            response = await sendPatch(false, false);
+            if (!response.ok) {
+              throw new Error(`Failed to update transaction on Supabase (retry 2): ${response.status}`);
+            }
+          } else {
+            throw new Error(`Failed to update transaction on Supabase (retry): ${response.status} - ${retryErrText}`);
+          }
+        }
+      }
+      // Fallback 2: user_email missing
+      else if (isUserEmailColumnSupported && response.status === 400 && (errText.includes('user_email') || errText.includes('column'))) {
+        await markUserEmailMissing();
+        response = await sendPatch(false, isCalculateBudgetColumnSupported);
+        if (!response.ok) {
+          const retryErrText = await response.text().catch(() => '');
+          if (isCalculateBudgetColumnSupported && response.status === 400 && (retryErrText.includes('calculate_budget') || retryErrText.includes('column'))) {
+            await markCalculateBudgetColumnMissing();
+            response = await sendPatch(false, false);
+            if (!response.ok) {
+              throw new Error(`Failed to update transaction on Supabase (retry 2): ${response.status}`);
+            }
+          } else {
+            throw new Error(`Failed to update transaction on Supabase (retry): ${response.status} - ${retryErrText}`);
+          }
         }
       } else {
         throw new Error(`Failed to update transaction on Supabase: ${response.status} - ${errText}`);
@@ -449,7 +603,7 @@ export const updateTransaction = async (updatedTx) => {
       // 200 OK but no row changed — the id didn't match anything.
       throw new Error('No matching transaction was found to update.');
     }
-    return { ...data[0], synced: true };
+    return { ...data[0], synced: true, calculate_budget: isCalcBudgetVal };
   } catch (e) {
     console.error('Error updating transaction:', e);
     throw e;
