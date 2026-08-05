@@ -25,6 +25,8 @@ import { CATEGORIES, getCategoryIcon } from '../constants/categories';
 export default function AddTransaction() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  // Normalize timezone space characters back to plus signs in the transaction ID.
+  // URL routers decode '+' timezone characters into spaces (e.g., +05:30 becomes ' 05:30').
   const transactionId = params.id ? String(params.id).replace(/ /g, '+') : '';
 
   const [amount, setAmount] = useState('');
