@@ -25,6 +25,7 @@ import { CATEGORIES, getCategoryIcon } from '../constants/categories';
 export default function AddTransaction() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const transactionId = params.id ? String(params.id).replace(/ /g, '+') : '';
 
   const [amount, setAmount] = useState('');
   const [type, setType] = useState('debit'); // debit or credit
@@ -60,9 +61,9 @@ export default function AddTransaction() {
       // Only ever pre-fill the form once (see initializedRef note above).
       if (initializedRef.current) return;
 
-      if (params.id) {
+      if (transactionId) {
         const txs = await getTransactions();
-        const existingTx = txs.find(t => String(t.id) === String(params.id));
+        const existingTx = txs.find(t => String(t.id) === transactionId);
         if (existingTx) {
           initializedRef.current = true;
           setAmount(String(existingTx.amount ?? ''));
@@ -87,7 +88,7 @@ export default function AddTransaction() {
           }
           setCalculateBudget(existingTx.calculate_budget !== false);
         } else {
-          console.warn('Edit: transaction not found for id', params.id);
+          console.warn('Edit: transaction not found for id', transactionId);
         }
         // Edit mode: never fall through to deep-link prefill.
         return;
@@ -119,10 +120,10 @@ export default function AddTransaction() {
 
   // Clipboard Scanner (only if not editing)
   useEffect(() => {
-    if (!params.id) {
+    if (!transactionId) {
       checkClipboard();
     }
-  }, [params.id]);
+  }, [transactionId]);
 
   const checkClipboard = async () => {
     try {
@@ -222,7 +223,7 @@ export default function AddTransaction() {
     }
 
     try {
-      if (type === 'debit' && !params.id) {
+      if (type === 'debit' && !transactionId) {
         try {
           const txs = await getTransactions();
           const budgetLimit = await getBudgetLimit();
@@ -281,9 +282,9 @@ export default function AddTransaction() {
         loanName: (category === 'EMI' && selectedLoan) ? selectedLoan.loanName : undefined,
       };
 
-      if (params.id) {
+      if (transactionId) {
         await updateTransaction({
-          id: params.id,
+          id: transactionId,
           ...txData,
         });
       } else {
