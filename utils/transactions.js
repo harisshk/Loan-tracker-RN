@@ -150,6 +150,8 @@ export const getTransactions = async (monthStr) => {
       data = await response.json();
     }
 
+    // Merge local budget calculation overrides to ensure user choices persist
+    // even if the Supabase backend does not yet support the calculate_budget column.
     let overrides = {};
     try {
       const overridesJson = await AsyncStorage.getItem('@local_calculate_budget_overrides');
