@@ -304,7 +304,7 @@ export default function SpendTracker() {
         if ((t.type || '').toLowerCase() === 'credit') {
           inc += amt;
         } else {
-          if (t.category !== 'Credit Card Bill' && t.calculate_budget !== false) {
+          if (t.category !== 'Credit Card Bill') {
             exp += amt;
           }
           if (t.category === 'EMI') emi += amt;
@@ -515,6 +515,8 @@ export default function SpendTracker() {
 
   // Summary card totals reflect the selected date range (not the calendar month),
   // so the numbers up top match the period being viewed.
+  // Summary card totals reflect the selected date range (not the calendar month),
+  // so the numbers up top match the period being viewed. Includes ALL debit spends in Outflow.
   const rangeStats = transactions.reduce(
     (acc: { income: number; expenses: number }, t: any) => {
       const dateObj = t.date ? new Date(t.date) : null;
@@ -523,7 +525,7 @@ export default function SpendTracker() {
       const amt = parseFloat(t.amount || 0);
       if ((t.type || '').toLowerCase() === 'credit') acc.income += amt;
       else {
-        if (t.category !== 'Credit Card Bill' && t.calculate_budget !== false) {
+        if (t.category !== 'Credit Card Bill') {
           acc.expenses += amt;
         }
       }
@@ -532,6 +534,29 @@ export default function SpendTracker() {
     { income: 0, expenses: 0 }
   );
   const rangeBalance = rangeStats.income - rangeStats.expenses;
+
+  // Monthly Budget Spends ONLY (excludes calculate_budget: false)
+  const budgetSpentThisMonth = useMemo(() => {
+    let bSpent = 0;
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    transactions.forEach((t: any) => {
+      const d = new Date(t.date);
+      if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+        const amt = parseFloat(t.amount || 0);
+        if (
+          (t.type || '').toLowerCase() !== 'credit' &&
+          t.category !== 'Credit Card Bill' &&
+          t.calculate_budget !== false
+        ) {
+          bSpent += amt;
+        }
+      }
+    });
+    return bSpent;
+  }, [transactions]);
 
   const spendPieData = useMemo(() => {
     const totals: Record<string, number> = {};
@@ -593,7 +618,7 @@ export default function SpendTracker() {
     })}`;
   };
 
-  const percentUsed = Math.min(100, (stats.expenses / Math.max(1, budgetLimit)) * 100);
+  const percentUsed = Math.min(100, (budgetSpentThisMonth / Math.max(1, budgetLimit)) * 100);
 
   const renderTxItem = ({ item }: { item: any }) => {
     const categoryDetails = getCategoryIcon(item.category);
@@ -780,8 +805,8 @@ export default function SpendTracker() {
 
             <View style={styles.budgetFooter}>
               <Text style={styles.footerText}>
-                Remaining Budget: <Text style={{ fontWeight: 'bold', color: budgetLimit - stats.expenses >= 0 ? '#10b981' : '#e11d48' }}>
-                  {fc(budgetLimit - stats.expenses)}
+                Remaining Budget: <Text style={{ fontWeight: 'bold', color: budgetLimit - budgetSpentThisMonth >= 0 ? '#10b981' : '#e11d48' }}>
+                  {fc(budgetLimit - budgetSpentThisMonth)}
                 </Text>
               </Text>
             </View>

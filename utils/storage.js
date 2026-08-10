@@ -974,3 +974,74 @@ export const importAllData = async (jsonString) => {
   }
 };
 
+const PLAN_SETTINGS_KEY = '@financial_plan_settings';
+
+export const saveFinancialPlanSettings = async (settings) => {
+  try {
+    const jsonStr = JSON.stringify(settings);
+    await AsyncStorage.setItem(PLAN_SETTINGS_KEY, jsonStr);
+
+    const { url, key } = await getSupabaseConfig();
+    if (url && key) {
+      const cleanUrl = getCleanUrl(url);
+      const userEmail = (await AsyncStorage.getItem('@gmail_user_email')) || 'anonymous';
+      const postHeaders = {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates',
+      };
+
+      const payload = {
+        user_email: userEmail,
+        plan_settings: settings,
+        updated_at: new Date().toISOString(),
+      };
+
+      await fetch(`${cleanUrl}/rest/v1/user_settings`, {
+        method: 'POST',
+        headers: postHeaders,
+        body: JSON.stringify([payload]),
+      }).catch((err) => console.warn('Supabase plan_settings sync skipped/failed:', err));
+    }
+  } catch (e) {
+    console.error('Error saving financial plan settings:', e);
+  }
+};
+
+export const getFinancialPlanSettings = async () => {
+  try {
+    const local = await AsyncStorage.getItem(PLAN_SETTINGS_KEY);
+    let settings = local ? JSON.parse(local) : null;
+
+    const { url, key } = await getSupabaseConfig();
+    if (url && key) {
+      const cleanUrl = getCleanUrl(url);
+      const userEmail = (await AsyncStorage.getItem('@gmail_user_email')) || 'anonymous';
+      const res = await fetch(
+        `${cleanUrl}/rest/v1/user_settings?select=*&user_email=eq.${encodeURIComponent(userEmail)}`,
+        {
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+          },
+        }
+      ).catch(() => null);
+
+      if (res && res.ok) {
+        const rows = await res.json().catch(() => []);
+        if (rows && rows.length > 0 && rows[0].plan_settings) {
+          settings = rows[0].plan_settings;
+          await AsyncStorage.setItem(PLAN_SETTINGS_KEY, JSON.stringify(settings));
+        }
+      }
+    }
+    return settings;
+  } catch (e) {
+    console.error('Error getting financial plan settings:', e);
+    const local = await AsyncStorage.getItem(PLAN_SETTINGS_KEY);
+    return local ? JSON.parse(local) : null;
+  }
+};
+
+

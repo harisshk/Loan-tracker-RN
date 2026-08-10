@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getLoans, getPayments } from '../../utils/storage';
 import { calculateEMIBreakdown } from '../../utils/emiCalculator';
+import PrincipalTrajectoryChart from '../../components/PrincipalTrajectoryChart';
 
 
 const fc = (amount) =>
@@ -213,6 +214,11 @@ export default function EMIPage() {
               <Ionicons name="add" size={26} color="#fff" />
             </LinearGradient>
           </TouchableOpacity>
+        </View>
+
+        {/* ── Principal Pending & 6-Month Trajectory Chart ───── */}
+        <View style={{ paddingHorizontal: 20 }}>
+          <PrincipalTrajectoryChart loans={loans} payments={payments} />
         </View>
 
         {/* ── This Month Section ────────────────────────────── */}

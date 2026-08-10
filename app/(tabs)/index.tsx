@@ -18,6 +18,8 @@ import { getTransactions, getBudgetLimit } from '../../utils/transactions';
 import { getCategoryIcon } from '../../constants/categories';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PulseSkeleton } from '../../components/ui/skeleton';
+import PrincipalTrajectoryChart from '../../components/PrincipalTrajectoryChart';
+import PrincipalRoadmapChart from '../../components/PrincipalRoadmapChart';
 
 const { width } = Dimensions.get('window');
 
@@ -574,6 +576,25 @@ export default function DashboardView() {
               <View style={[styles.progressFill, { width: `${Math.min(100, (spentThisMonth / Math.max(1, budgetLimit)) * 100)}%`, backgroundColor: spentThisMonth > budgetLimit ? '#e11d48' : '#ec4899' }]} />
             </View>
           </BlurView>
+        </View>
+
+        {/* Principal Pending & 6-Month Trajectory Section */}
+        <View style={{ marginBottom: 16 }}>
+          <PrincipalTrajectoryChart
+            loans={loans}
+            payments={payments}
+            compact={true}
+            onPressViewAll={() => router.push('/analytics')}
+          />
+        </View>
+
+        {/* Principal-Only Payoff Roadmap & EMI Cascade Section */}
+        <View style={{ marginBottom: 24 }}>
+          <PrincipalRoadmapChart
+            loans={loans}
+            payments={payments}
+            extraMonthlyBudget={25000}
+          />
         </View>
 
         {/* Quick Actions Grid */}

@@ -174,13 +174,15 @@ export function generateFinancialPlan({
       });
     }
 
-    const comfort = (iIncome - compulsoryCosts) / iIncome;
+    const comfort = iIncome > 0 ? (iIncome - compulsoryCosts) / iIncome : -1;
     const status = comfort >= 0.2 ? 'comfortable' : comfort >= 0 ? 'tight' : 'critical';
 
     plan.push({
       month: monthNum,
       monthLabel,
       income: iIncome,
+      salaryMonthly: effectiveSalary,
+      rentMonthly: effectiveRent,
       emiTotal,
       insuranceMonthly,
       expenses: livingExpensesMonthly,

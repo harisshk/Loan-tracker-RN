@@ -1,67 +1,105 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   Alert,
-  Keyboard,
   Clipboard,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useFocusEffect } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import Markdown from 'react-native-markdown-display';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getLoans } from '../../utils/storage';
-import { getTransactions } from '../../utils/transactions';
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import Markdown from "react-native-markdown-display";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getLoans } from "../../utils/storage";
+import { getTransactions } from "../../utils/transactions";
 
-const USAGE_KEY = '@ai_usage_limit';
+const USAGE_KEY = "@ai_usage_limit";
 
 const MODELS = [
-  { id: 'gemini-3.5-flash-preview', name: '3.5 Flash', desc: 'Next Gen • Fast & Intelligent • 500 RPD', rpm: 15, rpd: 500 },
-  { id: 'gemini-3.5-pro-preview', name: '3.5 Pro', desc: 'Next Gen • Advanced Reasoning • 50 RPD', rpm: 2, rpd: 50 },
-  { id: 'gemini-3.1-flash-lite-preview', name: '3.1 Flash Lite', desc: 'Preview • 500 RPD • 15 RPM', rpm: 15, rpd: 500 },
-  { id: 'gemini-3-flash-preview', name: '3.0 Flash', desc: 'Active • 20 RPD • 5 RPM', rpm: 5, rpd: 20 },
-  { id: 'gemini-2.5-flash', name: '2.5 Flash', desc: 'Recommended • 1500 RPD', rpm: 15, rpd: 1500 },
-  { id: 'gemini-2.5-flash-lite', name: '2.5 Flash Lite', desc: 'Ultra Fast • 1500 RPD', rpm: 30, rpd: 1500 },
-  { id: 'gemini-2.5-pro', name: '2.5 Pro', desc: 'Deep Reasoning • 50 RPD', rpm: 2, rpd: 50 },
+  {
+    id: "gemini-3.1-flash-lite-preview",
+    name: "3.1 Flash Lite",
+    desc: "Preview • 500 RPD • 15 RPM",
+    rpm: 15,
+    rpd: 500,
+  },
+  {
+    id: "gemini-3-flash-preview",
+    name: "3.0 Flash",
+    desc: "Active • 20 RPD • 5 RPM",
+    rpm: 5,
+    rpd: 20,
+  },
+  {
+    id: "gemini-2.5-flash",
+    name: "2.5 Flash",
+    desc: "Recommended • 1500 RPD",
+    rpm: 15,
+    rpd: 1500,
+  },
+  {
+    id: "gemini-2.5-flash-lite",
+    name: "2.5 Flash Lite",
+    desc: "Ultra Fast • 1500 RPD",
+    rpm: 30,
+    rpd: 1500,
+  },
+  {
+    id: "gemini-2.5-pro",
+    name: "2.5 Pro",
+    desc: "Deep Reasoning • 50 RPD",
+    rpm: 2,
+    rpd: 50,
+  },
 ];
 
 const LOAN_SUGGESTIONS = [
-  '💰 Which loan costs me the most interest?',
-  '📊 Should I prepay any loan?',
-  '🗓️ When will I be debt-free?',
-  '📈 How to reduce my EMI burden?',
+  "💰 Which loan costs me the most interest?",
+  "📊 Should I prepay any loan?",
+  "🗓️ When will I be debt-free?",
+  "📈 How to reduce my EMI burden?",
 ];
 
 const SPEND_SUGGESTIONS = [
-  '📊 How much did I spend this month?',
-  '💸 What is my 3-month spending breakdown?',
-  '🛍️ What is my highest spending category?',
-  '💳 Give me a budget and spending health checkup',
+  "📊 How much did I spend this month?",
+  "💸 What is my 3-month spending breakdown?",
+  "🛍️ What is my highest spending category?",
+  "💳 Give me a budget and spending health checkup",
 ];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-const fetchWithRetry = async (url: string, options: any, retries = 3, backoff = 1000): Promise<{ res: Response, data: any }> => {
+const fetchWithRetry = async (
+  url: string,
+  options: any,
+  retries = 3,
+  backoff = 1000,
+): Promise<{ res: Response; data: any }> => {
   try {
     const res = await fetch(url, options);
     const data = await res.json();
-    if ((res.status === 429 || res.status === 503 || data?.error?.message?.includes('high demand')) && retries > 0) {
-      await new Promise(r => setTimeout(r, backoff));
+    if (
+      (res.status === 429 ||
+        res.status === 503 ||
+        data?.error?.message?.includes("high demand")) &&
+      retries > 0
+    ) {
+      await new Promise((r) => setTimeout(r, backoff));
       return fetchWithRetry(url, options, retries - 1, backoff * 2);
     }
     return { res, data };
   } catch (err) {
     if (retries > 0) {
-      await new Promise(r => setTimeout(r, backoff));
+      await new Promise((r) => setTimeout(r, backoff));
       return fetchWithRetry(url, options, retries - 1, backoff * 2);
     }
     throw err;
@@ -70,7 +108,7 @@ const fetchWithRetry = async (url: string, options: any, retries = 3, backoff = 
 
 const buildLoansPrompt = (loans: any[]) => {
   const today = new Date();
-  
+
   if (!loans || loans.length === 0) {
     return `You are a professional Indian Financial Advisor specializing in Loan Optimization. Help users understand their loans, minimize interest payments, plan prepayments, and reach debt freedom.
 Today: ${today.toDateString()}
@@ -84,27 +122,30 @@ INSTRUCTIONS:
 - Keep your response short and concise.`;
   }
 
-  const activeLoans = loans.filter(l => {
+  const activeLoans = loans.filter((l) => {
     if (!l) return false;
-    const status = String(l.status || 'active').toLowerCase();
-    if (status === 'closed' || status === 'paid' || status === 'completed') return false;
+    const status = String(l.status || "active").toLowerCase();
+    if (status === "closed" || status === "paid" || status === "completed")
+      return false;
     return true;
   });
 
   const loansToUse = activeLoans.length > 0 ? activeLoans : loans;
 
-  const context = loansToUse.map((l, i) => {
-    const name = l.loanName || l.loanname || l.loan_name || `Loan #${i + 1}`;
-    const principal = parseFloat(l.principal || 0);
-    const interest = parseFloat(l.interest || 0);
-    const emi = parseFloat(l.emiAmount || l.emiamount || l.emi_amount || 0);
-    const tenure = parseInt(l.tenure || 0);
-    const type = l.loanType || l.loantype || l.loan_type || 'emi';
-    const startDate = l.startDate || l.startdate || l.start_date || 'N/A';
-    const status = l.status || 'active';
+  const context = loansToUse
+    .map((l, i) => {
+      const name = l.loanName || l.loanname || l.loan_name || `Loan #${i + 1}`;
+      const principal = parseFloat(l.principal || 0);
+      const interest = parseFloat(l.interest || 0);
+      const emi = parseFloat(l.emiAmount || l.emiamount || l.emi_amount || 0);
+      const tenure = parseInt(l.tenure || 0);
+      const type = l.loanType || l.loantype || l.loan_type || "emi";
+      const startDate = l.startDate || l.startdate || l.start_date || "N/A";
+      const status = l.status || "active";
 
-    return `- ${name}: Principal ₹${principal.toLocaleString('en-IN')}, Interest ${interest}%, Monthly EMI ₹${emi.toLocaleString('en-IN')}, Tenure ${tenure} months, Type: ${type}, Started: ${startDate}, Status: ${status}`;
-  }).join('\n');
+      return `- ${name}: Principal ₹${principal.toLocaleString("en-IN")}, Interest ${interest}%, Monthly EMI ₹${emi.toLocaleString("en-IN")}, Tenure ${tenure} months, Type: ${type}, Started: ${startDate}, Status: ${status}`;
+    })
+    .join("\n");
 
   return `You are a professional Indian Financial Advisor specializing in Loan Optimization. Help users understand their loans, minimize interest payments, plan prepayments, and reach debt freedom.
 Today: ${today.toDateString()}
@@ -135,12 +176,24 @@ INSTRUCTIONS:
   }
 
   const getStatsForRange = (monthsAgoStart: number, monthsAgoEnd?: number) => {
-    const startDate = new Date(today.getFullYear(), today.getMonth() - monthsAgoStart, 1);
-    const endDate = monthsAgoEnd !== undefined 
-      ? new Date(today.getFullYear(), today.getMonth() - monthsAgoEnd, 0, 23, 59, 59) 
-      : new Date();
+    const startDate = new Date(
+      today.getFullYear(),
+      today.getMonth() - monthsAgoStart,
+      1,
+    );
+    const endDate =
+      monthsAgoEnd !== undefined
+        ? new Date(
+            today.getFullYear(),
+            today.getMonth() - monthsAgoEnd,
+            0,
+            23,
+            59,
+            59,
+          )
+        : new Date();
 
-    const filtered = transactions.filter(t => {
+    const filtered = transactions.filter((t) => {
       const d = new Date(t.date);
       return d >= startDate && d <= endDate;
     });
@@ -151,15 +204,15 @@ INSTRUCTIONS:
     let cardOutflow = 0;
     const categories: { [key: string]: number } = {};
 
-    filtered.forEach(t => {
+    filtered.forEach((t) => {
       const amt = parseFloat(t.amount || 0);
-      if (t.type === 'credit') {
+      if (t.type === "credit") {
         inflow += amt;
       } else {
-        if (t.category !== 'Credit Card Bill' && t.calculate_budget !== false) {
+        if (t.category !== "Credit Card Bill" && t.calculate_budget !== false) {
           outflow += amt;
-          const mode = t.mode || 'UPI';
-          if (mode === 'Credit Card') {
+          const mode = t.mode || "UPI";
+          if (mode === "Credit Card") {
             cardOutflow += amt;
           } else {
             upiOutflow += amt;
@@ -179,39 +232,42 @@ INSTRUCTIONS:
 
   const formatStats = (title: string, stats: any) => {
     const catBreakdown = Object.entries(stats.categories)
-      .map(([cat, amt]: any) => `  - ${cat}: ₹${amt.toLocaleString('en-IN')}`)
-      .join('\n');
+      .map(([cat, amt]: any) => `  - ${cat}: ₹${amt.toLocaleString("en-IN")}`)
+      .join("\n");
     return `### ${title}:
-- Total Inflow (Credit): ₹${stats.inflow.toLocaleString('en-IN')}
-- Total Outflow (Debit): ₹${stats.outflow.toLocaleString('en-IN')}
+- Total Inflow (Credit): ₹${stats.inflow.toLocaleString("en-IN")}
+- Total Outflow (Debit): ₹${stats.outflow.toLocaleString("en-IN")}
 - Outflow by Payment Method:
-  - UPI Spends: ₹${stats.upiOutflow.toLocaleString('en-IN')}
-  - Credit Card Spends: ₹${stats.cardOutflow.toLocaleString('en-IN')}
+  - UPI Spends: ₹${stats.upiOutflow.toLocaleString("en-IN")}
+  - Credit Card Spends: ₹${stats.cardOutflow.toLocaleString("en-IN")}
 - Category Breakdown:
-${catBreakdown || '  - No debit categories recorded.'}`;
+${catBreakdown || "  - No debit categories recorded."}`;
   };
 
   const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, 1);
   const recentTxs = transactions
-    .filter(t => new Date(t.date) >= sixMonthsAgo)
+    .filter((t) => new Date(t.date) >= sixMonthsAgo)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0, 100);
 
-  const txList = recentTxs.map(t => 
-    `- ${new Date(t.date).toISOString().split('T')[0]}: ${t.type.toUpperCase()} of ₹${parseFloat(t.amount).toLocaleString('en-IN')} in "${t.category}" (${t.description || 'No description'}) [Mode: ${t.mode || 'UPI'}]`
-  ).join('\n');
+  const txList = recentTxs
+    .map(
+      (t) =>
+        `- ${new Date(t.date).toISOString().split("T")[0]}: ${t.type.toUpperCase()} of ₹${parseFloat(t.amount).toLocaleString("en-IN")} in "${t.category}" (${t.description || "No description"}) [Mode: ${t.mode || "UPI"}]`,
+    )
+    .join("\n");
 
   return `You are a professional Expense Analyst & Budget Advisor specializing in Personal Expense Analysis. Help users track budgets, recognize outflow trends (including splitting by Credit Card vs UPI spends), cut unnecessary spending, and manage their cash flow.
 Today: ${today.toDateString()}
 
 USER SPENDING & INCOME SUMMARY:
-${formatStats('This Month (Current)', thisMonthStats)}
+${formatStats("This Month (Current)", thisMonthStats)}
 
-${formatStats('Last Month', lastMonthStats)}
+${formatStats("Last Month", lastMonthStats)}
 
-${formatStats('Last 3 Months (Cumulative)', last3MonthsStats)}
+${formatStats("Last 3 Months (Cumulative)", last3MonthsStats)}
 
-${formatStats('Last 6 Months (Cumulative)', last6MonthsStats)}
+${formatStats("Last 6 Months (Cumulative)", last6MonthsStats)}
 
 RECENT TRANSACTION LEDGER (Last 6 Months, up to 100 items):
 ${txList}
@@ -229,11 +285,17 @@ export default function AIAdvisor() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
-    const showSubscription = Keyboard.addListener(showEvent, () => setKeyboardVisible(true));
-    const hideSubscription = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    const showSubscription = Keyboard.addListener(showEvent, () =>
+      setKeyboardVisible(true),
+    );
+    const hideSubscription = Keyboard.addListener(hideEvent, () =>
+      setKeyboardVisible(false),
+    );
 
     return () => {
       showSubscription.remove();
@@ -242,18 +304,23 @@ export default function AIAdvisor() {
   }, []);
 
   const scrollRef = useRef<ScrollView>(null);
-  const [contextType, setContextType] = useState<'loans' | 'spends'>('loans');
-  const [messages, setMessages] = useState<{ role: string; text: string; isError?: boolean }[]>([
-    { role: 'assistant', text: "👋 Hi! I'm your **AI Financial Advisor**. I can help you analyze your **Loans** or your **Spends**.\n\nUse the toggle at the top to select your context, and let's get started!" },
+  const [contextType, setContextType] = useState<"loans" | "spends">("loans");
+  const [messages, setMessages] = useState<
+    { role: string; text: string; isError?: boolean }[]
+  >([
+    {
+      role: "assistant",
+      text: "👋 Hi! I'm your **AI Financial Advisor**. I can help you analyze your **Loans** or your **Spends**.\n\nUse the toggle at the top to select your context, and let's get started!",
+    },
   ]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loans, setLoans] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState(MODELS[0].id);
-  const [lastUserQuery, setLastUserQuery] = useState('');
-  const [usage, setUsage] = useState({ count: 0, date: '' });
-  const [activeKey, setActiveKey] = useState('');
+  const [lastUserQuery, setLastUserQuery] = useState("");
+  const [usage, setUsage] = useState({ count: 0, date: "" });
+  const [activeKey, setActiveKey] = useState("");
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const handleCopy = (text: string, idx: number) => {
@@ -266,35 +333,55 @@ export default function AIAdvisor() {
   useFocusEffect(
     useCallback(() => {
       const init = async () => {
-        const userKey = await AsyncStorage.getItem('@user_gemini_api_key');
+        const userKey = await AsyncStorage.getItem("@user_gemini_api_key");
         const envKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-        const effectiveKey = ((userKey || envKey) || '').trim();
+        const effectiveKey = (userKey || envKey || "").trim();
 
         if (effectiveKey) {
           setActiveKey(effectiveKey);
-          setMessages(prev => prev.filter(m => !m.isError || !m.text.includes('Gemini API Key')));
+          setMessages((prev) =>
+            prev.filter(
+              (m) => !m.isError || !m.text.includes("Gemini API Key"),
+            ),
+          );
         } else {
-          setActiveKey('');
-          setMessages(prev => {
-            if (prev.some(m => m.isError && m.text.includes('Gemini API Key'))) return prev;
-            return [...prev, { 
-              role: 'assistant', 
-              text: "👋 **Welcome!** To start chatting, please head to **Settings** and add your Gemini API Key. \n\nThis keeps your personal AI powered and secure!",
-              isError: true 
-            }];
+          setActiveKey("");
+          setMessages((prev) => {
+            if (
+              prev.some((m) => m.isError && m.text.includes("Gemini API Key"))
+            )
+              return prev;
+            return [
+              ...prev,
+              {
+                role: "assistant",
+                text: "👋 **Welcome!** To start chatting, please head to **Settings** and add your Gemini API Key. \n\nThis keeps your personal AI powered and secure!",
+                isError: true,
+              },
+            ];
           });
         }
       };
       init();
-      loadLoans(); 
+      loadLoans();
       loadTransactions();
       loadUsage();
-    }, [])
+    }, []),
   );
 
-  const loadLoans = async () => { try { const data = await getLoans(); setLoans(data || []); } catch (e) {} };
-  const loadTransactions = async () => { try { const data = await getTransactions(); setTransactions(data || []); } catch (e) {} };
-  
+  const loadLoans = async () => {
+    try {
+      const data = await getLoans();
+      setLoans(data || []);
+    } catch (e) {}
+  };
+  const loadTransactions = async () => {
+    try {
+      const data = await getTransactions();
+      setTransactions(data || []);
+    } catch (e) {}
+  };
+
   const loadUsage = async () => {
     try {
       const stored = await AsyncStorage.getItem(USAGE_KEY);
@@ -318,15 +405,18 @@ export default function AIAdvisor() {
     await AsyncStorage.setItem(USAGE_KEY, JSON.stringify(fresh));
   };
 
-  useEffect(() => { setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100); }, [messages, loading]);
+  useEffect(() => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  }, [messages, loading]);
 
   const showLimits = () => {
-    const currentModel = MODELS.find(m => m.id === selectedModel) || MODELS[0];
+    const currentModel =
+      MODELS.find((m) => m.id === selectedModel) || MODELS[0];
     const remaining = currentModel.rpd - usage.count;
     Alert.alert(
-      '📊 AI Usage Today',
+      "📊 AI Usage Today",
       `Model: ${currentModel.name}\nUsed: ${usage.count}\nRemaining: ${Math.max(0, remaining)}\nDaily Limit: ${currentModel.rpd}\n\nLimit resets at midnight.`,
-      [{ text: 'Got it' }]
+      [{ text: "Got it" }],
     );
   };
 
@@ -334,53 +424,73 @@ export default function AIAdvisor() {
     const userText = (text || input).trim();
     if (!userText || loading) return;
 
-    const currentModel = MODELS.find(m => m.id === selectedModel) || MODELS[0];
+    const currentModel =
+      MODELS.find((m) => m.id === selectedModel) || MODELS[0];
     if (usage.count >= currentModel.rpd) {
-      Alert.alert('Quota Exceeded', 'You have reached your daily limit for this AI model. Please try again tomorrow.');
+      Alert.alert(
+        "Quota Exceeded",
+        "You have reached your daily limit for this AI model. Please try again tomorrow.",
+      );
       return;
     }
 
     if (!isRetry) setLastUserQuery(userText);
-    setInput('');
-    
+    setInput("");
+
     let currentMessages = [...messages];
     if (isRetry && currentMessages[currentMessages.length - 1].isError) {
       currentMessages.pop();
     }
-    
-    const newMessages = isRetry ? currentMessages : [...currentMessages, { role: 'user', text: userText }];
+
+    const newMessages = isRetry
+      ? currentMessages
+      : [...currentMessages, { role: "user", text: userText }];
     setMessages(newMessages);
     setLoading(true);
 
     try {
-      const storedKey = await AsyncStorage.getItem('@user_gemini_api_key');
+      const storedKey = await AsyncStorage.getItem("@user_gemini_api_key");
       const envKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-      const keyToUse = ((activeKey || storedKey || envKey) || '').trim();
+      const keyToUse = (activeKey || storedKey || envKey || "").trim();
 
       if (!keyToUse) {
-        Alert.alert('Settings Required', 'Please add your Gemini API Key in the Settings page first.');
+        Alert.alert(
+          "Settings Required",
+          "Please add your Gemini API Key in the Settings page first.",
+        );
         setLoading(false);
         return;
       }
 
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${keyToUse}`;
-      const history = newMessages.filter((m, i) => !(i === 0 && m.role === 'assistant')).slice(-8);
+      const history = newMessages
+        .filter((m, i) => !(i === 0 && m.role === "assistant"))
+        .slice(-8);
 
       const latestLoans = await getLoans().catch(() => loans);
-      const latestTransactions = await getTransactions().catch(() => transactions);
+      const latestTransactions = await getTransactions().catch(
+        () => transactions,
+      );
 
-      const prompt = contextType === 'loans' 
-        ? buildLoansPrompt(latestLoans && latestLoans.length > 0 ? latestLoans : loans) 
-        : buildSpendsPrompt(latestTransactions && latestTransactions.length > 0 ? latestTransactions : transactions);
+      const prompt =
+        contextType === "loans"
+          ? buildLoansPrompt(
+              latestLoans && latestLoans.length > 0 ? latestLoans : loans,
+            )
+          : buildSpendsPrompt(
+              latestTransactions && latestTransactions.length > 0
+                ? latestTransactions
+                : transactions,
+            );
 
       const { res, data } = await fetchWithRetry(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           system_instruction: { parts: [{ text: prompt }] },
-          contents: history.map(m => ({
-            role: m.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: m.text }]
+          contents: history.map((m) => ({
+            role: m.role === "assistant" ? "model" : "user",
+            parts: [{ text: m.text }],
           })),
         }),
       });
@@ -389,40 +499,58 @@ export default function AIAdvisor() {
         let rawMsg = data?.error?.message || `Error ${res.status}`;
         const highDemandRegex = /high demand|capacity|overloaded/i;
         const retryRegex = /retry in (\d+s)/i;
-        
+
         if (highDemandRegex.test(rawMsg)) {
           const match = rawMsg.match(retryRegex);
-          rawMsg = `🚀 AI is currently very busy. Please try again in ${match ? match[1] : 'a few seconds'}.`;
+          rawMsg = `🚀 AI is currently very busy. Please try again in ${match ? match[1] : "a few seconds"}.`;
         }
         throw new Error(rawMsg);
       }
 
       await incrementUsage();
       const parts = data?.candidates?.[0]?.content?.parts || [];
-      const aiResponse = parts.find((p: any) => p.text)?.text || "I couldn't generate a response.";
-      setMessages(prev => [...prev, { role: 'assistant', text: aiResponse }]);
+      const aiResponse =
+        parts.find((p: any) => p.text)?.text ||
+        "I couldn't generate a response.";
+      setMessages((prev) => [...prev, { role: "assistant", text: aiResponse }]);
     } catch (err: any) {
-      setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${err.message}`, isError: true }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: `⚠️ ${err.message}`, isError: true },
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const suggestions = contextType === 'loans' ? LOAN_SUGGESTIONS : SPEND_SUGGESTIONS;
+  const suggestions =
+    contextType === "loans" ? LOAN_SUGGESTIONS : SPEND_SUGGESTIONS;
 
   return (
-    <LinearGradient colors={['#0f172a', '#1e293b', '#0f2d20']} style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex} keyboardVerticalOffset={0}>
-        
+    <LinearGradient
+      colors={["#0f172a", "#1e293b", "#0f2d20"]}
+      style={styles.container}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.flex}
+        keyboardVerticalOffset={0}
+      >
         {/* Header Block */}
-        <BlurView intensity={20} tint="dark" style={[styles.header, { paddingTop: insets.top + 10 }]}>
-          <View style={{ flex: 1, alignItems: 'center' }}>
+        <BlurView
+          intensity={20}
+          tint="dark"
+          style={[styles.header, { paddingTop: insets.top + 10 }]}
+        >
+          <View style={{ flex: 1, alignItems: "center" }}>
             <Text style={styles.headerTitle}>🤖 AI Advisor</Text>
             {(() => {
-              const currentModel = MODELS.find(m => m.id === selectedModel) || MODELS[0];
+              const currentModel =
+                MODELS.find((m) => m.id === selectedModel) || MODELS[0];
               return (
                 <Text style={styles.quotaText}>
-                  {usage.count} / {currentModel.rpd} <Text style={{ fontSize: 10, opacity: 0.6 }}>RPD</Text>
+                  {usage.count} / {currentModel.rpd}{" "}
+                  <Text style={{ fontSize: 10, opacity: 0.6 }}>RPD</Text>
                 </Text>
               );
             })()}
@@ -434,10 +562,28 @@ export default function AIAdvisor() {
 
         {/* Model Bar Selector */}
         <View style={styles.modelBar}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modelScroll}>
-            {MODELS.map(m => (
-              <TouchableOpacity key={m.id} onPress={() => setSelectedModel(m.id)} style={[styles.modelChip, selectedModel === m.id && styles.modelChipActive]}>
-                <Text style={[styles.modelChipText, selectedModel === m.id && styles.modelChipTextActive]}>{m.name}</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.modelScroll}
+          >
+            {MODELS.map((m) => (
+              <TouchableOpacity
+                key={m.id}
+                onPress={() => setSelectedModel(m.id)}
+                style={[
+                  styles.modelChip,
+                  selectedModel === m.id && styles.modelChipActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.modelChipText,
+                    selectedModel === m.id && styles.modelChipTextActive,
+                  ]}
+                >
+                  {m.name}
+                </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -446,71 +592,151 @@ export default function AIAdvisor() {
         {/* Segmented Context Selector */}
         <View style={styles.selectorContainer}>
           <BlurView intensity={25} tint="dark" style={styles.selectorBlur}>
-            <TouchableOpacity 
-              style={[styles.selectorBtn, contextType === 'loans' && styles.selectorBtnActive]} 
-              onPress={() => setContextType('loans')}
+            <TouchableOpacity
+              style={[
+                styles.selectorBtn,
+                contextType === "loans" && styles.selectorBtnActive,
+              ]}
+              onPress={() => setContextType("loans")}
             >
-              <Ionicons name="wallet-outline" size={16} color={contextType === 'loans' ? '#fff' : 'rgba(255,255,255,0.5)'} />
-              <Text style={[styles.selectorText, contextType === 'loans' && styles.selectorTextActive]}>Analyze Loans</Text>
+              <Ionicons
+                name="wallet-outline"
+                size={16}
+                color={
+                  contextType === "loans" ? "#fff" : "rgba(255,255,255,0.5)"
+                }
+              />
+              <Text
+                style={[
+                  styles.selectorText,
+                  contextType === "loans" && styles.selectorTextActive,
+                ]}
+              >
+                Analyze Loans
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.selectorBtn, contextType === 'spends' && styles.selectorBtnActive]} 
-              onPress={() => setContextType('spends')}
+            <TouchableOpacity
+              style={[
+                styles.selectorBtn,
+                contextType === "spends" && styles.selectorBtnActive,
+              ]}
+              onPress={() => setContextType("spends")}
             >
-              <Ionicons name="card-outline" size={16} color={contextType === 'spends' ? '#fff' : 'rgba(255,255,255,0.5)'} />
-              <Text style={[styles.selectorText, contextType === 'spends' && styles.selectorTextActive]}>Analyze Spends</Text>
+              <Ionicons
+                name="card-outline"
+                size={16}
+                color={
+                  contextType === "spends" ? "#fff" : "rgba(255,255,255,0.5)"
+                }
+              />
+              <Text
+                style={[
+                  styles.selectorText,
+                  contextType === "spends" && styles.selectorTextActive,
+                ]}
+              >
+                Analyze Spends
+              </Text>
             </TouchableOpacity>
           </BlurView>
         </View>
 
-        <ScrollView ref={scrollRef} style={styles.chatArea} contentContainerStyle={styles.chatContent} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          ref={scrollRef}
+          style={styles.chatArea}
+          contentContainerStyle={styles.chatContent}
+          keyboardShouldPersistTaps="handled"
+        >
           {messages.map((msg: any, idx) => (
             <View key={idx} style={{ gap: 6 }}>
-              <View style={[styles.bubble, msg.role === 'user' ? styles.userBubble : styles.aiBubble]}>
+              <View
+                style={[
+                  styles.bubble,
+                  msg.role === "user" ? styles.userBubble : styles.aiBubble,
+                ]}
+              >
                 <View style={styles.bubbleHeader}>
-                  <Text style={[styles.aiLabel, msg.role === 'user' && styles.userLabel]}>
-                    {msg.role === 'user' ? 'YOU' : (msg.isError ? 'ERROR' : 'ADVISOR')}
+                  <Text
+                    style={[
+                      styles.aiLabel,
+                      msg.role === "user" && styles.userLabel,
+                    ]}
+                  >
+                    {msg.role === "user"
+                      ? "YOU"
+                      : msg.isError
+                        ? "ERROR"
+                        : "ADVISOR"}
                   </Text>
-                  <TouchableOpacity 
-                    style={[styles.copyBtn, msg.role === 'user' && styles.userCopyBtn]} 
+                  <TouchableOpacity
+                    style={[
+                      styles.copyBtn,
+                      msg.role === "user" && styles.userCopyBtn,
+                    ]}
                     onPress={() => handleCopy(msg.text, idx)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     activeOpacity={0.7}
                   >
-                    <Ionicons 
-                      name={copiedIdx === idx ? "checkmark-circle" : "copy-outline"} 
-                      size={13} 
-                      color={copiedIdx === idx ? "#10b981" : (msg.role === 'user' ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.5)")} 
+                    <Ionicons
+                      name={
+                        copiedIdx === idx ? "checkmark-circle" : "copy-outline"
+                      }
+                      size={13}
+                      color={
+                        copiedIdx === idx
+                          ? "#10b981"
+                          : msg.role === "user"
+                            ? "rgba(255,255,255,0.85)"
+                            : "rgba(255,255,255,0.5)"
+                      }
                     />
-                    <Text style={[
-                      styles.copyBtnText, 
-                      msg.role === 'user' && { color: 'rgba(255,255,255,0.9)' },
-                      copiedIdx === idx && { color: '#10b981' }
-                    ]}>
+                    <Text
+                      style={[
+                        styles.copyBtnText,
+                        msg.role === "user" && {
+                          color: "rgba(255,255,255,0.9)",
+                        },
+                        copiedIdx === idx && { color: "#10b981" },
+                      ]}
+                    >
                       {copiedIdx === idx ? "Copied" : "Copy"}
                     </Text>
                   </TouchableOpacity>
                 </View>
 
-                {msg.role === 'user' ? (
-                  <Text selectable style={{ color: '#fff', fontSize: 16 }}>{msg.text}</Text>
+                {msg.role === "user" ? (
+                  <Text selectable style={{ color: "#fff", fontSize: 16 }}>
+                    {msg.text}
+                  </Text>
                 ) : (
                   <Markdown style={markdownStyles}>{msg.text || ""}</Markdown>
                 )}
               </View>
               {msg.isError && (
-                <TouchableOpacity style={styles.retryBtn} onPress={() => sendMessage(lastUserQuery, true)}>
+                <TouchableOpacity
+                  style={styles.retryBtn}
+                  onPress={() => sendMessage(lastUserQuery, true)}
+                >
                   <Text style={styles.retryBtnText}>🔄 Retry question</Text>
                 </TouchableOpacity>
               )}
             </View>
           ))}
-          {loading && <ActivityIndicator color="#10b981" style={{ alignSelf: 'flex-start', margin: 20 }} />}
-          
+          {loading && (
+            <ActivityIndicator
+              color="#10b981"
+              style={{ alignSelf: "flex-start", margin: 20 }}
+            />
+          )}
+
           {messages.length < 3 && !loading && (
             <View style={styles.suggestGrid}>
               {suggestions.map((s, i) => (
-                <TouchableOpacity key={i} style={styles.suggestChip} onPress={() => sendMessage(s)}>
+                <TouchableOpacity
+                  key={i}
+                  style={styles.suggestChip}
+                  onPress={() => sendMessage(s)}
+                >
                   <Text style={styles.suggestText}>{s}</Text>
                 </TouchableOpacity>
               ))}
@@ -518,25 +744,33 @@ export default function AIAdvisor() {
           )}
         </ScrollView>
 
-        <BlurView 
-          intensity={40} 
-          tint="dark" 
+        <BlurView
+          intensity={40}
+          tint="dark"
           style={[
-            styles.inputBar, 
-            Platform.OS === 'ios' && {
-              paddingBottom: keyboardVisible ? 12 : insets.bottom + 65
-            }
+            styles.inputBar,
+            Platform.OS === "ios" && {
+              paddingBottom: keyboardVisible ? 12 : insets.bottom + 65,
+            },
           ]}
         >
-          <TextInput 
-            style={styles.input} 
-            placeholder={contextType === 'loans' ? "Ask about your loans..." : "Ask about your spends/budgets..."} 
-            placeholderTextColor="rgba(255,255,255,0.3)" 
-            value={input} 
-            onChangeText={setInput} 
-            multiline 
+          <TextInput
+            style={styles.input}
+            placeholder={
+              contextType === "loans"
+                ? "Ask about your loans..."
+                : "Ask about your spends/budgets..."
+            }
+            placeholderTextColor="rgba(255,255,255,0.3)"
+            value={input}
+            onChangeText={setInput}
+            multiline
           />
-          <TouchableOpacity style={styles.sendBt} onPress={() => sendMessage()} disabled={loading}>
+          <TouchableOpacity
+            style={styles.sendBt}
+            onPress={() => sendMessage()}
+            disabled={loading}
+          >
             <Text style={styles.sendBtText}>↑</Text>
           </TouchableOpacity>
         </BlurView>
@@ -546,50 +780,175 @@ export default function AIAdvisor() {
 }
 
 const markdownStyles: any = {
-  body: { color: 'rgba(255,255,255,0.95)', fontSize: 15, lineHeight: 22 },
-  heading1: { color: '#10b981', fontSize: 22, fontWeight: '800', marginVertical: 8 },
-  heading2: { color: '#10b981', fontSize: 18, fontWeight: '700', marginVertical: 8 },
-  strong: { fontWeight: '800', color: '#fff' },
-  bullet_list_icon: { color: '#10b981' },
+  body: { color: "rgba(255,255,255,0.95)", fontSize: 15, lineHeight: 22 },
+  heading1: {
+    color: "#10b981",
+    fontSize: 22,
+    fontWeight: "800",
+    marginVertical: 8,
+  },
+  heading2: {
+    color: "#10b981",
+    fontSize: 18,
+    fontWeight: "700",
+    marginVertical: 8,
+  },
+  strong: { fontWeight: "800", color: "#fff" },
+  bullet_list_icon: { color: "#10b981" },
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
   flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 12, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)' },
-  headerAction: { width: 50, alignItems: 'center' },
-  headerTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
-  quotaText: { fontSize: 11, fontWeight: '700', color: '#10b981', marginTop: 2, letterSpacing: 1 },
-  modelBar: { backgroundColor: 'rgba(0,0,0,0.2)', paddingVertical: 10 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 12,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.1)",
+  },
+  headerAction: { width: 50, alignItems: "center" },
+  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  quotaText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#10b981",
+    marginTop: 2,
+    letterSpacing: 1,
+  },
+  modelBar: { backgroundColor: "rgba(0,0,0,0.2)", paddingVertical: 10 },
   modelScroll: { paddingHorizontal: 15, gap: 8 },
-  modelChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  modelChipActive: { backgroundColor: '#10b981', borderColor: '#10b981' },
-  modelChipText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: 'bold' },
-  modelChipTextActive: { color: '#fff' },
+  modelChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  modelChipActive: { backgroundColor: "#10b981", borderColor: "#10b981" },
+  modelChipText: {
+    color: "rgba(255,255,255,0.6)",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  modelChipTextActive: { color: "#fff" },
   selectorContainer: { paddingHorizontal: 15, marginVertical: 10 },
-  selectorBlur: { flexDirection: 'row', borderRadius: 14, overflow: 'hidden', padding: 4, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-  selectorBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10 },
-  selectorBtnActive: { backgroundColor: '#10b981' },
-  selectorText: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.6)' },
-  selectorTextActive: { color: '#fff' },
+  selectorBlur: {
+    flexDirection: "row",
+    borderRadius: 14,
+    overflow: "hidden",
+    padding: 4,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  selectorBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  selectorBtnActive: { backgroundColor: "#10b981" },
+  selectorText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.6)",
+  },
+  selectorTextActive: { color: "#fff" },
   chatArea: { flex: 1 },
   chatContent: { padding: 15, gap: 15 },
-  bubble: { maxWidth: '88%', padding: 14, borderRadius: 18 },
-  aiBubble: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.08)' },
-  userBubble: { alignSelf: 'flex-end', backgroundColor: '#10b981' },
-  bubbleHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, gap: 10 },
-  aiLabel: { fontSize: 10, fontWeight: 'bold', color: '#10b981', letterSpacing: 0.5 },
-  userLabel: { color: 'rgba(255,255,255,0.9)' },
-  copyBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8 },
-  userCopyBtn: { backgroundColor: 'rgba(0,0,0,0.15)' },
-  copyBtnText: { fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.6)' },
-  retryBtn: { alignSelf: 'flex-start', marginLeft: 10, backgroundColor: 'rgba(225, 29, 72, 0.15)', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(225, 29, 72, 0.3)' },
-  retryBtnText: { color: '#fb7185', fontSize: 13, fontWeight: 'bold' },
-  suggestGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 20 },
-  suggestChip: { padding: 12, borderRadius: 15, backgroundColor: 'rgba(16,185,129,0.1)', borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)' },
-  suggestText: { color: '#10b981', fontSize: 14, fontWeight: '500' },
-  inputBar: { flexDirection: 'row', padding: 15, paddingBottom: Platform.OS === 'ios' ? 25 : 15, gap: 12, alignItems: 'flex-end', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' },
-  input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 22, paddingHorizontal: 18, paddingVertical: 12, color: '#fff', fontSize: 16, maxHeight: 120 },
-  sendBt: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#10b981', justifyContent: 'center', alignItems: 'center' },
-  sendBtText: { color: '#fff', fontSize: 24, fontWeight: 'bold' }
+  bubble: { maxWidth: "88%", padding: 14, borderRadius: 18 },
+  aiBubble: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  userBubble: { alignSelf: "flex-end", backgroundColor: "#10b981" },
+  bubbleHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+    gap: 10,
+  },
+  aiLabel: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: "#10b981",
+    letterSpacing: 0.5,
+  },
+  userLabel: { color: "rgba(255,255,255,0.9)" },
+  copyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  userCopyBtn: { backgroundColor: "rgba(0,0,0,0.15)" },
+  copyBtnText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.6)",
+  },
+  retryBtn: {
+    alignSelf: "flex-start",
+    marginLeft: 10,
+    backgroundColor: "rgba(225, 29, 72, 0.15)",
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(225, 29, 72, 0.3)",
+  },
+  retryBtnText: { color: "#fb7185", fontSize: 13, fontWeight: "bold" },
+  suggestGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 20,
+  },
+  suggestChip: {
+    padding: 12,
+    borderRadius: 15,
+    backgroundColor: "rgba(16,185,129,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(16,185,129,0.2)",
+  },
+  suggestText: { color: "#10b981", fontSize: 14, fontWeight: "500" },
+  inputBar: {
+    flexDirection: "row",
+    padding: 15,
+    paddingBottom: Platform.OS === "ios" ? 25 : 15,
+    gap: 12,
+    alignItems: "flex-end",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.1)",
+  },
+  input: {
+    flex: 1,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    color: "#fff",
+    fontSize: 16,
+    maxHeight: 120,
+  },
+  sendBt: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#10b981",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  sendBtText: { color: "#fff", fontSize: 24, fontWeight: "bold" },
 });

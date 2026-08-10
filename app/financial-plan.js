@@ -14,8 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getLoans, getInsurances, getPayments } from '../utils/storage';
+import { getLoans, getInsurances, getPayments, getFinancialPlanSettings, saveFinancialPlanSettings } from '../utils/storage';
 import { generateFinancialPlan } from '../utils/financialPlanner';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -189,9 +188,9 @@ export default function FinancialPlan() {
       const l = await getLoans();
       const i = await getInsurances();
       const p = await getPayments();
-      const s = await AsyncStorage.getItem(PLAN_SETTINGS_KEY);
+      const s = await getFinancialPlanSettings();
       setLoans(l); setInsurances(i); setPayments(p);
-      if (s) { setSettings(JSON.parse(s)); setShowSetup(false); } 
+      if (s) { setSettings(s); setShowSetup(false); } 
       else { setShowSetup(true); }
     } catch (e) {
       console.error('Error loading financial plan:', e);
@@ -213,7 +212,7 @@ export default function FinancialPlan() {
   }, [insurances]);
 
   const plan = useMemo(() => {
-    if (!settings || loans.length === 0) return null;
+    if (!settings) return null;
     return generateFinancialPlan({
       loans, insurances, payments,
       salaryMonthly: settings.salary,
@@ -226,27 +225,27 @@ export default function FinancialPlan() {
   }, [settings, loans, insurances, payments]);
 
   const planStats = useMemo(() => {
-    if (!plan) return null;
-    const totalSavings = plan.reduce((s, m) => s + m.savings, 0);
-    const totalExtra   = plan.reduce((s, m) => s + m.loanBudget, 0);
+    if (!plan || plan.length === 0) return null;
+    const totalSavings = plan.reduce((s, m) => s + (m.savings || 0), 0);
+    const totalExtra   = plan.reduce((s, m) => s + (m.loanBudget || 0), 0);
     const lastMonth    = plan[plan.length - 1];
     
     // Resilience Score (Current state vs Final state)
-    const initialCosts = plan[0].emiTotal + plan[0].insuranceMonthly + plan[0].expenses;
-    const runway = lastMonth.emergencyFund / Math.max(1, initialCosts);
+    const initialCosts = (plan[0].emiTotal || 0) + (plan[0].insuranceMonthly || 0) + (plan[0].expenses || 0);
+    const runway = (lastMonth?.emergencyFund || 0) / Math.max(1, initialCosts);
 
     return {
       savingsCap: totalSavings,
       extraPaid: totalExtra,
       interestSaved: lastMonth?.totalInterestSaved || 0,
       finalFund: lastMonth?.emergencyFund || 0,
-      clearedPrincipal: plan.reduce((s, m) => s + m.loanPayments.reduce((ps, lp) => ps + lp.payment, 0), 0),
-      runway,
+      clearedPrincipal: plan.reduce((s, m) => s + (m.loanPayments || []).reduce((ps, lp) => ps + (lp.payment || 0), 0), 0),
+      runway: isNaN(runway) ? 0 : runway,
     };
   }, [plan]);
 
   const handleReset = () => {
-    Alert.alert('Reset', 'Start fresh?', [{ text: 'Cancel' }, { text: 'Reset', onPress: () => { AsyncStorage.removeItem(PLAN_SETTINGS_KEY); setSettings(null); setShowSetup(true); } }]);
+    Alert.alert('Reset', 'Start fresh?', [{ text: 'Cancel' }, { text: 'Reset', onPress: () => { saveFinancialPlanSettings(null); setSettings(null); setShowSetup(true); } }]);
   };
 
   if (loading) return <View style={styles.loadingWrap}><ActivityIndicator size="large" color="#10b981" /></View>;
@@ -261,8 +260,8 @@ export default function FinancialPlan() {
         </View>
 
         {showSetup ? (
-          <SetupForm initial={settings} insuranceMonthly={insuranceMonthly} onSubmit={(v) => { AsyncStorage.setItem(PLAN_SETTINGS_KEY, JSON.stringify(v)); setSettings(v); setShowSetup(false); }} />
-        ) : plan && (
+          <SetupForm initial={settings} insuranceMonthly={insuranceMonthly} onSubmit={(v) => { saveFinancialPlanSettings(v); setSettings(v); setShowSetup(false); }} />
+        ) : plan && planStats && (
           <>
             <View style={styles.summaryRow}>
               <SummaryTile label="Resilience Score" value={planStats.runway.toFixed(1)} color={planStats.runway >= 6 ? '#10b981' : planStats.runway < 2 ? '#e11d48' : '#f59e0b'} icon="🛡️" suffix=" mo" />
