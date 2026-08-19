@@ -37,13 +37,13 @@ import {
   getBudgetLimit,
   saveBudgetLimit,
   syncWithSupabase,
-  classifyOtherTransactionsBatch,
   syncEmiTransactions,
 } from '../../utils/transactions';
 import { syncGmailTransactions } from '../../utils/gmail';
 import { getLoans } from '../../utils/storage';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { CATEGORY_ICONS, getCategoryIcon } from '../../constants/categories';
+import SidePanelDrawer from '../../components/SidePanelDrawer';
 
 const { width } = Dimensions.get('window');
 
@@ -132,7 +132,8 @@ export default function SpendTracker() {
   const [filterType, setFilterType] = useState('all'); // all, credit, debit
   const [filterCategory, setFilterCategory] = useState('all');
   const [loansCount, setLoansCount] = useState(0);
-  const [isClassifying, setIsClassifying] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc'>('date-desc');
   const [chartExpanded, setChartExpanded] = useState(true);
   const [chartMode, setChartMode] = useState<'trend' | 'category'>('trend');
   const [trendGranularity, setTrendGranularity] = useState<'daily' | 'weekly' | 'monthly'>('daily');
@@ -240,7 +241,6 @@ export default function SpendTracker() {
 
   const onPickDate = (selected?: Date) => {
     const which = picker;
-    setPicker(Platform.OS === 'ios' ? picker : null);
     if (!selected || !which) return;
 
     if (which === 'start') {
@@ -251,6 +251,8 @@ export default function SpendTracker() {
         Alert.alert('Range trimmed', 'The date range is limited to 6 months, so the end date was adjusted.');
       }
       if (endDate && endDate < selected) setEndDate(selected);
+      // Automatically switch to 'end' date picking for smooth UX
+      setPicker('end');
     } else {
       if (startDate && selected < startDate) {
         Alert.alert('Invalid range', 'The end date cannot be before the start date.');
@@ -261,33 +263,15 @@ export default function SpendTracker() {
         return;
       }
       setEndDate(selected);
+      // Auto-close calendar when 'To' date is chosen
+      setPicker(null);
     }
   };
 
   const clearDateRange = () => {
     setStartDate(null);
     setEndDate(null);
-  };
-
-  const handleAIClassify = async () => {
-    setIsClassifying(true);
-    try {
-      const res = await classifyOtherTransactionsBatch();
-      setIsClassifying(false);
-      if (res.success) {
-        if (res.scanned > 0) {
-          Alert.alert('AI Classification Done', res.reason);
-          loadData();
-        } else {
-          Alert.alert('AI Classification', 'No unclassified "Other" transactions found.');
-        }
-      } else {
-        Alert.alert('AI Classification Failed', res.reason || 'Could not classify.');
-      }
-    } catch (err: any) {
-      setIsClassifying(false);
-      Alert.alert('Error', err.message || 'An error occurred.');
-    }
+    setPicker(null);
   };
 
   // Financial Stats for the current month — derived from transactions so that
@@ -513,6 +497,30 @@ export default function SpendTracker() {
     return matchesSearch && matchesFilter && matchesCategory && matchesRange;
   });
 
+  const sortedTransactions = useMemo(() => {
+    const list = [...filteredTransactions];
+    list.sort((a, b) => {
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      const amtA = parseFloat(a.amount || 0);
+      const amtB = parseFloat(b.amount || 0);
+
+      switch (sortBy) {
+        case 'date-asc':
+          return dateA - dateB;
+        case 'date-desc':
+          return dateB - dateA;
+        case 'amount-desc':
+          return amtB - amtA;
+        case 'amount-asc':
+          return amtA - amtB;
+        default:
+          return dateB - dateA;
+      }
+    });
+    return list;
+  }, [filteredTransactions, sortBy]);
+
   // Summary card totals reflect the selected date range (not the calendar month),
   // so the numbers up top match the period being viewed.
   // Summary card totals reflect the selected date range (not the calendar month),
@@ -710,6 +718,9 @@ export default function SpendTracker() {
     <>
         {/* Header */}
         <View style={styles.header}>
+          <TouchableOpacity onPress={() => setIsDrawerOpen(true)} style={{ paddingRight: 10 }}>
+            <Ionicons name="menu-outline" size={24} color="#0f172a" />
+          </TouchableOpacity>
           <Text style={styles.title}>Spend Tracker</Text>
           <TouchableOpacity onPress={handleSync} disabled={isSyncing} style={styles.syncBtn}>
             {isSyncing ? (
@@ -1023,7 +1034,11 @@ export default function SpendTracker() {
             )}
           </View>
           <View style={styles.dateRangeRow}>
-            <TouchableOpacity style={styles.dateRangeBtn} onPress={() => setPicker(picker === 'start' ? null : 'start')} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={[styles.dateRangeBtn, picker === 'start' && styles.dateRangeBtnActiveStart]}
+              onPress={() => setPicker(picker === 'start' ? null : 'start')}
+              activeOpacity={0.7}
+            >
               <Ionicons name="calendar-outline" size={16} color="#6366f1" />
               <View>
                 <Text style={styles.dateRangeCaption}>From</Text>
@@ -1033,7 +1048,11 @@ export default function SpendTracker() {
               </View>
             </TouchableOpacity>
             <Ionicons name="arrow-forward" size={16} color="#cbd5e1" />
-            <TouchableOpacity style={styles.dateRangeBtn} onPress={() => setPicker(picker === 'end' ? null : 'end')} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={[styles.dateRangeBtn, picker === 'end' && styles.dateRangeBtnActiveEnd]}
+              onPress={() => setPicker(picker === 'end' ? null : 'end')}
+              activeOpacity={0.7}
+            >
               <Ionicons name="calendar-outline" size={16} color="#ec4899" />
               <View>
                 <Text style={styles.dateRangeCaption}>To</Text>
@@ -1046,14 +1065,25 @@ export default function SpendTracker() {
           <Text style={styles.dateRangeHint}>Range is limited to 6 months</Text>
 
           {picker && (
-            <DateTimePicker
-              value={(picker === 'start' ? startDate : endDate) || new Date()}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              maximumDate={new Date()}
-              minimumDate={picker === 'end' && startDate ? startDate : undefined}
-              onChange={(_, selected) => onPickDate(selected)}
-            />
+            <View style={styles.pickerBox}>
+              <View style={styles.pickerBoxHeader}>
+                <Text style={styles.pickerBoxTitle}>
+                  Selecting {picker === 'start' ? 'From (Start)' : 'To (End)'} Date
+                </Text>
+                <TouchableOpacity onPress={() => setPicker(null)} style={styles.pickerDoneBtn} activeOpacity={0.7}>
+                  <Ionicons name="checkmark" size={14} color="#6366f1" style={{ marginRight: 4 }} />
+                  <Text style={styles.pickerDoneText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={(picker === 'start' ? startDate : endDate) || new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                maximumDate={new Date()}
+                minimumDate={picker === 'end' && startDate ? startDate : undefined}
+                onChange={(_, selected) => onPickDate(selected)}
+              />
+            </View>
           )}
         </View>
 
@@ -1107,18 +1137,36 @@ export default function SpendTracker() {
             </TouchableOpacity>
           </View>
           <Text style={styles.listMeta}>
-            {filteredTransactions.length} {filteredTransactions.length === 1 ? 'transaction' : 'transactions'} · {rangeLabel}
+            {sortedTransactions.length} {sortedTransactions.length === 1 ? 'transaction' : 'transactions'} · {rangeLabel}
           </Text>
-          <TouchableOpacity onPress={handleAIClassify} style={styles.aiClassifyBtn} disabled={isClassifying}>
-            {isClassifying ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="sparkles" size={14} color="#fff" style={{ marginRight: 6 }} />
-                <Text style={styles.aiClassifyBtnText}>AI Classify (20)</Text>
-              </>
-            )}
-          </TouchableOpacity>
+
+          {/* Sort Selector Bar */}
+          <View style={styles.sortBar}>
+            <Text style={styles.sortBarLabel}>SORT BY:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+              {[
+                { id: 'date-desc', label: 'Date (Newest)' },
+                { id: 'date-asc', label: 'Date (Oldest)' },
+                { id: 'amount-desc', label: 'Amount (High to Low)' },
+                { id: 'amount-asc', label: 'Amount (Low to High)' },
+              ].map((opt) => {
+                const isActive = sortBy === opt.id;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[styles.sortChip, isActive && styles.sortChipActive]}
+                    onPress={() => setSortBy(opt.id as any)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.sortChipText, isActive && styles.sortChipTextActive]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+
           <Text style={styles.swipeHint}>Swipe left to delete · pull to refresh</Text>
         </View>
     </>
@@ -1196,8 +1244,9 @@ export default function SpendTracker() {
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      <SidePanelDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
       <FlatList
-        data={filteredTransactions}
+        data={sortedTransactions}
         keyExtractor={(item: any) => String(item.id)}
         renderItem={renderTxItem}
         ListHeaderComponent={ListHeader}
@@ -1606,5 +1655,80 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#6366f1',
+  },
+  dateRangeBtnActiveStart: {
+    borderColor: '#6366f1',
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
+  },
+  dateRangeBtnActiveEnd: {
+    borderColor: '#ec4899',
+    backgroundColor: 'rgba(236, 72, 153, 0.08)',
+  },
+  pickerBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  pickerBoxHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  pickerBoxTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6366f1',
+  },
+  pickerDoneBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  pickerDoneText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6366f1',
+  },
+  sortBar: {
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  sortBarLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94a3b8',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  sortChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  sortChipActive: {
+    backgroundColor: '#0f172a',
+    borderColor: '#0f172a',
+  },
+  sortChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  sortChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
   },
 });

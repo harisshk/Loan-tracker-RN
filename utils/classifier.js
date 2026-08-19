@@ -1,18 +1,16 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CATEGORIES } from '../constants/categories';
 
 export { CATEGORIES };
 
-export const DEFAULT_BULK_PROMPT = `You are a personal finance assistant. Classify each of the following transaction descriptions into exactly one of these categories: ${CATEGORIES.join(', ')}. Return ONLY a JSON array of objects with "index" and "category" keys matching the input items.`;
-
 const RULES = {
+  Fuel: ['fuel', 'petrol', 'diesel', 'cng', 'shell fuel', 'hpcl', 'iocl', 'bpcl', 'petrol pump', 'gas station', 'ev charging'],
   'Milk & Dairy': ['milk', 'dairy', 'curd', 'paneer', 'butter', 'cheese', 'yogurt', 'amul', 'milkman', 'ghee', 'lassi', 'buttermilk', 'mother dairy'],
   'Fruits & Vegetables': ['fruit', 'vegetable', 'apple', 'banana', 'mango', 'orange', 'grape', 'onion', 'potato', 'tomato', 'veggies', 'sabji', 'sabzi', 'coconut', 'lemon'],
   Electronics: ['electronics', 'gadget', 'phone', 'mobile', 'laptop', 'computer', 'headphone', 'earphone', 'charger', 'macbook', 'ipad', 'tv', 'television', 'monitor', 'keyboard', 'mouse', 'apple store', 'icloud', 'itunes', 'apple.com'],
   Food: ['zomato', 'swiggy', 'starbucks', 'restaurant', 'cafe', 'food', 'dining', 'mcdonald', 'burger', 'pizza', 'bakery', 'eats', 'dosa', 'tea', 'chai', 'coffee', 'hotel', 'sweet', 'kitchen'],
   Grocery: ['grocery', 'supermarket', 'mart', 'dmart', 'grocer', 'instamart', 'blinkit', 'zepto', 'groceries', 'provision', 'bazaar'],
   Shopping: ['amazon', 'flipkart', 'myntra', 'hm', 'zara', 'mall', 'retail', 'reliance', 'clothing', 'ajio', 'meesho', 'nykaa', 'decathlon', 'shoppe', 'retailer', 'trends'],
-  Vehicle: ['car', 'bike', 'vehicle', 'auto', 'mechanic', 'service', 'garage', 'servicing', 'repair', 'tyre', 'tire', 'parking', 'car wash', 'wash', 'spare parts', 'automobile', 'puc', 'challan', 'traffic fine', 'fastag', 'fuel', 'petrol', 'diesel', 'shell fuel', 'hpcl', 'iocl', 'bpcl', 'motor', 'vehicle spends'],
+  Vehicle: ['car', 'bike', 'vehicle', 'auto', 'mechanic', 'service', 'garage', 'servicing', 'repair', 'tyre', 'tire', 'parking', 'car wash', 'wash', 'spare parts', 'automobile', 'puc', 'challan', 'traffic fine', 'fastag', 'motor', 'vehicle spends'],
   EMI: ['loan', 'emi', 'hdfc loan', 'sbi loan', 'mortgage', 'finance', 'credcard', 'cred'],
   Bills: ['electricity', 'water', 'gas', 'recharge', 'jio', 'airtel', 'bill', 'utility', 'broadband', 'wifi', 'bsnl', 'vi ', 'bescom', 'tata play', 'dth', 'postpaid'],
   Investment: ['zerodha', 'groww', 'mutual fund', 'sip', 'stock', 'investment', 'etf', 'crypto', 'coin', 'wazirx', 'binance', 'upstox', 'angelone', 'indmoney', 'kuvera'],
@@ -42,126 +40,7 @@ export const classifyCategoryOffline = (description) => {
   return 'Other';
 };
 
-export const classifyCategoryAI = async (description, apiKey) => {
-  if (!apiKey || !description) return 'Other';
-  
-  try {
-    const prompt = `You are a personal finance manager app. Classify the transaction description: "${description}" into exactly one of these categories: ${CATEGORIES.join(', ')}. 
-Reply with ONLY the category name. Do not include punctuation, quotes, markdown formatting or explanations.`;
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Gemini API returned status ${response.status}`);
-    }
-
-    const data = await response.json();
-    const cleanOutput = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'Other';
-
-    if (CATEGORIES.includes(cleanOutput)) {
-      return cleanOutput;
-    }
-    
-    // Fuzzy matching check in case it returned category inside extra text
-    for (const cat of CATEGORIES) {
-      if (cleanOutput.toLowerCase().includes(cat.toLowerCase())) {
-        return cat;
-      }
-    }
-
-    return 'Other';
-  } catch (e) {
-    console.warn('Gemini Category Auto-Classifier failed:', e);
-    return 'Other';
-  }
-};
-
-export const getSmartCategory = async (description) => {
+export const getSmartCategory = (description) => {
   if (!description) return 'Other';
-  
-  // 1. Try offline classification
-  const offlineMatch = classifyCategoryOffline(description);
-  if (offlineMatch !== 'Other') {
-    return offlineMatch;
-  }
-
-  // 2. Try online AI classification if API key exists
-  try {
-    const apiKey = await AsyncStorage.getItem('@user_gemini_api_key');
-    if (apiKey) {
-      const aiMatch = await classifyCategoryAI(description, apiKey);
-      return aiMatch;
-    }
-  } catch (err) {
-    console.warn('Error reading Gemini API key for classification:', err);
-  }
-
-  return 'Other';
-};
-
-export const bulkClassifyCategories = async (txs) => {
-  if (!txs || txs.length === 0) return txs;
-
-  // Find transactions that are 'Other' and have descriptions
-  const needsClassify = txs.filter(t => t.category === 'Other' && t.description);
-  if (needsClassify.length === 0) return txs;
-
-  try {
-    const apiKey = await AsyncStorage.getItem('@user_gemini_api_key');
-    if (!apiKey) return txs;
-
-    const listToClassify = needsClassify.map((t, idx) => ({
-      index: idx,
-      description: t.description
-    }));
-
-    const savedPrompt = await AsyncStorage.getItem('@user_classifier_prompt');
-    const systemPrompt = savedPrompt || DEFAULT_BULK_PROMPT;
-
-    const prompt = `${systemPrompt}
-
-Transactions:
-${JSON.stringify(listToClassify)}`;
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Gemini Bulk API status ${response.status}`);
-    }
-
-    const data = await response.json();
-    const cleanOutput = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (cleanOutput) {
-      const results = JSON.parse(cleanOutput);
-      if (Array.isArray(results)) {
-        results.forEach(res => {
-          const tx = needsClassify[res.index];
-          if (tx && CATEGORIES.includes(res.category)) {
-            tx.category = res.category;
-          }
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('Gemini Bulk Auto-Classifier failed, using offline defaults:', e);
-  }
-
-  return txs;
+  return classifyCategoryOffline(description);
 };

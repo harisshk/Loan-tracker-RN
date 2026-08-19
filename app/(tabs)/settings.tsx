@@ -21,7 +21,7 @@ import { getLoans } from '../../utils/storage';
 import { getGmailConfig, saveGmailTokens, clearGmailTokens, saveGmailSearchQuery, syncGmailTransactions } from '../../utils/gmail';
 import Config from '../../utils/Config';
 import { clearAuthUser } from '../../utils/auth';
-import { DEFAULT_BULK_PROMPT } from '../../utils/classifier';
+import SidePanelDrawer from '../../components/SidePanelDrawer';
 
 const isGoogleSigninSupported = !!NativeModules?.RNGoogleSignin;
 const GoogleSignin = isGoogleSigninSupported
@@ -42,7 +42,7 @@ export default function Settings() {
   const [currency, setCurrency] = useState(Config.DEFAULT_CURRENCY || '₹');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
-  const [classifierPrompt, setClassifierPrompt] = useState(DEFAULT_BULK_PROMPT);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   // Gmail states
   const [gmailConfig, setGmailConfig] = useState({ email: '', query: '', isConnected: false });
@@ -124,32 +124,9 @@ export default function Settings() {
       setApiKey(envKey);
     }
 
-    const savedPrompt = await AsyncStorage.getItem('@user_classifier_prompt');
-    if (savedPrompt) setClassifierPrompt(savedPrompt);
-
     const gConfig = await getGmailConfig();
     setGmailConfig(gConfig);
     setGmailQuery(gConfig.query);
-  };
-
-  const handleSaveClassifierPrompt = async () => {
-    await AsyncStorage.setItem('@user_classifier_prompt', classifierPrompt);
-    Alert.alert('Saved', 'AI Classifier Prompt updated successfully!');
-  };
-
-  const handleResetClassifierPrompt = async () => {
-    Alert.alert('Reset Prompt', 'Are you sure you want to reset the prompt to the default?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset',
-        style: 'destructive',
-        onPress: async () => {
-          setClassifierPrompt(DEFAULT_BULK_PROMPT);
-          await AsyncStorage.setItem('@user_classifier_prompt', DEFAULT_BULK_PROMPT);
-          Alert.alert('Reset', 'AI Classifier Prompt reset to default.');
-        }
-      }
-    ]);
   };
 
   const saveApiKey = async (val: string) => {
@@ -268,8 +245,12 @@ export default function Settings() {
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      <SidePanelDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 15, paddingBottom: 24 }]}>
-        <View style={styles.header}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 12 }}>
+          <TouchableOpacity onPress={() => setIsDrawerOpen(true)}>
+            <Ionicons name="menu-outline" size={24} color="#0f172a" />
+          </TouchableOpacity>
           <Text style={styles.title}>Settings</Text>
         </View>
 
@@ -299,32 +280,6 @@ export default function Settings() {
                </TouchableOpacity>
              </View>
              <Text style={styles.helpText}>Get one for free at aistudio.google.com</Text>
-          </BlurView>
-
-          <BlurView intensity={20} style={[styles.aiCard, { marginTop: 10 }]}>
-             <View style={styles.aiHeader}>
-                <View style={[styles.iconWrap, { backgroundColor: '#8b5cf6' }]}><Ionicons name="options-outline" size={18} color="#fff" /></View>
-                <Text style={styles.cardText}>Transaction Classifier Prompt</Text>
-             </View>
-             <TextInput
-               style={styles.promptInput}
-               placeholder="Enter transaction classification prompt..."
-               placeholderTextColor="#94a3b8"
-               value={classifierPrompt}
-               onChangeText={setClassifierPrompt}
-               multiline={true}
-               numberOfLines={6}
-               autoCapitalize="none"
-               autoCorrect={false}
-             />
-             <View style={styles.promptBtnRow}>
-               <TouchableOpacity onPress={handleSaveClassifierPrompt} style={styles.savePromptBtn}>
-                 <Text style={styles.savePromptText}>Save Prompt</Text>
-               </TouchableOpacity>
-               <TouchableOpacity onPress={handleResetClassifierPrompt} style={styles.resetPromptBtn}>
-                 <Text style={styles.resetPromptText}>Reset Default</Text>
-               </TouchableOpacity>
-             </View>
           </BlurView>
         </View>
 

@@ -11,8 +11,10 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { getLoans, getPayments, deleteLoan } from '../utils/storage';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
+import SidePanelDrawer from '../components/SidePanelDrawer';
 
 // ── Sort option definitions ───────────────────────────────────────────────────
 const SORT_OPTIONS = [
@@ -29,6 +31,7 @@ export default function Loans() {
   const [payments, setPayments] = useState([]);
   const [sortId, setSortId]     = useState('nextDue');
   const [refreshing, setRefreshing] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   const loadLoans = async () => {
     const loansData    = await getLoans();
@@ -147,13 +150,19 @@ export default function Loans() {
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      <SidePanelDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>All Loans</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity onPress={() => setIsDrawerOpen(true)}>
+              <Ionicons name="menu-outline" size={24} color="#0f172a" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>All Loans</Text>
+          </View>
           <TouchableOpacity onPress={() => router.push('/add-loan')}>
             <Text style={styles.addButton}>+ Add</Text>
           </TouchableOpacity>

@@ -16,7 +16,6 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { getLoans, getPayments } from '../utils/storage';
 import { calculateEMIBreakdown } from '../utils/emiCalculator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import PrincipalRoadmapChart from '../components/PrincipalRoadmapChart';
 
 const fc  = (v) => `₹${parseFloat(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
 const fd  = (d) => new Date(d).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
@@ -373,12 +372,6 @@ export default function DebtFree() {
                   </View>
                 </View>
               </BlurView>
-
-              {/* Dynamic Illustrative Principal-Only Payoff Roadmap & EMI Cascade Chart */}
-              <PrincipalRoadmapChart
-                loans={loanStates}
-                extraMonthlyBudget={extraAmt > 0 ? extraAmt : 25000}
-              />
 
               {/* Payoff timeline */}
               {timelineItems.length > 0 && (

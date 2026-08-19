@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getSmartCategory, bulkClassifyCategories } from './classifier';
+import { getSmartCategory } from './classifier';
 
 const GENERATED_EMI_KEY = '@generated_emi_ids';
 
@@ -609,63 +609,6 @@ export const updateTransaction = async (updatedTx) => {
   } catch (e) {
     console.error('Error updating transaction:', e);
     throw e;
-  }
-};
-
-export const classifyOtherTransactionsBatch = async () => {
-  try {
-    const apiKey = await AsyncStorage.getItem('@user_gemini_api_key') || process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-    if (!apiKey) {
-      return { success: false, reason: 'Gemini API Key is missing. Please configure it in Settings.' };
-    }
-
-    const txs = await getTransactions();
-    if (!txs || txs.length === 0) {
-      return { success: true, count: 0, reason: 'No transactions found.' };
-    }
-
-    const scannedIdsJson = await AsyncStorage.getItem('@scanned_transactions_list');
-    const scannedIds = scannedIdsJson ? JSON.parse(scannedIdsJson) : [];
-
-    const unclassifiedTxs = txs.filter(t => 
-      (t.category || '').toLowerCase() === 'other' && 
-      t.description && 
-      !scannedIds.includes(t.id)
-    );
-
-    if (unclassifiedTxs.length === 0) {
-      return { success: true, count: 0, reason: 'All transactions are already classified or scanned.' };
-    }
-
-    const batch = unclassifiedTxs.slice(0, 20);
-    const classifiedBatch = await bulkClassifyCategories(batch);
-
-    let successCount = 0;
-    const newScannedIds = [...scannedIds];
-
-    for (const tx of classifiedBatch) {
-      newScannedIds.push(tx.id);
-      if (tx.category && tx.category.toLowerCase() !== 'other') {
-        try {
-          await updateTransaction(tx);
-          successCount++;
-        } catch (updateErr) {
-          console.warn(`Failed to update transaction ${tx.id} on Supabase:`, updateErr);
-        }
-      }
-    }
-
-    await AsyncStorage.setItem('@scanned_transactions_list', JSON.stringify(newScannedIds));
-
-    return { 
-      success: true, 
-      count: successCount, 
-      scanned: batch.length,
-      reason: `Successfully classified ${successCount} of ${batch.length} transaction(s).` 
-    };
-  } catch (e) {
-    console.error('Batch classification error:', e);
-    return { success: false, reason: e.message };
   }
 };
 

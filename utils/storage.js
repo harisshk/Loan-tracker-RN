@@ -593,6 +593,8 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
   let thisMonthEMIPaid = 0;   // auto-EMIs whose due date has already passed this month
   let thisMonthExtraPaid = 0; // extra/manual payments logged this month
 
+  const upcomingDuesList = [];
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const currentMonth = today.getMonth();
@@ -650,58 +652,98 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     const loanInterestSaved = Math.max(0, standardInterest - breakdown.totalInterest);
     totalInterestSaved += loanInterestSaved;
     
-    // Only add to upcoming EMI if loan is still active and not explicitly closed
-    if (monthsElapsed < tenure && loan.status !== 'closed') {
+    // Calculate upcoming dues for active loans
+    if (loan.status !== 'closed' && breakdown.remainingAmount > 0) {
       if (loanType === 'emi') {
-        upcomingEMI += emiAmount;  // Use user's EMI amount
-        
-        // Calculate next due date
         const startDate = new Date(loan.startDate);
-        const nextDue = new Date(startDate.getFullYear(), startDate.getMonth() + monthsElapsed, startDate.getDate());
+        const monthOffset = Math.max(
+          0,
+          (today.getFullYear() - startDate.getFullYear()) * 12 + (today.getMonth() - startDate.getMonth())
+        );
+        let nextDue = new Date(startDate.getFullYear(), startDate.getMonth() + monthOffset, startDate.getDate());
         if (nextDue < today) {
-           nextDue.setMonth(nextDue.getMonth() + 1);
+          nextDue.setMonth(nextDue.getMonth() + 1);
         }
-        
-        if (nextDue.getMonth() === currentMonth && nextDue.getFullYear() === currentYear && nextDue >= today) {
-          thisMonthDueAmount += emiAmount;
-          thisMonthDueCount += 1;
-          thisMonthEMIAmount += emiAmount;
+
+        const monthsFromStart =
+          (nextDue.getFullYear() - startDate.getFullYear()) * 12 +
+          (nextDue.getMonth() - startDate.getMonth()) +
+          1;
+
+        if (monthsFromStart <= tenure) {
+          upcomingEMI += emiAmount;
+
+          if (nextDue.getMonth() === currentMonth && nextDue.getFullYear() === currentYear && nextDue >= today) {
+            thisMonthDueAmount += emiAmount;
+            thisMonthDueCount += 1;
+            thisMonthEMIAmount += emiAmount;
+          }
+
+          const daysDiff = Math.ceil((nextDue.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff >= 0 && daysDiff <= 15) {
+            upcomingDuesList.push({
+              id: loan.id,
+              name: loan.loanName,
+              amount: emiAmount,
+              date: nextDue,
+              type: 'emi',
+              daysLeft: daysDiff,
+            });
+          }
+
+          if (!nextDueDate || nextDue < nextDueDate) {
+            nextDueDate = nextDue;
+            nextPaymentAmount = emiAmount;
+            nextPaymentLoanName = loan.loanName;
+          } else if (nextDueDate && nextDue.getTime() === nextDueDate.getTime()) {
+            nextPaymentAmount += emiAmount;
+          }
         }
 
         // ── Auto-paid: EMI whose due date has already passed this month ──────
         const emiDueThisMonth = new Date(currentYear, currentMonth, startDate.getDate());
-        const monthsFromStart =
+        const monthsFromStartThisMonth =
           (currentYear - startDate.getFullYear()) * 12 +
-          (currentMonth - startDate.getMonth());
+          (currentMonth - startDate.getMonth()) +
+          1;
         if (
-          loan.status !== 'closed' &&
           emiDueThisMonth <= today &&
-          monthsFromStart >= 1 &&
-          monthsFromStart <= (parseInt(loan.tenure) || 0)
+          monthsFromStartThisMonth >= 1 &&
+          monthsFromStartThisMonth <= tenure
         ) {
           thisMonthEMIPaid += emiAmount;
-        }
-
-        if (!nextDueDate || nextDue < nextDueDate) {
-          nextDueDate = nextDue;
-          nextPaymentAmount = emiAmount;
-          nextPaymentLoanName = loan.loanName;
-        } else if (nextDueDate && nextDue.getTime() === nextDueDate.getTime()) {
-           nextPaymentAmount += emiAmount;
         }
       } else if (loanType === 'bullet') {
         const startDate = new Date(loan.startDate);
         const nextDue = new Date(startDate.getFullYear(), startDate.getMonth() + tenure, startDate.getDate());
-        if (nextDue.getMonth() === currentMonth && nextDue.getFullYear() === currentYear && nextDue >= today) {
-          thisMonthDueAmount += breakdown.totalAmount;
-          thisMonthDueCount += 1;
-          thisMonthEMIAmount += breakdown.totalAmount;
-        }
+        const bulletAmount = breakdown.remainingAmount > 0 ? breakdown.remainingAmount : breakdown.totalAmount;
 
-        if (!nextDueDate || nextDue < nextDueDate) {
-          nextDueDate = nextDue;
-          nextPaymentAmount = breakdown.totalAmount;
-          nextPaymentLoanName = loan.loanName;
+        if (nextDue >= today) {
+          if (nextDue.getMonth() === currentMonth && nextDue.getFullYear() === currentYear) {
+            thisMonthDueAmount += bulletAmount;
+            thisMonthDueCount += 1;
+            thisMonthEMIAmount += bulletAmount;
+          }
+
+          const daysDiff = Math.ceil((nextDue.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff >= 0 && daysDiff <= 15) {
+            upcomingDuesList.push({
+              id: loan.id,
+              name: `${loan.loanName} (Bullet)`,
+              amount: bulletAmount,
+              date: nextDue,
+              type: 'bullet',
+              daysLeft: daysDiff,
+            });
+          }
+
+          if (!nextDueDate || nextDue < nextDueDate) {
+            nextDueDate = nextDue;
+            nextPaymentAmount = bulletAmount;
+            nextPaymentLoanName = loan.loanName;
+          } else if (nextDueDate && nextDue.getTime() === nextDueDate.getTime()) {
+            nextPaymentAmount += bulletAmount;
+          }
         }
       }
     }
@@ -734,6 +776,18 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     while (nextDue < today) {
       nextDue.setMonth(nextDue.getMonth() + stepMonths);
     }
+
+    const daysDiff = Math.ceil((nextDue.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysDiff >= 0 && daysDiff <= 15) {
+      upcomingDuesList.push({
+        id: ins.id,
+        name: `${ins.name} (Insurance)`,
+        amount: principal,
+        date: nextDue,
+        type: 'insurance',
+        daysLeft: daysDiff,
+      });
+    }
     
     // Add to next payment logic
     if (!nextDueDate || nextDue < nextDueDate) {
@@ -749,9 +803,9 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
       thisMonthDueAmount += principal;
       thisMonthDueCount += 1;
     }
-    
-    // Add to abstract outstanding just for 1 year conceptually? Or we skip adding prep to outstanding.
   });
+
+  upcomingDuesList.sort((a, b) => a.date.getTime() - b.date.getTime());
 
   return {
     totalOutstanding,
@@ -766,6 +820,7 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     nextDueDate,
     nextPaymentAmount,
     nextPaymentLoanName,
+    upcomingDuesList,
     pendingLoans: loans.filter(l => l.status !== 'closed').length,
     thisMonthDueAmount,
     thisMonthDueCount,

@@ -12,14 +12,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { PieChart } from 'react-native-chart-kit';
 import { getLoans, calculateLoanStats, getPayments, getInsurances } from '../../utils/storage';
 import { getTransactions, getBudgetLimit } from '../../utils/transactions';
 import { getCategoryIcon } from '../../constants/categories';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PulseSkeleton } from '../../components/ui/skeleton';
-import PrincipalTrajectoryChart from '../../components/PrincipalTrajectoryChart';
-import PrincipalRoadmapChart from '../../components/PrincipalRoadmapChart';
+import SidePanelDrawer from '../../components/SidePanelDrawer';
 
 const { width } = Dimensions.get('window');
 
@@ -32,6 +30,7 @@ const fc = (amount: any) => {
 const fd = (date: any) => {
   if (!date) return 'N/A';
   return new Date(date).toLocaleDateString('en-IN', {
+    weekday: 'short',
     day: 'numeric',
     month: 'short',
   });
@@ -62,6 +61,7 @@ export default function DashboardView() {
   const [budgetLimit, setBudgetLimit] = useState(50000);
   const [spends, setSpends] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(true);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   const nextInsurance = useMemo(() => {
     if (!insurances || insurances.length === 0) return null;
@@ -71,7 +71,8 @@ export default function DashboardView() {
     return sorted[0] || null;
   }, [insurances]);
 
-  const hasUpcomingAlerts = !!(stats.nextDueDate || nextInsurance);
+  const upcomingDues15Days = (stats as any).upcomingDuesList || [];
+  const hasUpcomingAlerts = upcomingDues15Days.length > 0 || !!(stats.nextDueDate || nextInsurance);
 
   const bulletUrgentCount = loans.filter((l: any) => {
     if (l.status === 'closed' || l.loanType !== 'bullet') return false;
@@ -241,52 +242,8 @@ export default function DashboardView() {
       .slice(0, 5);
   }, [loans, payments, today]);
 
-  // Spend category pie data for current month
-  const spendPieData = useMemo(() => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-    const totals: Record<string, number> = {};
-    spends.filter((t: any) => {
-      const d = new Date(t.date);
-      return (t.type || '').toLowerCase() !== 'credit' &&
-        t.category !== 'Credit Card Bill' &&
-        t.calculate_budget !== false &&
-        d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-    }).forEach((t: any) => {
-      const cat = t.category || 'Other';
-      totals[cat] = (totals[cat] || 0) + parseFloat(t.amount || 0);
-    });
-    return Object.entries(totals)
-      .filter(([, v]) => v > 0)
-      .map(([name, population]) => ({
-        name,
-        population,
-        color: getCategoryIcon(name).color,
-        legendFontColor: '#64748b',
-        legendFontSize: 11,
-      }))
-      .sort((a, b) => b.population - a.population)
-      .slice(0, 6);
-  }, [spends]);
 
-  // Quick Action Array for Grid
-  const QUICK_ACTIONS = [
-    { id: 'spend', title: 'Spend\nTracker', icon: 'card-outline', color: '#ec4899', route: '/spend-tracker' },
-    { id: 'ai', title: 'AI\nAdvisor', icon: 'sparkles-outline', color: '#7c3aed', route: '/ai-advisor' },
-    { id: 'plan', title: 'Financial\nPlan', icon: 'trending-up', color: '#10b981', route: '/financial-plan' },
-    { id: 'maturity', title: 'Maturity\nAlerts', icon: 'timer-outline', color: bulletUrgentCount > 0 ? '#e11d48' : '#f59e0b', route: '/maturity-alerts', badge: bulletUrgentCount },
-    { id: 'compare', title: 'Loan\nLab', icon: 'git-compare-outline', color: '#10b981', route: '/compare-loans' },
-    { id: 'debtfree', title: 'Debt-Free\nDate', icon: 'flag-outline', color: '#38bdf8', route: '/debt-free' },
-    { id: 'analytics', title: 'Analytics\nHub', icon: 'pie-chart-outline', color: '#a78bfa', route: '/analytics' },
-    { id: 'calendar', title: 'Payment\nCalendar', icon: 'calendar-outline', color: '#fb923c', route: '/calendar' },
-    { id: 'loans', title: 'All\nLoans', icon: 'wallet-outline', color: '#64748b', route: '/loans' },
-  ];
 
-  const SECONDARY_ACTIONS = [
-    { title: 'Add Insurance', icon: 'shield-checkmark', route: '/add-insurance' },
-    { title: 'Extra Payments Log', icon: 'receipt-outline', route: '/history' },
-  ];
 
   if (loading) {
     return (
@@ -367,6 +324,7 @@ export default function DashboardView() {
 
   return (
     <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+      <SidePanelDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top, paddingBottom: 24 }]}
         showsVerticalScrollIndicator={false}
@@ -374,10 +332,18 @@ export default function DashboardView() {
       >
         {/* Header Section */}
         <View style={styles.headerRow}>
-          <View style={{ width: 98 }} />
+          <TouchableOpacity
+            style={styles.menuBtnWrap}
+            onPress={() => setIsDrawerOpen(true)}
+            activeOpacity={0.8}
+          >
+            <BlurView intensity={25} tint="light" style={styles.menuBtnInside}>
+              <Ionicons name="menu-outline" size={22} color="#0f172a" />
+            </BlurView>
+          </TouchableOpacity>
           <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={styles.greeting}>Overview</Text>
-            <Text style={styles.dateLabel}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
+            <Text style={styles.dateLabel}>{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</Text>
           </View>
           <View style={styles.headerActions}>
             <TouchableOpacity
@@ -403,43 +369,39 @@ export default function DashboardView() {
         </View>
 
         {/* Alerts Dropdown */}
-        {showAlerts && hasUpcomingAlerts && (
+        {showAlerts && (
           <BlurView intensity={40} tint="light" style={styles.alertsDropdown}>
             <View style={styles.alertsDropdownHeader}>
-              <Text style={styles.alertsDropdownTitle}>📅 Upcoming Dues</Text>
+              <Text style={styles.alertsDropdownTitle}>📅 Dues Next 15 Days ({upcomingDues15Days.length})</Text>
               <TouchableOpacity onPress={() => setShowAlerts(false)}>
                 <Text style={styles.alertsCloseBtn}>Close</Text>
               </TouchableOpacity>
             </View>
             
-            {/* Next EMI */}
-            {stats.nextDueDate && (
-              <View style={styles.alertItem}>
-                <View style={[styles.alertIconBg, { backgroundColor: 'rgba(79, 70, 229, 0.1)' }]}>
-                  <Ionicons name="analytics" size={18} color="#4f46e5" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.alertItemTitle}>Next EMI: {stats.nextPaymentLoanName}</Text>
-                  <Text style={styles.alertItemSubtitle}>Due on {fd(stats.nextDueDate)}</Text>
-                </View>
-                <Text style={[styles.alertItemAmount, { color: '#4f46e5' }]}>{fc(stats.nextPaymentAmount)}</Text>
-              </View>
-            )}
-
-            {/* Divider */}
-            {stats.nextDueDate && nextInsurance && <View style={styles.alertDivider} />}
-
-            {/* Next Insurance */}
-            {nextInsurance && (
-              <View style={styles.alertItem}>
-                <View style={[styles.alertIconBg, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
-                  <Ionicons name="shield-checkmark" size={18} color="#f59e0b" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.alertItemTitle}>Next Insurance: {nextInsurance.name}</Text>
-                  <Text style={styles.alertItemSubtitle}>Due on {fd(nextInsurance.nextDue)}</Text>
-                </View>
-                <Text style={[styles.alertItemAmount, { color: '#f59e0b' }]}>{fc(nextInsurance.premiumAmount)}</Text>
+            {upcomingDues15Days.length > 0 ? (
+              upcomingDues15Days.map((due: any, idx: number) => {
+                const isIns = due.type === 'insurance';
+                return (
+                  <React.Fragment key={`${due.id}-${idx}`}>
+                    {idx > 0 && <View style={styles.alertDivider} />}
+                    <View style={styles.alertItem}>
+                      <View style={[styles.alertIconBg, { backgroundColor: isIns ? 'rgba(245, 158, 11, 0.1)' : 'rgba(79, 70, 229, 0.1)' }]}>
+                        <Ionicons name={isIns ? "shield-checkmark" : "analytics"} size={18} color={isIns ? "#f59e0b" : "#4f46e5"} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.alertItemTitle}>{due.name}</Text>
+                        <Text style={styles.alertItemSubtitle}>
+                          Due: {fd(due.date)} ({due.daysLeft === 0 ? 'Today!' : due.daysLeft === 1 ? 'Tomorrow' : `${due.daysLeft} days away`})
+                        </Text>
+                      </View>
+                      <Text style={[styles.alertItemAmount, { color: isIns ? '#f59e0b' : '#4f46e5' }]}>{fc(due.amount)}</Text>
+                    </View>
+                  </React.Fragment>
+                );
+              })
+            ) : (
+              <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+                <Text style={{ fontSize: 13, color: '#64748b' }}>No upcoming dues in the next 15 days 👍</Text>
               </View>
             )}
           </BlurView>
@@ -474,7 +436,7 @@ export default function DashboardView() {
             {/* Next Due Floating Box */}
             {stats.nextDueDate && (
               <View style={styles.heroNextDueBox}>
-                <Text style={styles.nextDueLabel}>NEXT EMI • {fd(stats.nextDueDate)}</Text>
+                <Text style={styles.nextDueLabel}>NEXT DUE • {fd(stats.nextDueDate)}</Text>
                 <Text style={styles.nextDueAmount}>{fc(stats.nextPaymentAmount)}</Text>
               </View>
             )}
@@ -578,98 +540,8 @@ export default function DashboardView() {
           </BlurView>
         </View>
 
-        {/* Principal Pending & 6-Month Trajectory Section */}
-        <View style={{ marginBottom: 16 }}>
-          <PrincipalTrajectoryChart
-            loans={loans}
-            payments={payments}
-            compact={true}
-            onPressViewAll={() => router.push('/analytics')}
-          />
-        </View>
 
-        {/* Principal-Only Payoff Roadmap & EMI Cascade Section */}
-        <View style={{ marginBottom: 24 }}>
-          <PrincipalRoadmapChart
-            loans={loans}
-            payments={payments}
-            extraMonthlyBudget={25000}
-          />
-        </View>
 
-        {/* Quick Actions Grid */}
-        <View style={styles.gridSection}>
-          <Text style={styles.sectionTitle}>Quick Access</Text>
-          <View style={styles.gridContainer}>
-            {QUICK_ACTIONS.map((action) => (
-              <TouchableOpacity
-                key={action.id}
-                style={styles.gridBtnWrap}
-                onPress={() => router.push(action.route as any)}
-                activeOpacity={0.7}
-              >
-                <BlurView intensity={30} tint="light" style={styles.gridBtnFrame}>
-                  <View style={[styles.iconCircle, { backgroundColor: action.color + '18' }]}>
-                    <Ionicons name={action.icon as any} size={28} color={action.color} />
-                    {action.badge !== undefined && action.badge > 0 && (
-                      <View style={styles.badgeWrap}>
-                        <Text style={styles.badgeText}>{action.badge}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.gridBtnText}>{action.title}</Text>
-                </BlurView>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Insurances Carousel */}
-        {insurances.length > 0 && (
-          <View style={styles.insurancesSection}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Active Insurances</Text>
-              <TouchableOpacity onPress={() => router.push('/insurances')}>
-                <Text style={styles.seeAllText}>See All</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.insurancesScroll}>
-              {insurances.map(ins => (
-                <BlurView key={ins.id} intensity={40} tint="light" style={styles.insCard}>
-                  <View style={styles.insIconWrap}>
-                    <Ionicons name="shield-checkmark" size={20} color="#f59e0b" />
-                  </View>
-                  <Text style={styles.insName} numberOfLines={1}>{ins.name}</Text>
-                  <Text style={styles.insAmt}>{fc(ins.premiumAmount)}</Text>
-                  <View style={styles.insDueBox}>
-                    <Text style={styles.insDueLabel}>Due: {ins.nextDue ? fd(ins.nextDue) : 'N/A'}</Text>
-                  </View>
-                </BlurView>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* More Options / Secondary Actions */}
-        <View style={styles.secondarySection}>
-          <Text style={styles.sectionTitle}>More Tools</Text>
-          <BlurView intensity={30} tint="light" style={styles.secondaryCard}>
-            {SECONDARY_ACTIONS.map((act, i) => (
-              <TouchableOpacity
-                key={act.title}
-                style={[styles.secRow, i !== SECONDARY_ACTIONS.length - 1 && styles.secRowBorder]}
-                onPress={() => router.push(act.route as any)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.secIconWrap}>
-                  <Ionicons name={act.icon as any} size={20} color="#64748b" />
-                </View>
-                <Text style={styles.secTitle}>{act.title}</Text>
-                <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-              </TouchableOpacity>
-            ))}
-          </BlurView>
-        </View>
         
         {/* Analytics Section */}
         <View style={styles.analyticsSection}>
@@ -702,38 +574,6 @@ export default function DashboardView() {
             </BlurView>
           )}
 
-          {/* Spend Category Pie */}
-          {spendPieData.length > 0 ? (
-            <BlurView intensity={30} tint="light" style={styles.analyticsCard}>
-              <Text style={styles.analyticsCardTitle}>Spend Categories</Text>
-              <Text style={styles.analyticsCardSubtitle}>This month&apos;s expense breakdown</Text>
-              <PieChart
-                data={spendPieData}
-                width={width - 80}
-                height={160}
-                chartConfig={{
-                  backgroundGradientFrom: '#ffffff',
-                  backgroundGradientTo: '#ffffff',
-                  backgroundGradientFromOpacity: 0,
-                  backgroundGradientToOpacity: 0,
-                  color: (opacity = 1) => `rgba(99,102,241,${opacity})`,
-                  decimalPlaces: 0,
-                  labelColor: (opacity = 1) => `rgba(15,23,42,${opacity})`,
-                }}
-                accessor="population"
-                backgroundColor="transparent"
-                paddingLeft="10"
-                absolute
-              />
-            </BlurView>
-          ) : (
-            <BlurView intensity={30} tint="light" style={styles.analyticsCard}>
-              <Text style={styles.analyticsCardTitle}>Spend Categories</Text>
-              <Text style={[styles.analyticsCardSubtitle, { marginBottom: 0 }]}>
-                No expense data recorded this month. Add transactions in Spend Tracker.
-              </Text>
-            </BlurView>
-          )}
         </View>
 
         <View style={{ height: 24 }} />
@@ -920,6 +760,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#e11d48',
     borderWidth: 1,
     borderColor: '#ffffff',
+  },
+  menuBtnWrap: {
+    width: 98,
+    alignItems: 'flex-start',
+  },
+  menuBtnInside: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.1)',
+    overflow: 'hidden',
+    backgroundColor: '#ffffff',
   },
   headerActions: {
     flexDirection: 'row',

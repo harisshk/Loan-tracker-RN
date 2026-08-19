@@ -11,8 +11,10 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { getInsurances, deleteInsurance } from '../utils/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import SidePanelDrawer from '../components/SidePanelDrawer';
 
 // ── Sort options ──────────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
@@ -38,6 +40,7 @@ export default function Insurances() {
   const [insurances, setInsurances] = useState([]);
   const [sortId, setSortId]         = useState('nextDue');
   const [refreshing, setRefreshing] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   const loadInsurances = async () => {
     const data = await getInsurances();
@@ -125,17 +128,17 @@ export default function Insurances() {
       colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
       style={styles.container}
     >
+      <SidePanelDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButtonWrap}>
-            <Text style={styles.backArrow}>←</Text>
-            <Text style={styles.backLabel}>Back</Text>
+          <TouchableOpacity onPress={() => setIsDrawerOpen(true)} style={{ marginRight: 10 }}>
+            <Ionicons name="menu-outline" size={24} color="#0f172a" />
           </TouchableOpacity>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={styles.headerTitle}>All Insurances</Text>
             <TouchableOpacity onPress={() => router.push('/add-insurance')}>
               <Text style={styles.addButton}>+ Add</Text>
