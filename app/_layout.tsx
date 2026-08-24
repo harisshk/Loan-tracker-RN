@@ -69,6 +69,7 @@ export default function RootLayout() {
         <Stack.Screen name="debt-free" />
         <Stack.Screen name="compare-loans" />
         <Stack.Screen name="add-transaction" />
+        <Stack.Screen name="roadmap" />
       </Stack>
       {(() => {
         const isDarkScreen = segments[0] === 'login' || (segments[0] === '(tabs)' && segments[1] === 'ai-advisor');

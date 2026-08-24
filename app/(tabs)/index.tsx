@@ -543,6 +543,29 @@ export default function DashboardView() {
 
 
         
+        {/* Repayment Roadmap Shortcut Banner */}
+        <TouchableOpacity
+          style={styles.roadmapBanner}
+          onPress={() => router.push('/roadmap' as any)}
+          activeOpacity={0.85}
+        >
+          <LinearGradient
+            colors={['#4f46e5', '#6366f1', '#8b5cf6']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.roadmapBannerGradient}
+          >
+            <View style={styles.roadmapBannerIconWrap}>
+              <Ionicons name="map" size={22} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.roadmapBannerTitle}>Monthly Repayment Roadmap</Text>
+              <Text style={styles.roadmapBannerSub}>View month-by-month total outstanding & payoff projection list</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#fff" />
+          </LinearGradient>
+        </TouchableOpacity>
+
         {/* Analytics Section */}
         <View style={styles.analyticsSection}>
           <View style={styles.sectionHeaderRow}>
@@ -782,5 +805,41 @@ const styles = StyleSheet.create({
     gap: 10,
     width: 98,
     justifyContent: 'flex-end',
+  },
+  roadmapBanner: {
+    marginHorizontal: 20,
+    marginBottom: 24,
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  roadmapBannerGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    gap: 12,
+  },
+  roadmapBannerIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roadmapBannerTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  roadmapBannerSub: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '500',
+    marginTop: 2,
   },
 });

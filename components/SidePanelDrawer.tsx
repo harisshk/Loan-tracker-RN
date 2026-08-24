@@ -46,6 +46,7 @@ export default function SidePanelDrawer({ isOpen, onClose }: SidePanelDrawerProp
   ];
 
   const toolItems = [
+    { label: 'Repayment Roadmap', icon: 'map-outline', route: '/roadmap', color: '#ec4899' },
     { label: 'Debt-Free Calculator', icon: 'flag-outline', route: '/debt-free', color: '#38bdf8' },
     { label: 'Financial Plan', icon: 'trending-up', route: '/financial-plan', color: '#10b981' },
     { label: 'Loan Comparison', icon: 'git-compare-outline', route: '/compare-loans', color: '#a78bfa' },
