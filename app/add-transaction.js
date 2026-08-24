@@ -372,7 +372,12 @@ export default function AddTransaction() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.typeBtn, type === 'credit' && styles.typeBtnActiveCred]}
-              onPress={() => setType('credit')}
+              onPress={() => {
+                setType('credit');
+                if (category === 'EMI') {
+                  setCategory('Other');
+                }
+              }}
             >
               <Ionicons name="arrow-down" size={16} color={type === 'credit' ? '#fff' : '#10b981'} />
               <Text style={[styles.typeBtnText, type === 'credit' && styles.typeBtnTextActive]}>Credit (Received)</Text>

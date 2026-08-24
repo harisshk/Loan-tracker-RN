@@ -152,7 +152,7 @@ const parseGmailMessage = (bodyText, dateStr) => {
     id,
     amount,
     type,
-    category: classifyCategoryOffline(description),
+    category: classifyCategoryOffline(description, type),
     description,
     date: dateStr,
     source: 'gmail',

@@ -11,7 +11,7 @@ const RULES = {
   Grocery: ['grocery', 'supermarket', 'mart', 'dmart', 'grocer', 'instamart', 'blinkit', 'zepto', 'groceries', 'provision', 'bazaar'],
   Shopping: ['amazon', 'flipkart', 'myntra', 'hm', 'zara', 'mall', 'retail', 'reliance', 'clothing', 'ajio', 'meesho', 'nykaa', 'decathlon', 'shoppe', 'retailer', 'trends'],
   Vehicle: ['car', 'bike', 'vehicle', 'auto', 'mechanic', 'service', 'garage', 'servicing', 'repair', 'tyre', 'tire', 'parking', 'car wash', 'wash', 'spare parts', 'automobile', 'puc', 'challan', 'traffic fine', 'fastag', 'motor', 'vehicle spends'],
-  EMI: ['loan', 'emi', 'hdfc loan', 'sbi loan', 'mortgage', 'finance', 'credcard', 'cred'],
+  EMI: ['loan', 'emi', 'hdfc loan', 'sbi loan', 'mortgage', 'finance', 'credcard', 'cred app', 'cred pay', 'cred club'],
   Bills: ['electricity', 'water', 'gas', 'recharge', 'jio', 'airtel', 'bill', 'utility', 'broadband', 'wifi', 'bsnl', 'vi ', 'bescom', 'tata play', 'dth', 'postpaid'],
   Investment: ['zerodha', 'groww', 'mutual fund', 'sip', 'stock', 'investment', 'etf', 'crypto', 'coin', 'wazirx', 'binance', 'upstox', 'angelone', 'indmoney', 'kuvera'],
   Entertainment: ['netflix', 'spotify', 'prime video', 'hotstar', 'movie', 'cinema', 'theatre', 'booking', 'game', 'arcade', 'bookmyshow', 'disney', 'playstation', 'xbox', 'steam', 'youtube premium', 'sub', 'membership'],
@@ -25,11 +25,39 @@ const RULES = {
   'Gifts & Donations': ['gift', 'shagun', 'donation', 'charity', 'temple', 'birthday', 'anniversary', 'wedding', 'marriage', 'shadi', 'giftcard']
 };
 
-export const classifyCategoryOffline = (description) => {
+export const classifyCategoryOffline = (description, type = 'debit') => {
   if (!description) return 'Other';
   const cleanDesc = description.trim().toLowerCase();
+  const normalizedType = (type || 'debit').toLowerCase();
+
+  // If type is credit, check for explicit income/salary/investment keywords first
+  if (normalizedType === 'credit') {
+    if (
+      cleanDesc.includes('salary') ||
+      cleanDesc.includes('payroll') ||
+      cleanDesc.includes('stipend') ||
+      cleanDesc.includes('wages')
+    ) {
+      return 'Salary';
+    }
+    if (
+      cleanDesc.includes('dividend') ||
+      cleanDesc.includes('interest') ||
+      cleanDesc.includes('investment')
+    ) {
+      return 'Investment';
+    }
+    if (cleanDesc.includes('gift') || cleanDesc.includes('shagun')) {
+      return 'Gifts & Donations';
+    }
+  }
 
   for (const [category, keywords] of Object.entries(RULES)) {
+    // EMI is strictly an outflow (debit) category for loan payments, never for credit (received income)
+    if (category === 'EMI' && normalizedType === 'credit') {
+      continue;
+    }
+
     for (const keyword of keywords) {
       if (cleanDesc.includes(keyword)) {
         return category;
@@ -40,7 +68,7 @@ export const classifyCategoryOffline = (description) => {
   return 'Other';
 };
 
-export const getSmartCategory = (description) => {
+export const getSmartCategory = (description, type = 'debit') => {
   if (!description) return 'Other';
-  return classifyCategoryOffline(description);
+  return classifyCategoryOffline(description, type);
 };

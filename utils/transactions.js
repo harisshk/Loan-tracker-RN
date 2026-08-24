@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getSmartCategory } from './classifier';
+import { getSmartCategory, classifyCategoryOffline } from './classifier';
 
 const GENERATED_EMI_KEY = '@generated_emi_ids';
 
@@ -168,10 +168,20 @@ export const getTransactions = async (monthStr) => {
       const calculate_budget = hasOverride
         ? overrides[idStr]
         : (t.calculate_budget !== undefined ? (t.calculate_budget !== false) : true);
+      
+      const typeStr = (t.type || 'debit').toLowerCase();
+      let cat = t.category || 'Other';
+      // Re-classify any credit transaction that was mistakenly saved with 'EMI' category
+      if (typeStr === 'credit' && cat.toLowerCase() === 'emi') {
+        const reclassified = classifyCategoryOffline(t.description, 'credit');
+        cat = reclassified === 'EMI' ? 'Other' : reclassified;
+      }
+
       return {
         ...t,
         amount: parseFloat(t.amount || 0),
-        type: (t.type || 'debit').toLowerCase(),
+        type: typeStr,
+        category: cat,
         mode: normalizeMode(t.mode),
         calculate_budget,
         synced: true,
@@ -190,7 +200,7 @@ export const saveTransaction = async (transaction) => {
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     let finalCategory = transaction.category || 'Other';
     if (finalCategory === 'Other' && transaction.description) {
-      finalCategory = await getSmartCategory(transaction.description);
+      finalCategory = await getSmartCategory(transaction.description, transaction.type);
     }
 
     const txData = {
@@ -501,7 +511,7 @@ export const updateTransaction = async (updatedTx) => {
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     let finalCategory = updatedTx.category || 'Other';
     if (finalCategory === 'Other' && updatedTx.description) {
-      finalCategory = await getSmartCategory(updatedTx.description);
+      finalCategory = await getSmartCategory(updatedTx.description, updatedTx.type);
     }
 
     const { url, key } = await getSupabaseConfig();
