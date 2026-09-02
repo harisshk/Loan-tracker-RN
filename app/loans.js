@@ -119,7 +119,7 @@ export default function Loans() {
     let monthsElapsed =
       (today.getFullYear() - startDate.getFullYear()) * 12 +
       (today.getMonth() - startDate.getMonth());
-    if (today.getDate() >= startDate.getDate()) monthsElapsed++;
+    // Count only fully completed months — no +1 for current in-progress month
     monthsElapsed = Math.max(0, monthsElapsed);
 
     const extraPayments = payments.filter((p) => p.loanId === loan.id);
@@ -220,7 +220,7 @@ export default function Loans() {
             let monthsElapsed =
               (today.getFullYear() - startDate.getFullYear()) * 12 +
               (today.getMonth() - startDate.getMonth());
-            if (today.getDate() >= startDate.getDate()) monthsElapsed++;
+            // Count only fully completed months — no +1 for current in-progress month
             monthsElapsed = Math.max(0, monthsElapsed);
             const paymentsMade = Math.min(monthsElapsed, parseInt(loan.tenure));
 

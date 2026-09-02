@@ -77,10 +77,10 @@ export default function EMIPage() {
         let monthsElapsed = 0;
         if (loan.startDate) {
           const sd = new Date(loan.startDate);
+          // Count only fully completed months — no +1 for current in-progress month
           monthsElapsed =
             (today.getFullYear() - sd.getFullYear()) * 12 +
             (today.getMonth() - sd.getMonth());
-          if (today.getDate() >= sd.getDate()) monthsElapsed++;
           monthsElapsed = Math.max(0, monthsElapsed);
         }
 

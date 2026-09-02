@@ -101,10 +101,10 @@ export default function PrincipalRoadmapChart({
       let monthsElapsed = 0;
       if (loan.startDate) {
         const start = new Date(loan.startDate);
+        // Count only fully completed EMI months — no +1 for current in-progress month
         monthsElapsed =
           (TODAY.getFullYear() - start.getFullYear()) * 12 +
           (TODAY.getMonth() - start.getMonth());
-        if (TODAY.getDate() >= start.getDate()) monthsElapsed++;
         monthsElapsed = Math.max(0, monthsElapsed);
       }
 

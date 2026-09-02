@@ -85,12 +85,9 @@ export default function AmortizationSchedule() {
   const startDate = new Date(loan.startDate);
   const today = new Date();
   
+  // Count only fully completed EMI months — no +1 for current in-progress month
   let monthsElapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + 
                       (today.getMonth() - startDate.getMonth());
-  
-  if (today.getDate() >= startDate.getDate()) {
-    monthsElapsed += 1;
-  }
   
   monthsElapsed = Math.max(0, monthsElapsed);
 

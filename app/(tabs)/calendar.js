@@ -88,9 +88,9 @@ export default function CalendarScreen() {
       const extraPayments = payments.filter((p) => p.loanId === loan.id);
       
       const startDate = parseDateToLocal(loan.startDate);
+      // Count only fully completed months — no +1 for current in-progress month
       let monthsElapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + 
                           (today.getMonth() - startDate.getMonth());
-      if (today.getDate() >= startDate.getDate()) monthsElapsed += 1;
       monthsElapsed = Math.max(0, monthsElapsed);
 
       const breakdown = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emiAmount, loanType, extraPayments);

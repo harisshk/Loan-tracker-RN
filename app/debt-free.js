@@ -115,9 +115,12 @@ function buildLoanStates(loans, payments) {
     const loanType   = loan.loanType || 'emi';
     const start      = new Date(loan.startDate);
 
+    // Count only fully completed EMI months.
+    // Do NOT add +1 for the current in-progress month — doing so shortens
+    // tenureRemaining by 1 and causes the simulation to close the loan one
+    // month too early (e.g. Sep 2027 instead of the correct Aug 2027).
     let monthsElapsed = (TODAY.getFullYear() - start.getFullYear()) * 12 +
       (TODAY.getMonth() - start.getMonth());
-    if (TODAY.getDate() >= start.getDate()) monthsElapsed++;
     monthsElapsed = Math.max(0, monthsElapsed);
 
     const extraPayments = payments.filter(p => p.loanId === loan.id);

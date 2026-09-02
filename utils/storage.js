@@ -619,14 +619,9 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
       const startDate = new Date(loan.startDate);
       const currentTime = new Date();
       
-      // Calculate base months difference
+      // Count only fully completed EMI months — no +1 for current in-progress month
       monthsElapsed = (currentTime.getFullYear() - startDate.getFullYear()) * 12 + 
                       (currentTime.getMonth() - startDate.getMonth());
-      
-      // If current day >= start day, we've completed this month's payment
-      if (currentTime.getDate() >= startDate.getDate()) {
-        monthsElapsed += 1;
-      }
       
       monthsElapsed = Math.max(0, monthsElapsed);
     }

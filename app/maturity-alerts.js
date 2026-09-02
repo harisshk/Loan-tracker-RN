@@ -96,9 +96,9 @@ export default function MaturityAlerts() {
         const maturity = new Date(start.getFullYear(), start.getMonth() + tenure, start.getDate());
         const daysLeft = Math.ceil((maturity - today) / 86400000);
 
+        // Count only fully completed months — no +1 for current in-progress month
         let monthsElapsed = (today.getFullYear() - start.getFullYear()) * 12 +
           (today.getMonth() - start.getMonth());
-        if (today.getDate() >= start.getDate()) monthsElapsed++;
         monthsElapsed = Math.max(0, monthsElapsed);
 
         const extraPayments = payments.filter(p => p.loanId === loan.id);
