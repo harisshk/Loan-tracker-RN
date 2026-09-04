@@ -87,6 +87,7 @@ export default function CalendarScreen() {
       const emiAmount = parseFloat(loan.emiAmount) || 0;
       const extraPayments = payments.filter((p) => p.loanId === loan.id);
       
+      const startDate = parseDateToLocal(loan.startDate);
       let monthsElapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + 
                           (today.getMonth() - startDate.getMonth());
       if (today.getDate() >= startDate.getDate()) {
