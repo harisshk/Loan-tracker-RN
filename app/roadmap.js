@@ -73,10 +73,8 @@ export default function RepaymentRoadmap() {
       const loanType = l.loanType || 'emi';
       const startDate = l.startDate ? new Date(l.startDate) : new Date();
 
+      // Count only fully completed EMI months — matches Dashboard and storage.js exactly
       let elapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + (today.getMonth() - startDate.getMonth());
-      if (today.getDate() >= startDate.getDate()) {
-        elapsed += 1;
-      }
       elapsed = Math.max(0, elapsed);
 
       const loanPayments = payments.filter((p) => p.loanId === l.id);
