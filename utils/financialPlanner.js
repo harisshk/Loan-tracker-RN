@@ -57,9 +57,11 @@ export function generateFinancialPlan({
     .map((l) => {
       let monthsElapsed = 0;
       if (l.startDate) {
-        const start = new Date(l.startDate);
-        // Count only fully completed months — no +1 for current in-progress month
         monthsElapsed = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
+        if (today.getDate() >= start.getDate()) {
+          monthsElapsed += 1;
+        }
+        monthsElapsed = Math.max(0, monthsElapsed);
       }
       
       const principal = parseFloat(String(l.principal).replace(/,/g, '')) || 0;
