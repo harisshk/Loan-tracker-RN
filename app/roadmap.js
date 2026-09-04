@@ -50,7 +50,7 @@ export default function RepaymentRoadmap() {
     return calculateLoanStats(loans, payments);
   }, [loans, payments]);
 
-  // Generate Month-by-Month Projection Schedule starting from 10th of each month
+  // Generate Month-by-Month Projection Schedule aware of today's paid EMIs
   const roadmapData = useMemo(() => {
     if (!loans || loans.length === 0) return { months: [], totalInterest: 0, debtFreeDate: 'N/A' };
 
@@ -62,7 +62,7 @@ export default function RepaymentRoadmap() {
 
     const today = new Date();
     const startYear = today.getFullYear();
-    const startMonth = today.getMonth(); // 0-indexed (e.g. August = 7)
+    const startMonth = today.getMonth(); // 0-indexed (e.g. Sep = 8)
 
     // Calculate current remaining principal for each active loan RIGHT NOW
     const activeLoans = targetLoans.map((l) => {
@@ -72,10 +72,12 @@ export default function RepaymentRoadmap() {
       const tenure = parseInt(String(l.tenure || '0').replace(/,/g, '')) || 0;
       const loanType = l.loanType || 'emi';
       const startDate = l.startDate ? new Date(l.startDate) : new Date();
+      const dueDay = startDate.getDate() || 1;
 
       // Calculate months elapsed since start date (auto-count current month if today >= due date)
       let elapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + (today.getMonth() - startDate.getMonth());
-      if (today.getDate() >= startDate.getDate()) {
+      const isPaidThisMonth = today.getDate() >= dueDay;
+      if (isPaidThisMonth) {
         elapsed += 1;
       }
       elapsed = Math.max(0, elapsed);
@@ -84,19 +86,21 @@ export default function RepaymentRoadmap() {
       const breakdown = calculateEMIBreakdown(principal, interest, tenure, elapsed, emiAmount, loanType, loanPayments);
 
       const remainingPrincipal = breakdown.remainingPrincipalAmount;
-      const remainingTenure = Math.max(1, tenure - Math.min(elapsed, tenure));
+      const remainingTenure = Math.max(0, tenure - Math.min(elapsed, tenure));
       const monthlyRate = interest / 12 / 100;
 
       return {
         id: l.id,
         loanName: l.loanName || 'Loan',
         loanType,
+        dueDay,
+        isPaidThisMonth,
         monthlyRate,
         annualInterest: interest,
         emiAmount: breakdown.emi > 0 ? breakdown.emi : emiAmount,
         remainingPrincipal,
         tenureRemaining: remainingTenure,
-        closed: remainingPrincipal <= 0.01,
+        closed: remainingPrincipal <= 0.01 || remainingTenure <= 0,
       };
     });
 
@@ -107,7 +111,7 @@ export default function RepaymentRoadmap() {
 
     const emiLoansCount = activeLoans.filter((l) => l.loanType === 'emi').length;
 
-    // Month-by-Month loop: Project future 10th EMI payments for EMI loans
+    // Month-by-Month loop: Project upcoming EMI payments for EMI loans
     while (
       (emiLoansCount > 0 ? activeLoans.some((l) => l.loanType === 'emi' && !l.closed) : monthIdx < 12) &&
       monthIdx < MAX_MONTHS
@@ -116,20 +120,18 @@ export default function RepaymentRoadmap() {
       const monthLabel = currentProjDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
       const fullMonthLabel = currentProjDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
-      // Always calculate for the 10th of each month (EMIs paid date)
-      const dueDateObj = new Date(startYear, startMonth + monthIdx, 10);
-      const formattedDueDate = dueDateObj.toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      });
-
       let emiPrincipal = 0;
       let emiInterest = 0;
+      const activePayingDueDays = [];
 
-      // Deduct 10th EMI payments for active EMI loans
+      // Deduct EMI payments for active EMI loans due in this cycle
       activeLoans.forEach((l) => {
         if (l.closed || l.loanType === 'bullet') return; // Ignore bullet loan principal
+
+        // In the current month (monthIdx === 0): Only deduct loans that are STILL UPCOMING this month!
+        if (monthIdx === 0 && l.isPaidThisMonth) {
+          return; // Already paid today or earlier this month
+        }
 
         const iPaid = l.remainingPrincipal * l.monthlyRate;
         const emi = l.emiAmount;
@@ -145,13 +147,35 @@ export default function RepaymentRoadmap() {
 
         emiPrincipal += pPaid;
         emiInterest += iPaid;
+        activePayingDueDays.push(l.dueDay);
       });
+
+      // Format Due Date for this card
+      let displayDay = 10;
+      if (selectedLoanId !== 'all' && targetLoans.length === 1 && targetLoans[0].startDate) {
+        displayDay = new Date(targetLoans[0].startDate).getDate();
+      } else if (activePayingDueDays.length > 0) {
+        displayDay = activePayingDueDays[0];
+      }
+
+      const dueDateObj = new Date(startYear, startMonth + monthIdx, displayDay);
+      const formattedDueDate = dueDateObj.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
+
+      // If in current month and all loans were already paid, skip to month 1
+      if (monthIdx === 0 && emiPrincipal === 0 && emiInterest === 0) {
+        monthIdx++;
+        continue;
+      }
 
       cumulativeInterest += emiInterest;
       const endingOutstanding = activeLoans.reduce((sum, l) => sum + l.remainingPrincipal, 0);
 
       months.push({
-        monthIndex: monthIdx + 1,
+        monthIndex: months.length + 1,
         monthLabel,
         fullMonthLabel,
         formattedDueDate,
@@ -179,7 +203,7 @@ export default function RepaymentRoadmap() {
       report += `----------------------------------------\n`;
       report += `Outstanding Principal: ${fc(stats.totalPrincipalPending)}\n`;
       report += `Projected EMI Payoff Target: ${roadmapData.debtFreeDate}\n\n`;
-      report += `MONTHLY PROJECTION SCHEDULE (10TH OF EVERY MONTH):\n`;
+      report += `MONTHLY REPAYMENT SCHEDULE:\n`;
 
       roadmapData.months.slice(0, 36).forEach((m) => {
         report += `M${m.monthIndex} (${m.formattedDueDate}) | EMI: ${fc(m.totalEMIPaid)} (Prin: ${fc(m.totalPrincipal)}, Int: ${fc(m.totalInterest)}) | Pending Bal: ${fc(m.endingOutstanding)}\n`;
@@ -207,7 +231,7 @@ export default function RepaymentRoadmap() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Repayment Roadmap</Text>
-          <Text style={styles.headerSub}>Monthly Projections & Debt Payoff Schedule</Text>
+          <Text style={styles.headerSub}>Live Monthly Projections & Debt Payoff Schedule</Text>
         </View>
         <TouchableOpacity onPress={handleShareRoadmap} style={styles.shareBtn}>
           <Ionicons name="share-outline" size={20} color="#6366f1" />
@@ -229,7 +253,7 @@ export default function RepaymentRoadmap() {
                   ? fc(stats.totalPrincipalPending) 
                   : fc(roadmapData.months.length > 0 ? (roadmapData.months[0].endingOutstanding + roadmapData.months[0].totalPrincipal) : 0)}
               </Text>
-              <Text style={styles.metricSub}>Matches Dashboard Total</Text>
+              <Text style={styles.metricSub}>Live Dashboard Synced</Text>
             </View>
 
             <View style={styles.metricItem}>
@@ -273,7 +297,7 @@ export default function RepaymentRoadmap() {
 
         {/* Monthly Projection List */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionHeaderTitle}>MONTHLY PROJECTION LIST (EVERY 10TH)</Text>
+          <Text style={styles.sectionHeaderTitle}>MONTHLY REPAYMENT SCHEDULE</Text>
           <Text style={styles.sectionHeaderCount}>{roadmapData.months.length} Months Projected</Text>
         </View>
 
