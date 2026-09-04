@@ -1,43 +1,38 @@
-import {
-  Icon,
-  Label,
-  NativeTabs,
-  NativeTabTrigger,
-} from "expo-router/unstable-native-tabs";
+import { NativeTabs } from "expo-router/unstable-native-tabs";
 import React from "react";
 
 export default function TabLayout() {
   return (
     <NativeTabs>
-      <NativeTabTrigger name="index">
-        <Icon sf="house.fill" />
-        <Label>Loans</Label>
-      </NativeTabTrigger>
+      <NativeTabs.Trigger name="index">
+        <NativeTabs.Trigger.Icon sf="house.fill" />
+        <NativeTabs.Trigger.Label>Loans</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
 
-      <NativeTabTrigger name="spend-tracker">
-        <Icon sf="creditcard.fill" />
-        <Label>Spends</Label>
-      </NativeTabTrigger>
+      <NativeTabs.Trigger name="spend-tracker">
+        <NativeTabs.Trigger.Icon sf="creditcard.fill" />
+        <NativeTabs.Trigger.Label>Spends</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
 
-      <NativeTabTrigger name="analytics">
-        <Icon sf="calendar.badge.clock" />
-        <Label>EMI</Label>
-      </NativeTabTrigger>
+      <NativeTabs.Trigger name="analytics">
+        <NativeTabs.Trigger.Icon sf="calendar.badge.clock" />
+        <NativeTabs.Trigger.Label>EMI</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
 
-      <NativeTabTrigger name="calendar">
-        <Icon sf="calendar" />
-        <Label>Calendar</Label>
-      </NativeTabTrigger>
+      <NativeTabs.Trigger name="calendar">
+        <NativeTabs.Trigger.Icon sf="calendar" />
+        <NativeTabs.Trigger.Label>Calendar</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
 
-      <NativeTabTrigger name="ai-advisor">
-        <Icon sf="sparkles" />
-        <Label>AI Advisor</Label>
-      </NativeTabTrigger>
+      <NativeTabs.Trigger name="ai-advisor">
+        <NativeTabs.Trigger.Icon sf="sparkles" />
+        <NativeTabs.Trigger.Label>AI Advisor</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
 
-      <NativeTabTrigger name="settings">
-        <Icon sf="gearshape.fill" />
-        <Label>Settings</Label>
-      </NativeTabTrigger>
+      <NativeTabs.Trigger name="settings">
+        <NativeTabs.Trigger.Icon sf="gearshape.fill" />
+        <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
