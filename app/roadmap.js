@@ -106,7 +106,7 @@ export default function RepaymentRoadmap() {
 
     const emiLoansCount = activeLoans.filter((l) => l.loanType === 'emi').length;
 
-    // Month-by-Month loop: STRICTLY 2 EMI loans in count. Bullet loans interest ignored completely.
+    // Month-by-Month loop: Project future 10th EMI payments for EMI loans
     while (
       (emiLoansCount > 0 ? activeLoans.some((l) => l.loanType === 'emi' && !l.closed) : monthIdx < 12) &&
       monthIdx < MAX_MONTHS
@@ -126,34 +126,25 @@ export default function RepaymentRoadmap() {
       let emiPrincipal = 0;
       let emiInterest = 0;
 
-      if (monthIdx === 0) {
-        // Month 1 (10th August 2026): August EMIs are already paid! Balance = ₹33,41,584.
-        activeLoans.forEach((l) => {
-          if (!l.closed && l.loanType === 'emi') {
-            emiInterest += l.remainingPrincipal * l.monthlyRate;
-          }
-        });
-      } else {
-        // Month 2+ (10th Sep, 10th Oct, 10th Nov...): Deduct future 10th EMI payments ONLY for EMI loans
-        activeLoans.forEach((l) => {
-          if (l.closed || l.loanType === 'bullet') return; // Completely ignore bullet loan interest/principal
+      // Deduct 10th EMI payments for active EMI loans
+      activeLoans.forEach((l) => {
+        if (l.closed || l.loanType === 'bullet') return; // Ignore bullet loan principal
 
-          const iPaid = l.remainingPrincipal * l.monthlyRate;
-          const emi = l.emiAmount;
-          const pPaid = Math.min(l.remainingPrincipal, Math.max(0, emi - iPaid));
+        const iPaid = l.remainingPrincipal * l.monthlyRate;
+        const emi = l.emiAmount;
+        const pPaid = Math.min(l.remainingPrincipal, Math.max(0, emi - iPaid));
 
-          l.remainingPrincipal = Math.max(0, l.remainingPrincipal - pPaid);
-          l.tenureRemaining -= 1;
+        l.remainingPrincipal = Math.max(0, l.remainingPrincipal - pPaid);
+        l.tenureRemaining -= 1;
 
-          if (l.remainingPrincipal <= 0.01 || l.tenureRemaining <= 0) {
-            l.remainingPrincipal = 0;
-            l.closed = true;
-          }
+        if (l.remainingPrincipal <= 0.01 || l.tenureRemaining <= 0) {
+          l.remainingPrincipal = 0;
+          l.closed = true;
+        }
 
-          emiPrincipal += pPaid;
-          emiInterest += iPaid;
-        });
-      }
+        emiPrincipal += pPaid;
+        emiInterest += iPaid;
+      });
 
       cumulativeInterest += emiInterest;
       const endingOutstanding = activeLoans.reduce((sum, l) => sum + l.remainingPrincipal, 0);
@@ -309,17 +300,13 @@ export default function RepaymentRoadmap() {
                 {/* 10th Payment Date & Breakdown */}
                 <View style={styles.monthSummaryCol}>
                   <Text style={styles.dueDateText}>Date: {item.formattedDueDate}</Text>
-                  {item.monthIndex === 1 ? (
-                    <Text style={styles.paidStatusText}>✓ August EMIs Paid</Text>
-                  ) : (
-                    <View style={styles.breakdownRow}>
-                      <Text style={styles.emiTotalText}>EMI: {fc(item.totalEMIPaid)}</Text>
-                      <Text style={styles.dotSep}>•</Text>
-                      <Text style={styles.prinText}>Prin: {fc(item.totalPrincipal)}</Text>
-                      <Text style={styles.dotSep}>•</Text>
-                      <Text style={styles.intText}>Int: {fc(item.totalInterest)}</Text>
-                    </View>
-                  )}
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.emiTotalText}>EMI: {fc(item.totalEMIPaid)}</Text>
+                    <Text style={styles.dotSep}>•</Text>
+                    <Text style={styles.prinText}>Prin: {fc(item.totalPrincipal)}</Text>
+                    <Text style={styles.dotSep}>•</Text>
+                    <Text style={styles.intText}>Int: {fc(item.totalInterest)}</Text>
+                  </View>
                 </View>
 
                 {/* Ending Outstanding Balance */}
