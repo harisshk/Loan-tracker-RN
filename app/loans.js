@@ -94,6 +94,9 @@ export default function Loans() {
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const getNextDueDate = (loan) => {
+    if (!loan.startDate) return new Date(9999, 0);
+    const start  = new Date(loan.startDate);
+    const today  = new Date();
     const tenure = parseInt(loan.tenure) || 0;
 
     if (loan.loanType === "bullet") {
