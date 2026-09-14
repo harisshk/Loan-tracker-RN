@@ -1,24 +1,32 @@
-import React, { useState } from 'react';
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Dimensions,
-  RefreshControl,
-  Alert,
-  TextInput,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BarChart, ProgressChart } from 'react-native-chart-kit';
-import { calculateEMIBreakdown } from '../utils/emiCalculator';
-import { getLoans, getPayments, updateLoan, saveLoan, addPayment, deletePayment } from '../utils/storage';
+    Alert,
+    Dimensions,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+    calculateEMIBreakdown,
+    getBulletMaturityDate,
+    parseLocalDate,
+    toLocalISOString,
+} from "../utils/emiCalculator";
+import {
+    addPayment,
+    getLoans,
+    getPayments
+} from "../utils/storage";
 
-const { width } = Dimensions.get('window');
+const { width } = Dimensions.get("window");
 
 export default function LoanDetail() {
   const router = useRouter();
@@ -27,33 +35,33 @@ export default function LoanDetail() {
   const [refreshing, setRefreshing] = useState(false);
   const [extraPayments, setExtraPayments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [simulationAmount, setSimulationAmount] = useState('');
+  const [simulationAmount, setSimulationAmount] = useState("");
   const [loan, setLoan] = useState(null);
-  
+
   const loadData = async () => {
     try {
       setLoading(true);
       const allLoans = await getLoans();
       const allPayments = await getPayments();
-      const foundLoan = allLoans.find(l => l.id === params.id);
+      const foundLoan = allLoans.find((l) => l.id === params.id);
       if (foundLoan) {
         setLoan(foundLoan);
       } else {
         // Fallback to params
-        const lType = params.loanType || 'emi';
+        const lType = params.loanType || "emi";
         setLoan({
-          loanName: params.loanName || 'Loan Detail',
+          loanName: params.loanName || "Loan Detail",
           principal: parseFloat(params.principal) || 0,
           interest: parseFloat(params.interest) || 0,
           emiAmount: parseFloat(params.emiAmount) || 0,
           tenure: parseInt(params.tenure) || 0,
-          startDate: params.startDate || new Date().toISOString().split('T')[0],
+          startDate: params.startDate || new Date().toISOString().split("T")[0],
           loanType: lType,
         });
       }
-      setExtraPayments(allPayments.filter(p => p.loanId === params.id));
+      setExtraPayments(allPayments.filter((p) => p.loanId === params.id));
     } catch (e) {
-      console.error('Error loading loan details:', e);
+      console.error("Error loading loan details:", e);
     } finally {
       setLoading(false);
     }
@@ -64,35 +72,56 @@ export default function LoanDetail() {
   }, [params.id]);
 
   const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount || 0).toLocaleString('en-IN', {
+    return `₹${parseFloat(amount || 0).toLocaleString("en-IN", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     })}`;
   };
 
+  const formatDisplayDate = (date) => {
+    if (!date) return "N/A";
+    const d = date instanceof Date ? date : parseLocalDate(date);
+    return d.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
   if (loading || !loan) {
     return (
-      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      </LinearGradient>
+      <LinearGradient
+        colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
+        style={styles.container}
+      ></LinearGradient>
     );
   }
 
-  const loanType = loan.loanType || 'emi';
+  const loanType = loan.loanType || "emi";
 
   // Calculate months elapsed
-  const startDate = new Date(loan.startDate);
+  const startDate = parseLocalDate(loan.startDate);
   const today = new Date();
-  
+
   // Calculate base months difference
-  let monthsElapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + 
-                      (today.getMonth() - startDate.getMonth());
-  
+  let monthsElapsed =
+    (today.getFullYear() - startDate.getFullYear()) * 12 +
+    (today.getMonth() - startDate.getMonth());
+
   // If current day is >= start day, we've completed this month's payment
   if (today.getDate() >= startDate.getDate()) {
     monthsElapsed += 1;
   }
-  
+
   monthsElapsed = Math.max(0, monthsElapsed);
+
+  const bulletRenewalDate =
+    loanType === "bullet"
+      ? getBulletMaturityDate(loan.startDate, loan.tenure)
+      : null;
+  const daysToRenewal = bulletRenewalDate
+    ? Math.ceil((bulletRenewalDate.getTime() - today.getTime()) / 86400000)
+    : 0;
 
   // Calculate EMI breakdown using proper amortization
   // Use the user-provided EMI amount for accurate calculation
@@ -102,45 +131,70 @@ export default function LoanDetail() {
     loan.tenure,
     monthsElapsed,
     loan.emiAmount,
-    params.loanType || 'emi',
-    extraPayments
+    loanType,
+    extraPayments,
   );
 
   // Log calculation details for verification
-  const currentMonth = today.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  const currentMonth = today.toLocaleDateString("en-IN", {
+    month: "short",
+    year: "numeric",
+  });
   const paymentDueDay = startDate.getDate();
   const isCurrentMonthPaid = today.getDate() >= paymentDueDay;
-  
-  console.log('=== EMI Calculation Details ===');
-  console.log('Principal:', loan.principal);
-  console.log('Interest Rate:', loan.interest + '%');
-  console.log('Tenure:', loan.tenure, 'months');
-  console.log('User EMI Amount:', loan.emiAmount, '(using this for calculation)');
-  console.log('---');
-  console.log('Start Date:', startDate.toLocaleDateString('en-IN'));
-  console.log('Today:', today.toLocaleDateString('en-IN'));
-  console.log('Payment Due Day:', paymentDueDay + 'th of each month');
-  console.log('Current Month (' + currentMonth + '):', isCurrentMonthPaid ? '✓ PAID (counted)' : '✗ NOT YET PAID');
-  console.log('Months Elapsed:', monthsElapsed, '(payments counted)');
-  console.log('---');
-  console.log('Principal Paid:', breakdown.principalPaid.toFixed(2));
-  console.log('Interest Paid:', breakdown.interestPaid.toFixed(2));
-  console.log('Total Paid:', breakdown.totalPaid.toFixed(2));
-  console.log('---');
-  console.log('Remaining Principal:', breakdown.remainingPrincipalAmount.toFixed(2), '← This is AFTER', monthsElapsed, 'payments');
-  console.log('Remaining Interest:', breakdown.remainingInterestAmount.toFixed(2));
-  console.log('Total Remaining:', breakdown.remainingAmount.toFixed(2));
-  console.log('---');
-  console.log('Total Interest (Full Tenure):', breakdown.totalInterest.toFixed(2));
-  console.log('Total Amount (Full Tenure):', breakdown.totalAmount.toFixed(2));
-  console.log('===============================');
+
+  console.log("=== EMI Calculation Details ===");
+  console.log("Principal:", loan.principal);
+  console.log("Interest Rate:", loan.interest + "%");
+  console.log("Tenure:", loan.tenure, "months");
+  console.log(
+    "User EMI Amount:",
+    loan.emiAmount,
+    "(using this for calculation)",
+  );
+  console.log("---");
+  console.log("Start Date:", startDate.toLocaleDateString("en-IN"));
+  console.log("Today:", today.toLocaleDateString("en-IN"));
+  console.log("Payment Due Day:", paymentDueDay + "th of each month");
+  console.log(
+    "Current Month (" + currentMonth + "):",
+    isCurrentMonthPaid ? "✓ PAID (counted)" : "✗ NOT YET PAID",
+  );
+  console.log("Months Elapsed:", monthsElapsed, "(payments counted)");
+  console.log("---");
+  console.log("Principal Paid:", breakdown.principalPaid.toFixed(2));
+  console.log("Interest Paid:", breakdown.interestPaid.toFixed(2));
+  console.log("Total Paid:", breakdown.totalPaid.toFixed(2));
+  console.log("---");
+  console.log(
+    "Remaining Principal:",
+    breakdown.remainingPrincipalAmount.toFixed(2),
+    "← This is AFTER",
+    monthsElapsed,
+    "payments",
+  );
+  console.log(
+    "Remaining Interest:",
+    breakdown.remainingInterestAmount.toFixed(2),
+  );
+  console.log("Total Remaining:", breakdown.remainingAmount.toFixed(2));
+  console.log("---");
+  console.log(
+    "Total Interest (Full Tenure):",
+    breakdown.totalInterest.toFixed(2),
+  );
+  console.log("Total Amount (Full Tenure):", breakdown.totalAmount.toFixed(2));
+  console.log("===============================");
 
   const getSimulationResult = () => {
     if (!simulationAmount) return null;
-    const simAmount = parseFloat(simulationAmount.replace(/,/g, ''));
+    const simAmount = parseFloat(simulationAmount.replace(/,/g, ""));
     if (isNaN(simAmount) || simAmount <= 0) return null;
 
-    const simulatedExtra = [...extraPayments, { amount: simAmount, date: new Date().toISOString() }];
+    const simulatedExtra = [
+      ...extraPayments,
+      { amount: simAmount, date: new Date().toISOString() },
+    ];
     const simBreakdown = calculateEMIBreakdown(
       loan.principal,
       loan.interest,
@@ -148,13 +202,16 @@ export default function LoanDetail() {
       monthsElapsed,
       loan.emiAmount,
       loan.loanType,
-      simulatedExtra
+      simulatedExtra,
     );
 
-    const interestSaved = Math.max(0, breakdown.remainingInterestAmount - simBreakdown.remainingInterestAmount);
+    const interestSaved = Math.max(
+      0,
+      breakdown.remainingInterestAmount - simBreakdown.remainingInterestAmount,
+    );
 
     let monthsShortened = 0;
-    if (loan.loanType !== 'bullet' && loan.emiAmount > 0) {
+    if (loan.loanType !== "bullet" && loan.emiAmount > 0) {
       let simulatedRemainingMonths = 0;
       let tempPrincipal = simBreakdown.remainingPrincipalAmount;
       const monthlyRate = loan.interest / 12 / 100;
@@ -176,7 +233,10 @@ export default function LoanDetail() {
         currentRemainingMonths++;
       }
 
-      monthsShortened = Math.max(0, currentRemainingMonths - simulatedRemainingMonths);
+      monthsShortened = Math.max(
+        0,
+        currentRemainingMonths - simulatedRemainingMonths,
+      );
     }
 
     return {
@@ -199,82 +259,80 @@ export default function LoanDetail() {
   const handleCloseLoan = () => {
     // Only pay the remaining balance to completely close the loan
     router.push({
-      pathname: '/renew-loan',
+      pathname: "/renew-loan",
       params: {
         id: params.id,
-        action: 'close',
+        action: "close",
         loanName: loan.loanName,
         remainingAmount: breakdown.remainingAmount, // Full P + I
-      }
+      },
     });
   };
 
   const handleLogExtraPayment = () => {
     Alert.prompt(
-      'Log Extra Payment',
-      'Enter the amount you paid towards the principal:',
+      "Log Extra Payment",
+      "Enter the amount you paid towards the principal:",
       [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Save', 
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Save",
           onPress: async (amount) => {
-            if (!amount || isNaN(amount.replace(/,/g, ''))) {
-              Alert.alert('Error', 'Please enter a valid amount');
+            if (!amount || isNaN(amount.replace(/,/g, ""))) {
+              Alert.alert("Error", "Please enter a valid amount");
               return;
             }
             try {
               await addPayment({
                 loanId: params.id,
-                amount: amount.replace(/,/g, ''),
-                date: new Date().toISOString().split('T')[0],
-                note: 'Extra Payment'
+                amount: amount.replace(/,/g, ""),
+                date: new Date().toISOString().split("T")[0],
+                note: "Extra Payment",
               });
               await loadData();
-              Alert.alert('Success', 'Payment logged successfully');
+              Alert.alert("Success", "Payment logged successfully");
             } catch (err) {
-              Alert.alert('Error', 'Failed to save payment');
+              Alert.alert("Error", "Failed to save payment");
             }
-          }
-        }
+          },
+        },
       ],
-      'plain-text',
-      '',
-      'numeric'
+      "plain-text",
+      "",
+      "numeric",
     );
   };
 
   const handleRenewLoan = () => {
     // Pay interest, set new principal, set new interest
+    const renewalDateStr = toLocalISOString(
+      getBulletMaturityDate(loan.startDate, loan.tenure),
+    );
     router.push({
-      pathname: '/renew-loan',
+      pathname: "/renew-loan",
       params: {
         id: params.id,
-        action: 'renew',
+        action: "renew",
         loanName: loan.loanName,
         remainingInterest: breakdown.remainingInterestAmount,
         oldPrincipal: loan.principal,
         oldInterestRate: loan.interest,
-        oldMaturity: (() => {
-          const m = new Date(loan.startDate);
-          m.setMonth(m.getMonth() + parseInt(loan.tenure));
-          return m.toISOString().split('T')[0];
-        })(),
-      }
+        oldMaturity: renewalDateStr,
+      },
     });
   };
 
-
   // Progress chart data
   const progressData = {
-    labels: ['Paid', 'Remaining'],
+    labels: ["Paid", "Remaining"],
     data: [progress, 1 - progress],
-    colors: ['#10b981', '#e11d48'],
+    colors: ["#10b981", "#e11d48"],
   };
 
   const chartConfig = {
-    backgroundColor: 'transparent',
-    backgroundGradientFrom: 'rgba(255, 255, 255, 0.05)',
-    backgroundGradientTo: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: "transparent",
+    backgroundGradientFrom: "rgba(255, 255, 255, 0.05)",
+    backgroundGradientTo: "rgba(255, 255, 255, 0.05)",
     decimalPlaces: 0,
     color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`,
     labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity * 0.8})`,
@@ -282,22 +340,22 @@ export default function LoanDetail() {
       borderRadius: 30,
     },
     propsForBackgroundLines: {
-      strokeDasharray: '',
-      stroke: 'rgba(0, 0, 0, 0.05)',
+      strokeDasharray: "",
+      stroke: "rgba(0, 0, 0, 0.05)",
       strokeWidth: 1,
     },
     propsForLabels: {
       fontSize: 12,
-      fontWeight: '600',
+      fontWeight: "600",
     },
   };
 
   const progressChartConfig = {
-    backgroundColor: 'transparent',
-    backgroundGradientFrom: 'rgba(255, 255, 255, 0.05)',
-    backgroundGradientTo: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: "transparent",
+    backgroundGradientFrom: "rgba(255, 255, 255, 0.05)",
+    backgroundGradientTo: "rgba(255, 255, 255, 0.05)",
     color: (opacity = 1, index) => {
-      const colors = ['rgba(16, 185, 129, 1)', 'rgba(225, 29, 72, 1)'];
+      const colors = ["rgba(16, 185, 129, 1)", "rgba(225, 29, 72, 1)"];
       return colors[index] || colors[0];
     },
     labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity * 0.8})`,
@@ -309,14 +367,17 @@ export default function LoanDetail() {
 
   return (
     <LinearGradient
-      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
+      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
       style={styles.container}
     >
-      <ScrollView 
-        contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: Math.max(insets.top, 20) + 10 },
+        ]}
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
+          <RefreshControl
+            refreshing={refreshing}
             onRefresh={onRefresh}
             tintColor="#10b981"
           />
@@ -328,20 +389,22 @@ export default function LoanDetail() {
             <TouchableOpacity onPress={() => router.back()}>
               <Text style={styles.backButton}>← Back</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              onPress={() => router.push({
-                pathname: '/edit-loan',
-                params: {
-                  id: params.id,
-                  loanName: loan.loanName,
-                  loanType: loan.loanType,
-                  principal: loan.principal,
-                  interest: loan.interest,
-                  emiAmount: loan.emiAmount,
-                  tenure: loan.tenure,
-                  startDate: loan.startDate,
-                },
-              })}
+            <TouchableOpacity
+              onPress={() =>
+                router.push({
+                  pathname: "/edit-loan",
+                  params: {
+                    id: params.id,
+                    loanName: loan.loanName,
+                    loanType: loan.loanType,
+                    principal: loan.principal,
+                    interest: loan.interest,
+                    emiAmount: loan.emiAmount,
+                    tenure: loan.tenure,
+                    startDate: loan.startDate,
+                  },
+                })
+              }
             >
               <Text style={styles.editButton}>Edit</Text>
             </TouchableOpacity>
@@ -351,8 +414,9 @@ export default function LoanDetail() {
 
         {/* Loan Summary Card (Vibrant Gradient UI) */}
         <LinearGradient
-          colors={['#0f172a', '#1e293b']}
-          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          colors={["#0f172a", "#1e293b"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
           style={styles.heroCardDetail}
         >
           <View style={styles.heroGlowDetail1} />
@@ -372,7 +436,9 @@ export default function LoanDetail() {
               </View>
               <View style={styles.summaryItemDetail}>
                 <Text style={styles.summaryItemLabelDetail}>Interest</Text>
-                <Text style={[styles.summaryItemValueDetail, { color: '#fb923c' }]}>
+                <Text
+                  style={[styles.summaryItemValueDetail, { color: "#fb923c" }]}
+                >
                   {formatCurrency(breakdown.totalInterest)}
                 </Text>
               </View>
@@ -384,7 +450,7 @@ export default function LoanDetail() {
         <BlurView intensity={20} tint="light" style={styles.summaryCardPaid}>
           <View style={styles.cardContent}>
             <Text style={styles.summaryLabel}>Total Paid Till Now</Text>
-            <Text style={[styles.summaryAmount, { color: '#10b981' }]}>
+            <Text style={[styles.summaryAmount, { color: "#10b981" }]}>
               {formatCurrency(breakdown.totalPaid)}
             </Text>
             <View style={styles.summaryRow}>
@@ -405,16 +471,20 @@ export default function LoanDetail() {
         </BlurView>
 
         {/* Total Remaining Balance Card (Soft Alert Tint Card) */}
-        <BlurView intensity={20} tint="light" style={styles.summaryCardOutstanding}>
+        <BlurView
+          intensity={20}
+          tint="light"
+          style={styles.summaryCardOutstanding}
+        >
           <View style={styles.cardContent}>
             <Text style={styles.summaryLabel}>Total Outstanding Balance</Text>
-            <Text style={[styles.summaryAmount, { color: '#e11d48' }]}>
+            <Text style={[styles.summaryAmount, { color: "#e11d48" }]}>
               {formatCurrency(breakdown.remainingAmount)}
             </Text>
             <View style={styles.summaryRow}>
               <View style={styles.summaryItem}>
                 <Text style={styles.summaryItemLabel}>Remaining Principal</Text>
-                <Text style={[styles.summaryItemValue, { color: '#e11d48' }]}>
+                <Text style={[styles.summaryItemValue, { color: "#e11d48" }]}>
                   {formatCurrency(breakdown.remainingPrincipalAmount)}
                 </Text>
               </View>
@@ -427,79 +497,158 @@ export default function LoanDetail() {
             </View>
           </View>
         </BlurView>
-        {/* Payment Progress — EMI loans only */}
-        {loanType !== 'bullet' && (
-          <BlurView intensity={20} tint="light" style={styles.chartCard}>
-            <View style={styles.cardContent}>
-              <Text style={styles.chartTitle}>Payment Progress</Text>
-              <Text style={styles.chartSubtitle}>
-                {breakdown.paymentsMade} of {loan.tenure} EMIs completed
+        {/* Payment / Tenure Progress */}
+        <BlurView intensity={20} tint="light" style={styles.chartCard}>
+          <View style={styles.cardContent}>
+            <Text style={styles.chartTitle}>
+              {loanType === "bullet"
+                ? "Tenure & Renewal Progress"
+                : "Payment Progress"}
+            </Text>
+            <Text style={styles.chartSubtitle}>
+              {loanType === "bullet"
+                ? `${Math.min(monthsElapsed, loan.tenure)} of ${loan.tenure} months elapsed${daysToRenewal >= 0 ? ` · ${daysToRenewal} days until renewal` : " · Due for renewal"}`
+                : `${breakdown.paymentsMade} of ${loan.tenure} EMIs completed`}
+            </Text>
+            <View style={styles.progressContainer}>
+              <View style={styles.progressBar}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: `${Math.min(1, Math.max(0, loanType === "bullet" ? (loan.tenure > 0 ? monthsElapsed / loan.tenure : 0) : progress)) * 100}%`,
+                      backgroundColor:
+                        loanType === "bullet" ? "#f59e0b" : "#10b981",
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.progressText}>
+                {Math.round(
+                  Math.min(
+                    1,
+                    Math.max(
+                      0,
+                      loanType === "bullet"
+                        ? loan.tenure > 0
+                          ? monthsElapsed / loan.tenure
+                          : 0
+                        : progress,
+                    ),
+                  ) * 100,
+                )}
+                % Elapsed
               </Text>
-              <View style={styles.progressContainer}>
-                <View style={styles.progressBar}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${progress * 100}%` },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.progressText}>
-                  {Math.round(progress * 100)}% Complete
+            </View>
+            <View style={styles.progressStats}>
+              <View style={styles.progressStatItem}>
+                <View
+                  style={[
+                    styles.statDot,
+                    {
+                      backgroundColor:
+                        loanType === "bullet" ? "#f59e0b" : "#10b981",
+                    },
+                  ]}
+                />
+                <Text style={styles.statLabel}>
+                  {loanType === "bullet" ? "Elapsed" : "Paid"}
+                </Text>
+                <Text style={styles.statValue}>
+                  {loanType === "bullet"
+                    ? `${Math.min(monthsElapsed, loan.tenure)} Mo`
+                    : `${breakdown.paymentsMade} EMIs`}
                 </Text>
               </View>
-              <View style={styles.progressStats}>
+              <View style={styles.progressStatItem}>
+                <View
+                  style={[styles.statDot, { backgroundColor: "#e11d48" }]}
+                />
+                <Text style={styles.statLabel}>Remaining</Text>
+                <Text style={styles.statValue}>
+                  {loanType === "bullet"
+                    ? `${Math.max(0, loan.tenure - monthsElapsed)} Mo`
+                    : `${loan.tenure - breakdown.paymentsMade} EMIs`}
+                </Text>
+              </View>
+              {loanType === "bullet" && (
                 <View style={styles.progressStatItem}>
-                  <View style={[styles.statDot, { backgroundColor: '#10b981' }]} />
-                  <Text style={styles.statLabel}>Paid</Text>
-                  <Text style={styles.statValue}>{breakdown.paymentsMade} EMIs</Text>
-                </View>
-                <View style={styles.progressStatItem}>
-                  <View style={[styles.statDot, { backgroundColor: '#e11d48' }]} />
-                  <Text style={styles.statLabel}>Remaining</Text>
-                  <Text style={styles.statValue}>
-                    {loan.tenure - breakdown.paymentsMade} EMIs
+                  <View
+                    style={[styles.statDot, { backgroundColor: "#38bdf8" }]}
+                  />
+                  <Text style={styles.statLabel}>Renewal Date</Text>
+                  <Text style={[styles.statValue, { fontSize: 13 }]}>
+                    {formatDisplayDate(bulletRenewalDate)}
                   </Text>
                 </View>
-              </View>
+              )}
             </View>
-          </BlurView>
-        )}
+          </View>
+        </BlurView>
 
         {/* Loan Details */}
         <BlurView intensity={20} tint="light" style={styles.detailsCard}>
           <View style={styles.cardContent}>
-            <Text style={styles.chartTitle}>{loanType === 'bullet' ? 'Bullet Loan Details' : 'EMI Details'}</Text>
+            <Text style={styles.chartTitle}>
+              {loanType === "bullet" ? "Bullet Loan Details" : "EMI Details"}
+            </Text>
             <View style={styles.detailsGrid}>
-              {loanType === 'bullet' ? (
+              {loanType === "bullet" ? (
                 <>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Loan Type</Text>
-                    <Text style={[styles.detailValue, { color: '#f59e0b' }]}>Bullet / Gold</Text>
+                    <Text style={[styles.detailValue, { color: "#f59e0b" }]}>
+                      🥇 Bullet / Gold
+                    </Text>
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Interest Rate</Text>
-                    <Text style={styles.detailValue}>{loan.interest}% p.a.</Text>
+                    <Text style={styles.detailValue}>
+                      {loan.interest}% p.a.
+                    </Text>
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Tenure</Text>
                     <Text style={styles.detailValue}>{loan.tenure} months</Text>
                   </View>
                   <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Lump Sum Due at Maturity</Text>
-                    <Text style={[styles.detailValue, { color: '#e11d48' }]}>
+                    <Text style={styles.detailLabel}>Renewal Date</Text>
+                    <Text
+                      style={[
+                        styles.detailValue,
+                        { color: "#f59e0b", fontWeight: "700" },
+                      ]}
+                    >
+                      {formatDisplayDate(bulletRenewalDate)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Monthly Interest</Text>
+                    <Text style={[styles.detailValue, { color: "#fb923c" }]}>
+                      {formatCurrency(
+                        breakdown.monthlyInterest ||
+                          (loan.principal * loan.interest) / 1200,
+                      )}{" "}
+                      / mo
+                    </Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>
+                      Lump Sum Due at Maturity
+                    </Text>
+                    <Text style={[styles.detailValue, { color: "#e11d48" }]}>
                       {formatCurrency(breakdown.totalAmount)}
                     </Text>
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Extra Payments Made</Text>
-                    <Text style={[styles.detailValue, { color: '#10b981' }]}>
+                    <Text style={[styles.detailValue, { color: "#10b981" }]}>
                       {formatCurrency(breakdown.principalPaid)}
                     </Text>
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Remaining Balance</Text>
-                    <Text style={[styles.detailValue, { color: '#e11d48' }]}>
+                    <Text style={[styles.detailValue, { color: "#e11d48" }]}>
                       {formatCurrency(breakdown.remainingAmount)}
                     </Text>
                   </View>
@@ -514,7 +663,9 @@ export default function LoanDetail() {
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Interest Rate</Text>
-                    <Text style={styles.detailValue}>{loan.interest}% p.a.</Text>
+                    <Text style={styles.detailValue}>
+                      {loan.interest}% p.a.
+                    </Text>
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Tenure</Text>
@@ -522,13 +673,13 @@ export default function LoanDetail() {
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Total Paid</Text>
-                    <Text style={[styles.detailValue, { color: '#10b981' }]}>
+                    <Text style={[styles.detailValue, { color: "#10b981" }]}>
                       {formatCurrency(breakdown.totalPaid)}
                     </Text>
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Remaining Balance</Text>
-                    <Text style={[styles.detailValue, { color: '#e11d48' }]}>
+                    <Text style={[styles.detailValue, { color: "#e11d48" }]}>
                       {formatCurrency(breakdown.remainingAmount)}
                     </Text>
                   </View>
@@ -539,39 +690,57 @@ export default function LoanDetail() {
         </BlurView>
 
         {/* Prepayment Simulator Card — active loans only */}
-        {params.status !== 'closed' && (
+        {params.status !== "closed" && (
           <BlurView intensity={20} tint="light" style={styles.simulatorCard}>
             <View style={styles.cardContent}>
               <Text style={styles.chartTitle}>🔮 Prepayment Simulator</Text>
               <Text style={styles.chartSubtitle}>
                 See how much time and interest you save by prepaying principal.
               </Text>
-              
+
               <View style={styles.simInputContainer}>
-                <Text style={styles.simInputLabel}>Simulated Prepayment (₹)</Text>
+                <Text style={styles.simInputLabel}>
+                  Simulated Prepayment (₹)
+                </Text>
                 <TextInput
                   style={styles.simInput}
                   keyboardType="numeric"
                   placeholder="e.g. 10000"
                   placeholderTextColor="rgba(15, 23, 42, 0.3)"
                   value={simulationAmount}
-                  onChangeText={(val) => setSimulationAmount(val.replace(/[^0-9]/g, ''))}
+                  onChangeText={(val) =>
+                    setSimulationAmount(val.replace(/[^0-9]/g, ""))
+                  }
                 />
               </View>
 
               {simResult ? (
                 <View style={styles.simResultsContainer}>
                   <View style={styles.simResultRow}>
-                    <View style={[styles.simResultCard, { backgroundColor: 'rgba(16, 185, 129, 0.08)' }]}>
+                    <View
+                      style={[
+                        styles.simResultCard,
+                        { backgroundColor: "rgba(16, 185, 129, 0.08)" },
+                      ]}
+                    >
                       <Text style={styles.simResultLabel}>Interest Saved</Text>
-                      <Text style={[styles.simResultVal, { color: '#10b981' }]}>
+                      <Text style={[styles.simResultVal, { color: "#10b981" }]}>
                         {formatCurrency(simResult.interestSaved)}
                       </Text>
                     </View>
-                    {loan.loanType !== 'bullet' && (
-                      <View style={[styles.simResultCard, { backgroundColor: 'rgba(56, 189, 248, 0.08)' }]}>
-                        <Text style={styles.simResultLabel}>Tenure Reduced</Text>
-                        <Text style={[styles.simResultVal, { color: '#0284c7' }]}>
+                    {loan.loanType !== "bullet" && (
+                      <View
+                        style={[
+                          styles.simResultCard,
+                          { backgroundColor: "rgba(56, 189, 248, 0.08)" },
+                        ]}
+                      >
+                        <Text style={styles.simResultLabel}>
+                          Tenure Reduced
+                        </Text>
+                        <Text
+                          style={[styles.simResultVal, { color: "#0284c7" }]}
+                        >
                           {simResult.monthsShortened} months
                         </Text>
                       </View>
@@ -580,8 +749,8 @@ export default function LoanDetail() {
 
                   <View style={styles.simNewDetails}>
                     <Text style={styles.simNewText}>
-                      New Remaining Balance:{' '}
-                      <Text style={{ fontWeight: 'bold', color: '#e11d48' }}>
+                      New Remaining Balance:{" "}
+                      <Text style={{ fontWeight: "bold", color: "#e11d48" }}>
                         {formatCurrency(simResult.newRemainingAmount)}
                       </Text>
                     </Text>
@@ -598,50 +767,64 @@ export default function LoanDetail() {
 
         {/* Action Buttons */}
         <View style={styles.actionGrid}>
-          {loanType === 'bullet' && params.status !== 'closed' && (
+          {loanType === "bullet" && params.status !== "closed" && (
             <>
-              <TouchableOpacity style={styles.actionBtnRenew} onPress={handleRenewLoan}>
+              <TouchableOpacity
+                style={styles.actionBtnRenew}
+                onPress={handleRenewLoan}
+              >
                 <Text style={styles.actionBtnText}>🔄 Renew</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.actionBtnClose} onPress={handleCloseLoan}>
+              <TouchableOpacity
+                style={styles.actionBtnClose}
+                onPress={handleCloseLoan}
+              >
                 <Text style={styles.actionBtnText}>✅ Close</Text>
               </TouchableOpacity>
             </>
           )}
-          {params.status !== 'closed' && (
-            <TouchableOpacity style={styles.actionBtnLog} onPress={handleLogExtraPayment}>
+          {params.status !== "closed" && (
+            <TouchableOpacity
+              style={styles.actionBtnLog}
+              onPress={handleLogExtraPayment}
+            >
               <Text style={styles.actionBtnText}>💰 Log Extra Payment</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {/* View Schedule Button — EMI loans only */}
-        {loanType !== 'bullet' && (
-          <TouchableOpacity
-            style={styles.scheduleButton}
-            onPress={() => router.push({
-              pathname: '/amortization',
+        {/* View Schedule Button — available for all loans */}
+        <TouchableOpacity
+          style={styles.scheduleButton}
+          onPress={() =>
+            router.push({
+              pathname: "/amortization",
               params: {
                 id: params.id,
                 loanName: loan.loanName,
+                loanType: loanType,
                 principal: loan.principal,
                 interest: loan.interest,
-                emiAmount: loan.emiAmount,
+                emiAmount: loan.emiAmount || 0,
                 tenure: loan.tenure,
                 startDate: loan.startDate,
               },
-            })}
-          >
-            <BlurView intensity={25} tint="light" style={styles.scheduleBlur}>
-              <Text style={styles.scheduleButtonText}>
-                📊 View Payment Schedule
-              </Text>
-              <Text style={styles.scheduleButtonSubtext}>
-                See month-by-month breakdown
-              </Text>
-            </BlurView>
-          </TouchableOpacity>
-        )}
+            })
+          }
+        >
+          <BlurView intensity={25} tint="light" style={styles.scheduleBlur}>
+            <Text style={styles.scheduleButtonText}>
+              {loanType === "bullet"
+                ? "📊 View Interest & Maturity Schedule"
+                : "📊 View Payment Schedule"}
+            </Text>
+            <Text style={styles.scheduleButtonSubtext}>
+              {loanType === "bullet"
+                ? "See monthly interest accrual & renewal breakdown"
+                : "See month-by-month breakdown"}
+            </Text>
+          </BlurView>
+        </TouchableOpacity>
       </ScrollView>
     </LinearGradient>
   );
@@ -660,182 +843,182 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
   backButton: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#10b981',
+    fontWeight: "600",
+    color: "#10b981",
   },
   editButton: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#10b981',
+    fontWeight: "600",
+    color: "#10b981",
   },
   headerTitle: {
     fontSize: 34,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
   },
   summaryCard: {
     borderRadius: 30,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
   },
   summaryCardPaid: {
     borderRadius: 28,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 20,
     borderWidth: 1.5,
-    borderColor: 'rgba(16, 185, 129, 0.15)',
-    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+    borderColor: "rgba(16, 185, 129, 0.15)",
+    backgroundColor: "rgba(255, 255, 255, 0.75)",
   },
   summaryCardOutstanding: {
     borderRadius: 28,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 20,
     borderWidth: 1.5,
-    borderColor: 'rgba(225, 29, 72, 0.15)',
-    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+    borderColor: "rgba(225, 29, 72, 0.15)",
+    backgroundColor: "rgba(255, 255, 255, 0.75)",
   },
   heroCardDetail: {
     borderRadius: 28,
     padding: 24,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 20,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.2,
     shadowRadius: 14,
     elevation: 6,
   },
   heroGlowDetail1: {
-    position: 'absolute',
+    position: "absolute",
     top: -50,
     right: -20,
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: 'rgba(56,189,248,0.15)',
+    backgroundColor: "rgba(56,189,248,0.15)",
   },
   heroGlowDetail2: {
-    position: 'absolute',
+    position: "absolute",
     bottom: -50,
     left: -20,
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(16,185,129,0.1)',
+    backgroundColor: "rgba(16,185,129,0.1)",
   },
   cardContentDetail: {
-    backgroundColor: 'transparent',
+    backgroundColor: "transparent",
   },
   heroSubtitleDetail: {
     fontSize: 13,
-    color: 'rgba(255,255,255,0.6)',
-    textTransform: 'uppercase',
+    color: "rgba(255,255,255,0.6)",
+    textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 6,
   },
   heroTitleDetail: {
     fontSize: 38,
-    fontWeight: '800',
-    color: '#fff',
+    fontWeight: "800",
+    color: "#fff",
     letterSpacing: -1,
   },
   heroDividerDetail: {
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: "rgba(255,255,255,0.1)",
     marginVertical: 18,
   },
   summaryRowDetail: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 16,
   },
   summaryItemDetail: {
     flex: 1,
     padding: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: "rgba(255, 255, 255, 0.08)",
   },
   summaryItemLabelDetail: {
     fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: "rgba(255, 255, 255, 0.5)",
     marginBottom: 4,
   },
   summaryItemValueDetail: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#10b981',
+    fontWeight: "700",
+    color: "#10b981",
   },
   cardContent: {
     padding: 24,
   },
   summaryLabel: {
     fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.6)',
+    color: "rgba(15, 23, 42, 0.6)",
     marginBottom: 8,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 1,
   },
   summaryAmount: {
     fontSize: 42,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
     marginBottom: 20,
   },
   summaryRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 16,
   },
   summaryItem: {
     flex: 1,
     padding: 16,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
   },
   summaryItemLabel: {
     fontSize: 12,
-    color: 'rgba(15, 23, 42, 0.6)',
+    color: "rgba(15, 23, 42, 0.6)",
     marginBottom: 6,
   },
   summaryItemValue: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#10b981',
+    fontWeight: "700",
+    color: "#10b981",
   },
   interestValue: {
-    color: '#f59e0b',
+    color: "#f59e0b",
   },
   chartCard: {
     borderRadius: 30,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
   },
   chartTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
     marginBottom: 4,
   },
   chartSubtitle: {
     fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.6)',
+    color: "rgba(15, 23, 42, 0.6)",
     marginBottom: 20,
   },
   chartContainer: {
-    alignItems: 'center',
+    alignItems: "center",
     marginTop: 10,
   },
   chart: {
@@ -846,34 +1029,34 @@ const styles = StyleSheet.create({
   },
   progressBar: {
     height: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 6,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   progressFill: {
-    height: '100%',
-    backgroundColor: '#10b981',
+    height: "100%",
+    backgroundColor: "#10b981",
     borderRadius: 6,
   },
   progressText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#10b981',
-    textAlign: 'center',
+    fontWeight: "700",
+    color: "#10b981",
+    textAlign: "center",
     marginTop: 12,
   },
   progressStats: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     marginTop: 20,
   },
   progressStatItem: {
     flex: 1,
     padding: 16,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
   },
   statDot: {
     width: 8,
@@ -883,116 +1066,116 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 12,
-    color: 'rgba(15, 23, 42, 0.6)',
+    color: "rgba(15, 23, 42, 0.6)",
     marginBottom: 6,
   },
   statValue: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
   },
   detailsCard: {
     borderRadius: 30,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
   },
   detailsGrid: {
     gap: 12,
     marginTop: 16,
   },
   detailItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    borderBottomColor: "rgba(255, 255, 255, 0.05)",
   },
   detailLabel: {
     fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.6)',
+    color: "rgba(15, 23, 42, 0.6)",
   },
   detailValue: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
   },
   scheduleButton: {
     borderRadius: 30,
-    overflow: 'hidden',
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
     marginTop: 8,
   },
   scheduleBlur: {
     padding: 20,
-    alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.05)',
+    alignItems: "center",
+    backgroundColor: "rgba(16, 185, 129, 0.05)",
   },
   scheduleButtonText: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#10b981',
+    fontWeight: "700",
+    color: "#10b981",
     marginBottom: 4,
   },
   scheduleButtonSubtext: {
     fontSize: 13,
-    color: 'rgba(15, 23, 42, 0.6)',
+    color: "rgba(15, 23, 42, 0.6)",
   },
   actionGrid: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     marginBottom: 20,
-    flexWrap: 'wrap',
+    flexWrap: "wrap",
   },
   actionBtnRenew: {
     flex: 1,
-    minWidth: '45%',
-    backgroundColor: '#38bdf8',
+    minWidth: "45%",
+    backgroundColor: "#38bdf8",
     paddingVertical: 14,
     borderRadius: 20,
-    alignItems: 'center',
-    shadowColor: '#38bdf8',
+    alignItems: "center",
+    shadowColor: "#38bdf8",
     shadowOpacity: 0.3,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
   },
   actionBtnClose: {
     flex: 1,
-    minWidth: '45%',
-    backgroundColor: '#10b981',
+    minWidth: "45%",
+    backgroundColor: "#10b981",
     paddingVertical: 14,
     borderRadius: 20,
-    alignItems: 'center',
-    shadowColor: '#10b981',
+    alignItems: "center",
+    shadowColor: "#10b981",
     shadowOpacity: 0.3,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
   },
   actionBtnLog: {
-    width: '100%',
-    backgroundColor: '#8b5cf6',
+    width: "100%",
+    backgroundColor: "#8b5cf6",
     paddingVertical: 14,
     borderRadius: 20,
-    alignItems: 'center',
-    shadowColor: '#8b5cf6',
+    alignItems: "center",
+    shadowColor: "#8b5cf6",
     shadowOpacity: 0.3,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
   },
   actionBtnText: {
     fontSize: 15,
-    fontWeight: '700',
-    color: '#ffffff',
+    fontWeight: "700",
+    color: "#ffffff",
   },
   simulatorCard: {
     borderRadius: 30,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
   },
   simInputContainer: {
     marginTop: 16,
@@ -1000,25 +1183,25 @@ const styles = StyleSheet.create({
   },
   simInputLabel: {
     fontSize: 13,
-    fontWeight: '600',
-    color: 'rgba(15, 23, 42, 0.6)',
+    fontWeight: "600",
+    color: "rgba(15, 23, 42, 0.6)",
     marginBottom: 8,
   },
   simInput: {
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 16,
     paddingHorizontal: 16,
     height: 48,
     fontSize: 15,
-    color: '#0f172a',
+    color: "#0f172a",
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+    borderColor: "rgba(0, 0, 0, 0.08)",
   },
   simResultsContainer: {
     gap: 14,
   },
   simResultRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
   },
   simResultCard: {
@@ -1026,33 +1209,33 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.03)',
+    borderColor: "rgba(0, 0, 0, 0.03)",
   },
   simResultLabel: {
     fontSize: 12,
-    color: 'rgba(15, 23, 42, 0.5)',
+    color: "rgba(15, 23, 42, 0.5)",
     marginBottom: 4,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   simResultVal: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   simNewDetails: {
     paddingVertical: 10,
-    alignItems: 'center',
+    alignItems: "center",
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.04)',
+    borderTopColor: "rgba(0,0,0,0.04)",
   },
   simNewText: {
     fontSize: 13,
-    color: 'rgba(15,23,42,0.6)',
+    color: "rgba(15,23,42,0.6)",
   },
   simPlaceholderText: {
     fontSize: 13,
-    color: 'rgba(15, 23, 42, 0.4)',
-    textAlign: 'center',
+    color: "rgba(15, 23, 42, 0.4)",
+    textAlign: "center",
     paddingVertical: 16,
-    fontStyle: 'italic',
+    fontStyle: "italic",
   },
 });

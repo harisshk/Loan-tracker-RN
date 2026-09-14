@@ -1,32 +1,40 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   RefreshControl,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter, useFocusEffect } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getLoans, getPayments } from '../../utils/storage';
-import { calculateEMIBreakdown } from '../../utils/emiCalculator';
-
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  calculateEMIBreakdown,
+  getBulletMaturityDate,
+} from "../../utils/emiCalculator";
+import { getLoans, getPayments } from "../../utils/storage";
 
 const fc = (amount) =>
-  `₹${parseFloat(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+  `₹${parseFloat(amount || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
 const fd = (date) => {
-  if (!date) return 'N/A';
-  return new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (!date) return "N/A";
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 };
 
 const daysFromNow = (date) => {
   if (!date) return null;
-  const diff = Math.ceil((new Date(date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
+  const diff = Math.ceil(
+    (new Date(date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000,
+  );
   return diff;
 };
 
@@ -44,11 +52,15 @@ export default function EMIPage() {
       setLoans(l);
       setPayments(p);
     } catch (e) {
-      console.error('Error loading data on analytics:', e);
+      console.error("Error loading data on analytics:", e);
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData]),
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -65,13 +77,15 @@ export default function EMIPage() {
   // ── Per-loan breakdowns ──────────────────────────────────────────
   const allBreakdowns = useMemo(() => {
     return loans
-      .filter((l) => l.status !== 'closed')
+      .filter((l) => l.status !== "closed")
       .map((loan) => {
-        const principal = parseFloat(String(loan.principal).replace(/,/g, '')) || 0;
+        const principal =
+          parseFloat(String(loan.principal).replace(/,/g, "")) || 0;
         const interest = parseFloat(loan.interest) || 0;
-        const tenure = parseInt(String(loan.tenure).replace(/,/g, '')) || 0;
-        const emiAmount = parseFloat(String(loan.emiAmount).replace(/,/g, '')) || 0;
-        const loanType = loan.loanType || 'emi';
+        const tenure = parseInt(String(loan.tenure).replace(/,/g, "")) || 0;
+        const emiAmount =
+          parseFloat(String(loan.emiAmount).replace(/,/g, "")) || 0;
+        const loanType = loan.loanType || "emi";
         const extraPayments = payments.filter((p) => p.loanId === loan.id);
 
         let monthsElapsed = 0;
@@ -87,24 +101,42 @@ export default function EMIPage() {
         }
 
         const bd = calculateEMIBreakdown(
-          principal, interest, tenure, monthsElapsed, emiAmount, loanType, extraPayments
+          principal,
+          interest,
+          tenure,
+          monthsElapsed,
+          emiAmount,
+          loanType,
+          extraPayments,
         );
 
         // Next due date: same day-of-month as start date, upcoming month
         let nextDueDate = null;
-        if (loan.startDate && loanType === 'emi') {
+        if (loan.startDate && loanType === "emi") {
           const sd = new Date(loan.startDate);
           const dueDay = sd.getDate();
-          const candidate = new Date(today.getFullYear(), today.getMonth(), dueDay);
-          nextDueDate = candidate < today
-            ? new Date(today.getFullYear(), today.getMonth() + 1, dueDay)
-            : candidate;
-        } else if (loanType === 'bullet' && loan.startDate) {
-          const sd = new Date(loan.startDate);
-          nextDueDate = new Date(sd.getFullYear(), sd.getMonth() + tenure, sd.getDate());
+          const candidate = new Date(
+            today.getFullYear(),
+            today.getMonth(),
+            dueDay,
+          );
+          nextDueDate =
+            candidate < today
+              ? new Date(today.getFullYear(), today.getMonth() + 1, dueDay)
+              : candidate;
+        } else if (loanType === "bullet" && loan.startDate) {
+          nextDueDate = getBulletMaturityDate(loan.startDate, tenure);
         }
 
-        return { loan, bd, loanType, principal, tenure, emiAmount, nextDueDate };
+        return {
+          loan,
+          bd,
+          loanType,
+          principal,
+          tenure,
+          emiAmount,
+          nextDueDate,
+        };
       });
   }, [loans, payments, today]);
 
@@ -131,24 +163,33 @@ export default function EMIPage() {
     let emiPaid = 0;
     let dueAmount = 0;
 
-    loans.filter((l) => l.status !== 'closed').forEach((loan) => {
-      if ((loan.loanType || 'emi') !== 'emi') return;
-      const emiAmount = parseFloat(String(loan.emiAmount || '0').replace(/,/g, '')) || 0;
-      const tenure = parseInt(String(loan.tenure || '0').replace(/,/g, '')) || 0;
-      if (!loan.startDate || emiAmount === 0) return;
+    loans
+      .filter((l) => l.status !== "closed")
+      .forEach((loan) => {
+        if ((loan.loanType || "emi") !== "emi") return;
+        const emiAmount =
+          parseFloat(String(loan.emiAmount || "0").replace(/,/g, "")) || 0;
+        const tenure =
+          parseInt(String(loan.tenure || "0").replace(/,/g, "")) || 0;
+        if (!loan.startDate || emiAmount === 0) return;
 
-      const sd = new Date(loan.startDate);
-      const emiDueThisMonth = new Date(y, m, sd.getDate());
-      const monthsFromStart = (y - sd.getFullYear()) * 12 + (m - sd.getMonth());
+        const sd = new Date(loan.startDate);
+        const emiDueThisMonth = new Date(y, m, sd.getDate());
+        const monthsFromStart =
+          (y - sd.getFullYear()) * 12 + (m - sd.getMonth());
 
-      // Due this month
-      dueAmount += emiAmount;
+        // Due this month
+        dueAmount += emiAmount;
 
-      // Auto-paid: the scheduled EMI for this month whose due date has already passed
-      if (emiDueThisMonth <= todayMidnight && monthsFromStart >= 1 && monthsFromStart <= tenure) {
-        emiPaid += emiAmount;
-      }
-    });
+        // Auto-paid: the scheduled EMI for this month whose due date has already passed
+        if (
+          emiDueThisMonth <= todayMidnight &&
+          monthsFromStart >= 1 &&
+          monthsFromStart <= tenure
+        ) {
+          emiPaid += emiAmount;
+        }
+      });
 
     // Extra payments manually logged this month
     let extraPaid = 0;
@@ -167,51 +208,73 @@ export default function EMIPage() {
   // ── Payment History (recent 15) ───────────────────────────────────
   const recentPayments = useMemo(() => {
     const loanMap = {};
-    loans.forEach((l) => { loanMap[l.id] = l.loanName; });
+    loans.forEach((l) => {
+      loanMap[l.id] = l.loanName;
+    });
     return [...payments]
-      .sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt))
+      .sort(
+        (a, b) =>
+          new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt),
+      )
       .slice(0, 15)
       .map((p) => ({
         ...p,
-        loanName: loanMap[p.loanId] || 'Unknown Loan',
+        loanName: loanMap[p.loanId] || "Unknown Loan",
         displayDate: fd(p.date || p.createdAt),
-        isExtra: p.type === 'extra',
+        isExtra: p.type === "extra",
       }));
   }, [payments, loans]);
 
   const urgencyColor = (days) => {
-    if (days === null) return '#64748b';
-    if (days <= 3) return '#e11d48';
-    if (days <= 7) return '#f59e0b';
-    return '#10b981';
+    if (days === null) return "#64748b";
+    if (days <= 3) return "#e11d48";
+    if (days <= 7) return "#f59e0b";
+    return "#10b981";
   };
 
   const urgencyLabel = (days) => {
-    if (days === null) return '';
-    if (days === 0) return 'Due Today';
+    if (days === null) return "";
+    if (days === 0) return "Due Today";
     if (days < 0) return `Overdue ${Math.abs(days)}d`;
     return `${days}d left`;
   };
 
   return (
-    <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
+    <LinearGradient
+      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
+      style={styles.container}
+    >
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16, paddingBottom: 24 }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: insets.top + 16, paddingBottom: 24 },
+        ]}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#10b981" />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#10b981"
+          />
+        }
       >
         {/* Header */}
         <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>EMI Tracker</Text>
-            <Text style={styles.headerSubtitle}>Upcoming payments & history</Text>
+            <Text style={styles.headerSubtitle}>
+              Upcoming payments & history
+            </Text>
           </View>
           <TouchableOpacity
             style={styles.addBtnWrap}
-            onPress={() => router.push('/add-loan')}
+            onPress={() => router.push("/add-loan")}
             activeOpacity={0.8}
           >
-            <LinearGradient colors={['#10b981', '#059669']} style={styles.addBtnInside}>
+            <LinearGradient
+              colors={["#10b981", "#059669"]}
+              style={styles.addBtnInside}
+            >
               <Ionicons name="add" size={26} color="#fff" />
             </LinearGradient>
           </TouchableOpacity>
@@ -221,17 +284,23 @@ export default function EMIPage() {
         <Text style={styles.sectionTitle}>This Month</Text>
         <BlurView intensity={30} tint="light" style={styles.card}>
           <View style={styles.trackTop}>
-            <View style={[styles.trackColCard, { borderLeftColor: '#10b981' }]}>
+            <View style={[styles.trackColCard, { borderLeftColor: "#10b981" }]}>
               <Text style={styles.trackLabel}>EMI Paid</Text>
-              <Text style={[styles.trackValue, { color: '#10b981' }]}>{fc(thisMonthStats.emiPaid)}</Text>
+              <Text style={[styles.trackValue, { color: "#10b981" }]}>
+                {fc(thisMonthStats.emiPaid)}
+              </Text>
             </View>
-            <View style={[styles.trackColCard, { borderLeftColor: '#8b5cf6' }]}>
+            <View style={[styles.trackColCard, { borderLeftColor: "#8b5cf6" }]}>
               <Text style={styles.trackLabel}>Extra Paid</Text>
-              <Text style={[styles.trackValue, { color: '#8b5cf6' }]}>{fc(thisMonthStats.extraPaid)}</Text>
+              <Text style={[styles.trackValue, { color: "#8b5cf6" }]}>
+                {fc(thisMonthStats.extraPaid)}
+              </Text>
             </View>
-            <View style={[styles.trackColCard, { borderLeftColor: '#f59e0b' }]}>
+            <View style={[styles.trackColCard, { borderLeftColor: "#f59e0b" }]}>
               <Text style={styles.trackLabel}>Pending</Text>
-              <Text style={[styles.trackValue, { color: '#f59e0b' }]}>{fc(thisMonthStats.pending)}</Text>
+              <Text style={[styles.trackValue, { color: "#f59e0b" }]}>
+                {fc(thisMonthStats.pending)}
+              </Text>
             </View>
           </View>
 
@@ -241,7 +310,7 @@ export default function EMIPage() {
                 styles.progressFill,
                 {
                   width: `${Math.min(100, thisMonthStats.progress * 100)}%`,
-                  backgroundColor: '#10b981',
+                  backgroundColor: "#10b981",
                 },
               ]}
             />
@@ -249,14 +318,14 @@ export default function EMIPage() {
 
           <View style={styles.trackFooter}>
             <Text style={styles.footerLabel}>
-              Cleared:{' '}
-              <Text style={{ color: '#10b981', fontWeight: 'bold' }}>
+              Cleared:{" "}
+              <Text style={{ color: "#10b981", fontWeight: "bold" }}>
                 {fc(thisMonthStats.totalPaid)}
               </Text>
             </Text>
             <Text style={styles.footerLabel}>
-              Target:{' '}
-              <Text style={{ color: '#0f172a', fontWeight: 'bold' }}>
+              Target:{" "}
+              <Text style={{ color: "#0f172a", fontWeight: "bold" }}>
                 {fc(thisMonthStats.dueAmount)}
               </Text>
             </Text>
@@ -264,11 +333,21 @@ export default function EMIPage() {
         </BlurView>
 
         {/* ── Upcoming EMIs Section ────────────────────────── */}
-        <Text style={[styles.sectionTitle, { marginTop: 8 }]}>Upcoming EMIs</Text>
+        <Text style={[styles.sectionTitle, { marginTop: 8 }]}>
+          Upcoming EMIs
+        </Text>
 
         {upcomingEMIs.length === 0 ? (
-          <BlurView intensity={30} tint="light" style={[styles.card, styles.emptyCard]}>
-            <Ionicons name="checkmark-circle-outline" size={36} color="#10b981" />
+          <BlurView
+            intensity={30}
+            tint="light"
+            style={[styles.card, styles.emptyCard]}
+          >
+            <Ionicons
+              name="checkmark-circle-outline"
+              size={36}
+              color="#10b981"
+            />
             <Text style={styles.emptyText}>All caught up! No active EMIs.</Text>
           </BlurView>
         ) : (
@@ -278,18 +357,30 @@ export default function EMIPage() {
               <TouchableOpacity
                 key={item.loan.id}
                 activeOpacity={0.8}
-                onPress={() => router.push({ pathname: '/loan-detail', params: { id: item.loan.id } })}
+                onPress={() =>
+                  router.push({
+                    pathname: "/loan-detail",
+                    params: { id: item.loan.id },
+                  })
+                }
               >
                 <BlurView intensity={30} tint="light" style={styles.emiCard}>
                   {/* Left accent bar */}
-                  <View style={[styles.emiAccent, { backgroundColor: color }]} />
+                  <View
+                    style={[styles.emiAccent, { backgroundColor: color }]}
+                  />
 
                   <View style={styles.emiBody}>
                     <View style={styles.emiTopRow}>
                       <Text style={styles.emiLoanName} numberOfLines={1}>
                         {item.loan.loanName}
                       </Text>
-                      <View style={[styles.urgencyBadge, { backgroundColor: color + '20', borderColor: color }]}>
+                      <View
+                        style={[
+                          styles.urgencyBadge,
+                          { backgroundColor: color + "20", borderColor: color },
+                        ]}
+                      >
                         <Text style={[styles.urgencyText, { color }]}>
                           {urgencyLabel(item.days)}
                         </Text>
@@ -300,21 +391,35 @@ export default function EMIPage() {
                       <View style={styles.emiMetaRow}>
                         <View style={styles.emiMetaCol}>
                           <Text style={styles.emiMetaLabel}>EMI Amount</Text>
-                          <Text style={styles.emiMetaValue}>{fc(item.emiAmount)}</Text>
+                          <Text style={styles.emiMetaValue}>
+                            {fc(item.emiAmount)}
+                          </Text>
                         </View>
                         <View style={styles.emiMetaCol}>
                           <Text style={styles.emiMetaLabel}>Due Date</Text>
-                          <Text style={styles.emiMetaValue}>{fd(item.nextDueDate)}</Text>
+                          <Text style={styles.emiMetaValue}>
+                            {fd(item.nextDueDate)}
+                          </Text>
                         </View>
                       </View>
                       <View style={[styles.emiMetaRow, { marginTop: 6 }]}>
                         <View style={styles.emiMetaCol}>
-                          <Text style={styles.emiMetaLabel}>Rem. Principal</Text>
-                          <Text style={[styles.emiMetaValue, { color: '#64748b' }]}>{fc(item.bd.remainingPrincipalAmount)}</Text>
+                          <Text style={styles.emiMetaLabel}>
+                            Rem. Principal
+                          </Text>
+                          <Text
+                            style={[styles.emiMetaValue, { color: "#64748b" }]}
+                          >
+                            {fc(item.bd.remainingPrincipalAmount)}
+                          </Text>
                         </View>
                         <View style={styles.emiMetaCol}>
-                          <Text style={styles.emiMetaLabel}>Total Outstanding</Text>
-                          <Text style={[styles.emiMetaValue, { color: '#e11d48' }]}>
+                          <Text style={styles.emiMetaLabel}>
+                            Total Outstanding
+                          </Text>
+                          <Text
+                            style={[styles.emiMetaValue, { color: "#e11d48" }]}
+                          >
                             {fc(item.bd.remainingAmount)}
                           </Text>
                         </View>
@@ -322,7 +427,12 @@ export default function EMIPage() {
                     </View>
                   </View>
 
-                  <Ionicons name="chevron-forward" size={16} color="#cbd5e1" style={{ alignSelf: 'center' }} />
+                  <Ionicons
+                    name="chevron-forward"
+                    size={16}
+                    color="#cbd5e1"
+                    style={{ alignSelf: "center" }}
+                  />
                 </BlurView>
               </TouchableOpacity>
             );
@@ -331,19 +441,29 @@ export default function EMIPage() {
 
         {/* ── Payment History Section ───────────────────────── */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Payment History</Text>
-          <TouchableOpacity onPress={() => router.push('/history')}>
+          <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
+            Payment History
+          </Text>
+          <TouchableOpacity onPress={() => router.push("/history")}>
             <Text style={styles.seeAllText}>See All</Text>
           </TouchableOpacity>
         </View>
 
         {recentPayments.length === 0 ? (
-          <BlurView intensity={30} tint="light" style={[styles.card, styles.emptyCard]}>
+          <BlurView
+            intensity={30}
+            tint="light"
+            style={[styles.card, styles.emptyCard]}
+          >
             <Ionicons name="receipt-outline" size={36} color="#94a3b8" />
             <Text style={styles.emptyText}>No payment records yet.</Text>
           </BlurView>
         ) : (
-          <BlurView intensity={30} tint="light" style={[styles.card, { padding: 0, overflow: 'hidden' }]}>
+          <BlurView
+            intensity={30}
+            tint="light"
+            style={[styles.card, { padding: 0, overflow: "hidden" }]}
+          >
             {recentPayments.map((p, i) => (
               <View
                 key={p.id || i}
@@ -352,18 +472,38 @@ export default function EMIPage() {
                   i !== recentPayments.length - 1 && styles.historyRowBorder,
                 ]}
               >
-                <View style={[styles.historyIconWrap, { backgroundColor: p.isExtra ? 'rgba(139,92,246,0.12)' : 'rgba(16,185,129,0.12)' }]}>
+                <View
+                  style={[
+                    styles.historyIconWrap,
+                    {
+                      backgroundColor: p.isExtra
+                        ? "rgba(139,92,246,0.12)"
+                        : "rgba(16,185,129,0.12)",
+                    },
+                  ]}
+                >
                   <Ionicons
-                    name={p.isExtra ? 'flash-outline' : 'checkmark-circle-outline'}
+                    name={
+                      p.isExtra ? "flash-outline" : "checkmark-circle-outline"
+                    }
                     size={18}
-                    color={p.isExtra ? '#8b5cf6' : '#10b981'}
+                    color={p.isExtra ? "#8b5cf6" : "#10b981"}
                   />
                 </View>
                 <View style={styles.historyMeta}>
-                  <Text style={styles.historyLoanName} numberOfLines={1}>{p.loanName}</Text>
-                  <Text style={styles.historyDate}>{p.displayDate} · {p.isExtra ? 'Extra' : 'EMI'}</Text>
+                  <Text style={styles.historyLoanName} numberOfLines={1}>
+                    {p.loanName}
+                  </Text>
+                  <Text style={styles.historyDate}>
+                    {p.displayDate} · {p.isExtra ? "Extra" : "EMI"}
+                  </Text>
                 </View>
-                <Text style={[styles.historyAmount, { color: p.isExtra ? '#8b5cf6' : '#10b981' }]}>
+                <Text
+                  style={[
+                    styles.historyAmount,
+                    { color: p.isExtra ? "#8b5cf6" : "#10b981" },
+                  ]}
+                >
                   {fc(p.amount)}
                 </Text>
               </View>
@@ -381,16 +521,26 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: {},
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 20,
     marginBottom: 24,
   },
-  headerTitle: { fontSize: 32, fontWeight: '800', color: '#0f172a', letterSpacing: -0.5 },
-  headerSubtitle: { fontSize: 13, color: '#64748b', fontWeight: '500', marginTop: 2 },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: "800",
+    color: "#0f172a",
+    letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    color: "#64748b",
+    fontWeight: "500",
+    marginTop: 2,
+  },
   addBtnWrap: {
-    shadowColor: '#10b981',
+    shadowColor: "#10b981",
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.3,
     shadowRadius: 10,
@@ -399,126 +549,158 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
     marginBottom: 12,
     paddingHorizontal: 20,
   },
   sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 20,
     marginTop: 8,
     marginBottom: 12,
   },
-  seeAllText: { fontSize: 13, fontWeight: '600', color: '#10b981' },
+  seeAllText: { fontSize: 13, fontWeight: "600", color: "#10b981" },
   card: {
     marginHorizontal: 20,
     borderRadius: 24,
     padding: 20,
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.04)',
-    overflow: 'hidden',
+    borderColor: "rgba(0,0,0,0.04)",
+    overflow: "hidden",
     marginBottom: 14,
   },
   emptyCard: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: 10,
     paddingVertical: 32,
   },
-  emptyText: { fontSize: 14, color: '#94a3b8', fontWeight: '500' },
+  emptyText: { fontSize: 14, color: "#94a3b8", fontWeight: "500" },
   // This Month
-  trackTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginBottom: 16 },
+  trackTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 16,
+  },
   trackColCard: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 16,
     padding: 12,
     borderLeftWidth: 4,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.04)',
-    shadowColor: '#000',
+    borderColor: "rgba(0, 0, 0, 0.04)",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.02,
     shadowRadius: 4,
     elevation: 1,
   },
-  trackLabel: { fontSize: 11, color: '#64748b', marginBottom: 4, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.3 },
-  trackValue: { fontSize: 15, fontWeight: '800' },
+  trackLabel: {
+    fontSize: 11,
+    color: "#64748b",
+    marginBottom: 4,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  trackValue: { fontSize: 15, fontWeight: "800" },
   progressContainer: {
     height: 8,
-    backgroundColor: 'rgba(0,0,0,0.04)',
+    backgroundColor: "rgba(0,0,0,0.04)",
     borderRadius: 4,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginBottom: 14,
   },
-  progressFill: { height: '100%', borderRadius: 4 },
+  progressFill: { height: "100%", borderRadius: 4 },
   trackFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.04)',
+    borderTopColor: "rgba(0,0,0,0.04)",
     paddingTop: 12,
   },
-  footerLabel: { fontSize: 12, color: '#64748b', fontWeight: '500' },
+  footerLabel: { fontSize: 12, color: "#64748b", fontWeight: "500" },
   // EMI cards
   emiCard: {
     marginHorizontal: 20,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.04)',
-    overflow: 'hidden',
+    borderColor: "rgba(0,0,0,0.04)",
+    overflow: "hidden",
     marginBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'stretch',
+    flexDirection: "row",
+    alignItems: "stretch",
     paddingRight: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: "rgba(255, 255, 255, 0.5)",
   },
   emiAccent: { width: 5, marginRight: 14 },
   emiBody: { flex: 1, paddingVertical: 16 },
   emiTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
-  emiLoanName: { fontSize: 16, fontWeight: '700', color: '#0f172a', flex: 1, marginRight: 8 },
+  emiLoanName: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+    flex: 1,
+    marginRight: 8,
+  },
   urgencyBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
     borderWidth: 1,
   },
-  urgencyText: { fontSize: 11, fontWeight: '700' },
+  urgencyText: { fontSize: 11, fontWeight: "700" },
   emiMetaGrid: { gap: 10 },
-  emiMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  emiMetaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   emiMetaCol: { flex: 1 },
-  emiMetaLabel: { fontSize: 9, color: '#94a3b8', fontWeight: '600', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
-  emiMetaValue: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  emiMetaLabel: {
+    fontSize: 9,
+    color: "#94a3b8",
+    fontWeight: "600",
+    marginBottom: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  emiMetaValue: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
   // History
   historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     padding: 14,
     paddingHorizontal: 16,
   },
-  historyRowBorder: { borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.04)' },
+  historyRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.04)",
+  },
   historyIconWrap: {
     width: 36,
     height: 36,
     borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 12,
   },
   historyMeta: { flex: 1 },
-  historyLoanName: { fontSize: 14, fontWeight: '600', color: '#0f172a' },
-  historyDate: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
-  historyAmount: { fontSize: 14, fontWeight: '700' },
+  historyLoanName: { fontSize: 14, fontWeight: "600", color: "#0f172a" },
+  historyDate: { fontSize: 11, color: "#94a3b8", marginTop: 2 },
+  historyAmount: { fontSize: 14, fontWeight: "700" },
 });
