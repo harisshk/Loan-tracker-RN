@@ -32,6 +32,10 @@ export default function AddTransaction() {
   const [amount, setAmount] = useState('');
   const [type, setType] = useState('debit'); // debit or credit
   const [category, setCategory] = useState('Other');
+  // True once the category came from the user (or an explicit source) rather than the
+  // 'Other' default. Without it, saveTransaction() treats a deliberate 'Other' pick as
+  // "unset" and re-runs the keyword classifier, so "car wash" silently became Vehicle.
+  const [categoryLocked, setCategoryLocked] = useState(false);
   const [description, setDescription] = useState('');
   const [date, setDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -77,6 +81,7 @@ export default function AddTransaction() {
             (c) => c.toLowerCase() === String(existingTx.category || '').trim().toLowerCase()
           ) || 'Other';
           setCategory(normalizedCategory);
+          setCategoryLocked(true);
           setDescription(existingTx.description || '');
           const normalizedMode = ['UPI', 'Credit Card', 'Cash'].find(
             (m) => m.toLowerCase() === String(existingTx.mode || '').trim().toLowerCase()
@@ -112,6 +117,7 @@ export default function AddTransaction() {
       }
       if (params.category && CATEGORIES.includes(String(params.category))) {
         setCategory(String(params.category));
+        setCategoryLocked(true);
       }
       if (params.mode && (String(params.mode) === 'UPI' || String(params.mode) === 'Credit Card' || String(params.mode) === 'Cash')) {
         setMode(String(params.mode));
@@ -148,6 +154,7 @@ export default function AddTransaction() {
                   setType(parsed.type);
                   if (parsed.category && CATEGORIES.includes(parsed.category)) {
                     setCategory(parsed.category);
+                    setCategoryLocked(true);
                   }
                   if (parsed.description) {
                     setDescription(parsed.description);
@@ -202,6 +209,7 @@ export default function AddTransaction() {
                 } else {
                   setCategory('Salary');
                 }
+                setCategoryLocked(true);
               },
             },
           ]
@@ -280,6 +288,7 @@ export default function AddTransaction() {
         date: date.toISOString(),
         mode,
         calculate_budget: calculateBudget,
+        categoryLocked,
         loanId: category === 'EMI' ? selectedLoanId : undefined,
         loanName: (category === 'EMI' && selectedLoan) ? selectedLoan.loanName : undefined,
       };
@@ -456,7 +465,10 @@ export default function AddTransaction() {
                     styles.categoryBtn,
                     isSelected && { backgroundColor: iconInfo.color, borderColor: iconInfo.color },
                   ]}
-                  onPress={() => setCategory(cat)}
+                  onPress={() => {
+                    setCategory(cat);
+                    setCategoryLocked(true);
+                  }}
                 >
                   <Ionicons
                     name={iconInfo.name}

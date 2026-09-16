@@ -199,7 +199,10 @@ export const saveTransaction = async (transaction) => {
   try {
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     let finalCategory = transaction.category || 'Other';
-    if (finalCategory === 'Other' && transaction.description) {
+    // Only auto-classify when 'Other' is a fallback, never when the user picked it
+    // deliberately (categoryLocked) — otherwise a manual 'Other' on a description like
+    // "car wash" gets rewritten to Vehicle behind their back.
+    if (finalCategory === 'Other' && transaction.description && !transaction.categoryLocked) {
       finalCategory = await getSmartCategory(transaction.description, transaction.type);
     }
 
@@ -510,7 +513,8 @@ export const updateTransaction = async (updatedTx) => {
   try {
     const userEmail = await AsyncStorage.getItem('@gmail_user_email') || 'anonymous';
     let finalCategory = updatedTx.category || 'Other';
-    if (finalCategory === 'Other' && updatedTx.description) {
+    // See saveTransaction(): a deliberate 'Other' pick must survive the edit untouched.
+    if (finalCategory === 'Other' && updatedTx.description && !updatedTx.categoryLocked) {
       finalCategory = await getSmartCategory(updatedTx.description, updatedTx.type);
     }
 
