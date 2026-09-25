@@ -1,26 +1,32 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-    Dimensions,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Dimensions,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import SidePanelDrawer from "../../components/SidePanelDrawer";
 import { PulseSkeleton } from "../../components/ui/skeleton";
 import { getBulletMaturityDate } from "../../utils/emiCalculator";
 import {
-    calculateLoanStats,
-    getInsurances,
-    getLoans,
-    getPayments,
+  FinancialQuote,
+  getDailyQuote,
+  getRandomQuote,
+} from "../../utils/quotes";
+import {
+  calculateLoanStats,
+  getInsurances,
+  getLoans,
+  getPayments,
 } from "../../utils/storage";
 import { getBudgetLimit, getTransactions } from "../../utils/transactions";
 
@@ -67,6 +73,14 @@ export default function DashboardView() {
   const [spends, setSpends] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [quote, setQuote] = useState<FinancialQuote>(getDailyQuote());
+
+  const handleNextQuote = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    setQuote((prev) => getRandomQuote(prev?.id));
+  };
 
   const nextInsurance = useMemo(() => {
     if (!insurances || insurances.length === 0) return null;
@@ -738,6 +752,51 @@ export default function DashboardView() {
               </View>
             </LinearGradient>
           </View>
+        )}
+
+        {/* Daily Financial Wisdom Quote Card */}
+        {quote && (
+          <TouchableOpacity
+            activeOpacity={0.88}
+            onPress={handleNextQuote}
+            style={styles.quoteCardWrap}
+          >
+            <BlurView intensity={35} tint="light" style={styles.quoteCardBlur}>
+              <View style={styles.quoteCardHeader}>
+                <View style={styles.quoteBadge}>
+                  <Ionicons name="sparkles" size={12} color="#4f46e5" />
+                  <Text style={styles.quoteBadgeText}>Daily Wisdom</Text>
+                </View>
+                <View style={styles.quoteCategoryTag}>
+                  <Text style={styles.quoteCategoryText}>
+                    #{quote.category}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }} />
+                <View style={styles.quoteShuffleBtn}>
+                  <Ionicons name="shuffle-outline" size={13} color="#64748b" />
+                  <Text style={styles.quoteShuffleText}>Tap to shuffle</Text>
+                </View>
+              </View>
+
+              <View style={styles.quoteBodyRow}>
+                <Ionicons
+                  name="chatbubble-ellipses-outline"
+                  size={18}
+                  color="#6366f1"
+                  style={styles.quoteIcon}
+                />
+                <Text style={styles.quoteText}>
+                  &ldquo;{quote.quote}&rdquo;
+                </Text>
+              </View>
+
+              <View style={styles.quoteFooterRow}>
+                <View style={styles.quoteFooterLine} />
+                <Text style={styles.quoteAuthor}>— {quote.author}</Text>
+              </View>
+            </BlurView>
+          </TouchableOpacity>
         )}
 
         {/* This Month Spending (Segmented view) */}
@@ -1505,5 +1564,98 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.85)",
     fontWeight: "500",
     marginTop: 2,
+  },
+  quoteCardWrap: {
+    marginHorizontal: 20,
+    marginBottom: 24,
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.9)",
+    backgroundColor: "rgba(255, 255, 255, 0.75)",
+    shadowColor: "#4f46e5",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  quoteCardBlur: {
+    padding: 16,
+  },
+  quoteCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+    gap: 8,
+  },
+  quoteBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(79, 70, 229, 0.08)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  quoteBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#4f46e5",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  quoteCategoryTag: {
+    backgroundColor: "rgba(15, 23, 42, 0.05)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  quoteCategoryText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  quoteShuffleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  quoteShuffleText: {
+    fontSize: 11,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  quoteBodyRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginVertical: 4,
+  },
+  quoteIcon: {
+    marginTop: 2,
+  },
+  quoteText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#1e293b",
+    lineHeight: 20,
+    fontStyle: "italic",
+  },
+  quoteFooterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 10,
+    gap: 10,
+  },
+  quoteFooterLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.06)",
+  },
+  quoteAuthor: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
   },
 });
