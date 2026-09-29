@@ -19,8 +19,9 @@ import { PulseSkeleton } from "../../components/ui/skeleton";
 import { getBulletMaturityDate } from "../../utils/emiCalculator";
 import {
   FinancialQuote,
+  getCategoryTheme,
   getDailyQuote,
-  getNextQuote
+  getNextQuote,
 } from "../../utils/quotes";
 import {
   calculateLoanStats,
@@ -820,8 +821,22 @@ export default function DashboardView() {
                   <Ionicons name="sparkles" size={12} color="#4f46e5" />
                   <Text style={styles.quoteBadgeText}>Daily Wisdom</Text>
                 </View>
-                <View style={styles.quoteCategoryTag}>
-                  <Text style={styles.quoteCategoryText}>
+                <View
+                  style={[
+                    styles.quoteCategoryTag,
+                    {
+                      backgroundColor: getCategoryTheme(quote?.category).bg,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.quoteCategoryText,
+                      {
+                        color: getCategoryTheme(quote?.category).text,
+                      },
+                    ]}
+                  >
                     #{quote.category}
                   </Text>
                 </View>

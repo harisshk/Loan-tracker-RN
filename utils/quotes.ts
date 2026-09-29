@@ -240,3 +240,32 @@ export function getRandomQuote(excludeId?: string): FinancialQuote {
   const index = Math.floor(Math.random() * targetPool.length);
   return targetPool[index] || FINANCIAL_QUOTES[0];
 }
+
+export interface CategoryTheme {
+  bg: string;
+  text: string;
+}
+
+/**
+ * Returns customized tag styling colors based on the quote's financial category
+ */
+export function getCategoryTheme(
+  category?: FinancialQuote["category"]
+): CategoryTheme {
+  switch (category) {
+    case "Debt-Free":
+      return { bg: "rgba(16, 185, 129, 0.12)", text: "#059669" };
+    case "Wealth":
+      return { bg: "rgba(245, 158, 11, 0.12)", text: "#d97706" };
+    case "Investing":
+      return { bg: "rgba(14, 165, 233, 0.12)", text: "#0284c7" };
+    case "Freedom":
+      return { bg: "rgba(139, 92, 246, 0.12)", text: "#7c3aed" };
+    case "Discipline":
+      return { bg: "rgba(244, 63, 94, 0.12)", text: "#e11d48" };
+    case "Mindset":
+      return { bg: "rgba(99, 102, 241, 0.12)", text: "#4f46e5" };
+    default:
+      return { bg: "rgba(15, 23, 42, 0.06)", text: "#475569" };
+  }
+}
