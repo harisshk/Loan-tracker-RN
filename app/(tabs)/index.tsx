@@ -19,7 +19,9 @@ import { PulseSkeleton } from "../../components/ui/skeleton";
 import { getBulletMaturityDate } from "../../utils/emiCalculator";
 import {
   FinancialQuote,
+  FINANCIAL_QUOTES,
   getDailyQuote,
+  getNextQuote,
   getRandomQuote,
 } from "../../utils/quotes";
 import {
@@ -73,13 +75,16 @@ export default function DashboardView() {
   const [spends, setSpends] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [quote, setQuote] = useState<FinancialQuote>(getDailyQuote());
+  const [quote, setQuote] = useState<FinancialQuote>(() => getDailyQuote());
 
-  const handleNextQuote = () => {
+  const handleNextQuote = (e?: any) => {
+    if (e && e.stopPropagation) {
+      e.stopPropagation();
+    }
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
-    setQuote((prev) => getRandomQuote(prev?.id));
+    setQuote((prev) => getNextQuote(prev?.id));
   };
 
   const nextInsurance = useMemo(() => {
@@ -259,6 +264,13 @@ export default function DashboardView() {
     return () => clearInterval(timer);
   }, [insights]);
 
+  useEffect(() => {
+    const quoteTimer = setInterval(() => {
+      setQuote((prev) => getNextQuote(prev?.id));
+    }, 12000);
+    return () => clearInterval(quoteTimer);
+  }, []);
+
   // ─── Analytics Section Data ───────────────────
   const ANALYTICS_COLORS = [
     "#10b981",
@@ -401,6 +413,49 @@ export default function DashboardView() {
                 />
                 <PulseSkeleton width={100} height={18} borderRadius={6} />
               </View>
+            </View>
+          </View>
+
+          {/* Quote Card Skeleton */}
+          <View
+            style={{
+              backgroundColor: "#fff",
+              borderRadius: 22,
+              padding: 16,
+              marginBottom: 24,
+              borderWidth: 1,
+              borderColor: "rgba(0,0,0,0.04)",
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <PulseSkeleton width={90} height={18} borderRadius={6} />
+              <PulseSkeleton width={70} height={14} borderRadius={4} />
+            </View>
+            <PulseSkeleton
+              width="100%"
+              height={16}
+              borderRadius={4}
+              style={{ marginBottom: 6 }}
+            />
+            <PulseSkeleton
+              width="75%"
+              height={16}
+              borderRadius={4}
+              style={{ marginBottom: 12 }}
+            />
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "flex-end",
+              }}
+            >
+              <PulseSkeleton width={100} height={14} borderRadius={4} />
             </View>
           </View>
 
@@ -761,7 +816,7 @@ export default function DashboardView() {
             onPress={handleNextQuote}
             style={styles.quoteCardWrap}
           >
-            <BlurView intensity={35} tint="light" style={styles.quoteCardBlur}>
+            <BlurView intensity={40} tint="light" style={styles.quoteCardBlur}>
               <View style={styles.quoteCardHeader}>
                 <View style={styles.quoteBadge}>
                   <Ionicons name="sparkles" size={12} color="#4f46e5" />
@@ -773,10 +828,15 @@ export default function DashboardView() {
                   </Text>
                 </View>
                 <View style={{ flex: 1 }} />
-                <View style={styles.quoteShuffleBtn}>
-                  <Ionicons name="shuffle-outline" size={13} color="#64748b" />
-                  <Text style={styles.quoteShuffleText}>Tap to shuffle</Text>
-                </View>
+                <TouchableOpacity
+                  style={styles.quoteShuffleBtn}
+                  onPress={handleNextQuote}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="shuffle-outline" size={14} color="#4f46e5" />
+                  <Text style={styles.quoteShuffleText}>Next</Text>
+                </TouchableOpacity>
               </View>
 
               <View style={styles.quoteBodyRow}>
@@ -1618,12 +1678,16 @@ const styles = StyleSheet.create({
   quoteShuffleBtn: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(79, 70, 229, 0.08)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
     gap: 4,
   },
   quoteShuffleText: {
     fontSize: 11,
-    color: "#64748b",
-    fontWeight: "500",
+    color: "#4f46e5",
+    fontWeight: "700",
   },
   quoteBodyRow: {
     flexDirection: "row",
