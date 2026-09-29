@@ -244,6 +244,9 @@ export function getRandomQuote(excludeId?: string): FinancialQuote {
 export interface CategoryTheme {
   bg: string;
   text: string;
+  emoji: string;
+  border: string;
+  glow: string;
 }
 
 /**
@@ -254,18 +257,60 @@ export function getCategoryTheme(
 ): CategoryTheme {
   switch (category) {
     case "Debt-Free":
-      return { bg: "rgba(16, 185, 129, 0.12)", text: "#059669" };
+      return {
+        bg: "rgba(16, 185, 129, 0.10)",
+        text: "#059669",
+        emoji: "🎯",
+        border: "rgba(16, 185, 129, 0.25)",
+        glow: "rgba(16, 185, 129, 0.08)",
+      };
     case "Wealth":
-      return { bg: "rgba(245, 158, 11, 0.12)", text: "#d97706" };
+      return {
+        bg: "rgba(245, 158, 11, 0.10)",
+        text: "#d97706",
+        emoji: "💎",
+        border: "rgba(245, 158, 11, 0.25)",
+        glow: "rgba(245, 158, 11, 0.08)",
+      };
     case "Investing":
-      return { bg: "rgba(14, 165, 233, 0.12)", text: "#0284c7" };
+      return {
+        bg: "rgba(14, 165, 233, 0.10)",
+        text: "#0284c7",
+        emoji: "📈",
+        border: "rgba(14, 165, 233, 0.25)",
+        glow: "rgba(14, 165, 233, 0.08)",
+      };
     case "Freedom":
-      return { bg: "rgba(139, 92, 246, 0.12)", text: "#7c3aed" };
+      return {
+        bg: "rgba(139, 92, 246, 0.10)",
+        text: "#7c3aed",
+        emoji: "🕊️",
+        border: "rgba(139, 92, 246, 0.25)",
+        glow: "rgba(139, 92, 246, 0.08)",
+      };
     case "Discipline":
-      return { bg: "rgba(244, 63, 94, 0.12)", text: "#e11d48" };
+      return {
+        bg: "rgba(244, 63, 94, 0.10)",
+        text: "#e11d48",
+        emoji: "⚡",
+        border: "rgba(244, 63, 94, 0.25)",
+        glow: "rgba(244, 63, 94, 0.08)",
+      };
     case "Mindset":
-      return { bg: "rgba(99, 102, 241, 0.12)", text: "#4f46e5" };
+      return {
+        bg: "rgba(99, 102, 241, 0.10)",
+        text: "#4f46e5",
+        emoji: "🧠",
+        border: "rgba(99, 102, 241, 0.25)",
+        glow: "rgba(99, 102, 241, 0.08)",
+      };
     default:
-      return { bg: "rgba(15, 23, 42, 0.06)", text: "#475569" };
+      return {
+        bg: "rgba(15, 23, 42, 0.06)",
+        text: "#475569",
+        emoji: "💡",
+        border: "rgba(15, 23, 42, 0.12)",
+        glow: "rgba(15, 23, 42, 0.04)",
+      };
   }
 }

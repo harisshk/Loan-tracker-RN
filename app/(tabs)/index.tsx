@@ -6,6 +6,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Dimensions,
+  Modal,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -33,6 +35,7 @@ import { getBudgetLimit, getTransactions } from "../../utils/transactions";
 
 const { width } = Dimensions.get("window");
 
+// Formatting helpers
 const fc = (amount: any) => {
   return `₹${parseFloat(amount || 0).toLocaleString("en-IN", {
     maximumFractionDigits: 0,
@@ -48,9 +51,72 @@ const fd = (date: any) => {
   });
 };
 
+const getAuthorInitials = (name: string) => {
+  if (!name) return "✨";
+  const parts = name.trim().split(" ");
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
+
+const LOAN_TYPE_META: Record<
+  string,
+  { icon: any; color: string; bg: string; label: string }
+> = {
+  bullet: {
+    icon: "flash-outline",
+    color: "#f59e0b",
+    bg: "rgba(245, 158, 11, 0.14)",
+    label: "Bullet Loan",
+  },
+  home: {
+    icon: "home-outline",
+    color: "#3b82f6",
+    bg: "rgba(59, 130, 246, 0.14)",
+    label: "Home Loan",
+  },
+  car: {
+    icon: "car-outline",
+    color: "#ec4899",
+    bg: "rgba(236, 72, 153, 0.14)",
+    label: "Auto Loan",
+  },
+  personal: {
+    icon: "person-outline",
+    color: "#10b981",
+    bg: "rgba(16, 185, 129, 0.14)",
+    label: "Personal Loan",
+  },
+  gold: {
+    icon: "sparkles-outline",
+    color: "#eab308",
+    bg: "rgba(234, 179, 8, 0.14)",
+    label: "Gold Loan",
+  },
+  education: {
+    icon: "school-outline",
+    color: "#8b5cf6",
+    bg: "rgba(139, 92, 246, 0.14)",
+    label: "Education Loan",
+  },
+  business: {
+    icon: "briefcase-outline",
+    color: "#06b6d4",
+    bg: "rgba(6, 182, 212, 0.14)",
+    label: "Business Loan",
+  },
+  other: {
+    icon: "wallet-outline",
+    color: "#64748b",
+    bg: "rgba(100, 116, 139, 0.14)",
+    label: "Loan",
+  },
+};
+
 export default function DashboardView() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+
+  // Core Data States
   const [loans, setLoans] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [insurances, setInsurances] = useState<any[]>([]);
@@ -66,16 +132,20 @@ export default function DashboardView() {
     nextDueDate: null,
     nextPaymentAmount: 0,
     nextPaymentLoanName: "",
+    totalInterestSaved: 0,
   });
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [spentThisMonth, setSpentThisMonth] = useState(0);
   const [budgetLimit, setBudgetLimit] = useState(50000);
-  const [spends, setSpends] = useState<any[]>([]);
-  const [showAlerts, setShowAlerts] = useState(true);
+  const [, setSpends] = useState<any[]>([]);
+  const [showAlerts, setShowAlerts] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [quote, setQuote] = useState<FinancialQuote>(() => getDailyQuote());
 
+  // Quote interactions
   const handleNextQuote = (e?: any) => {
     if (e && e.stopPropagation) {
       e.stopPropagation();
@@ -86,6 +156,7 @@ export default function DashboardView() {
     setQuote((prev) => getNextQuote(prev?.id));
   };
 
+  // Insurance calculation
   const nextInsurance = useMemo(() => {
     if (!insurances || insurances.length === 0) return null;
     const sorted = [...insurances]
@@ -100,24 +171,28 @@ export default function DashboardView() {
   const hasUpcomingAlerts =
     upcomingDues15Days.length > 0 || !!(stats.nextDueDate || nextInsurance);
 
-  const bulletUrgentCount = loans.filter((l: any) => {
-    if (l.status === "closed" || l.loanType !== "bullet") return false;
-    const tenure = parseInt(l.tenure) || 0;
-    const maturity = getBulletMaturityDate(l.startDate, tenure);
-    const days = Math.ceil(
-      (maturity.getTime() - new Date().getTime()) / 86400000,
-    );
-    return days >= 0 && days <= 90;
-  }).length;
+  // Active loans list
+  const activeLoans = useMemo(() => {
+    return loans.filter((l) => l.status !== "closed");
+  }, [loans]);
 
+  // Load Data
   const loadData = async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
     try {
-      const loansData = await getLoans();
-      const paymentsData = await getPayments();
-      const insurancesData = await getInsurances();
+      const [loansData, paymentsData, insurancesData, txs, limit] =
+        await Promise.all([
+          getLoans(),
+          getPayments(),
+          getInsurances(),
+          getTransactions(),
+          getBudgetLimit(),
+        ]);
+
       setLoans(loansData);
       setPayments(paymentsData);
+      setBudgetLimit(limit);
+      setSpends(txs);
 
       // Map nextDue date for dashboard display
       const todayDate = new Date();
@@ -149,12 +224,7 @@ export default function DashboardView() {
       );
       setStats(calculatedStats);
 
-      // Load Spend Data
-      const txs = await getTransactions();
-      const limit = await getBudgetLimit();
-      setBudgetLimit(limit);
-      setSpends(txs);
-
+      // Calculate spends for current month
       const now = new Date();
       const currentMonth = now.getMonth();
       const currentYear = now.getFullYear();
@@ -171,16 +241,14 @@ export default function DashboardView() {
         })
         .reduce((sum: number, t: any) => sum + parseFloat(t.amount || 0), 0);
       setSpentThisMonth(currentMonthDebits);
-
-      // Transactions synced via getTransactions call above
     } catch (e) {
-      console.error("Error loading data on home:", e);
+      console.error("Error loading dashboard data:", e);
     } finally {
       setLoading(false);
     }
   };
-  const hasLoadedOnce = React.useRef(false);
 
+  const hasLoadedOnce = React.useRef(false);
   useFocusEffect(
     React.useCallback(() => {
       let active = true;
@@ -202,10 +270,11 @@ export default function DashboardView() {
     setRefreshing(false);
   };
 
-  // ─── Proactive Insights Logic ─────────────────
+  // Proactive Insights Logic
   const insights = useMemo(() => {
     const list = [];
-    if (!loans.length) return ["✨ Add your first loan to see smart insights!"];
+    if (!loans.length)
+      return ["✨ Add your first loan to see personalized insights!"];
 
     let maxDate: any = null;
     loans.forEach((l: any) => {
@@ -218,21 +287,27 @@ export default function DashboardView() {
           : new Date(sd.getFullYear(), sd.getMonth() + tenure, sd.getDate());
       if (!maxDate || ed > maxDate) maxDate = ed;
     });
+
     if (maxDate) {
       const diff = Math.ceil(
         (maxDate.getTime() - new Date().getTime()) /
           (1000 * 60 * 60 * 24 * 30.44),
       );
-      list.push(`🏁 Target: You will be debt-free in approx. ${diff} months!`);
+      if (diff > 0) {
+        list.push(
+          `🏁 Target: You will be debt-free in approx. ${diff} months!`,
+        );
+      }
     }
 
     const burn = stats.thisMonthDueAmount + stats.totalOutstanding / 120;
     if (burn > 0) {
-      const rw = (stats.totalOutstanding * 0.1) / burn; // Mock run
-      if (rw > 0)
+      const rw = (stats.totalOutstanding * 0.1) / burn;
+      if (rw > 0) {
         list.push(
-          `🛡️ Resilience: Your current runway is ${rw.toFixed(1)} months.`,
+          `🛡️ Resilience: Your estimated safety runway is ${rw.toFixed(1)} months.`,
         );
+      }
     }
 
     const highInt: any = [...loans].sort(
@@ -240,29 +315,31 @@ export default function DashboardView() {
     )[0];
     if (highInt && highInt.status !== "closed") {
       list.push(
-        `💡 Tip: Prepaying ₹5,000 extra on "${highInt.loanName}" saves high interest!`,
+        `💡 Prepaying ₹5,000 extra on "${highInt.loanName}" saves the highest interest!`,
       );
     }
 
     if (stats.thisMonthTotalPaid > 0) {
       list.push(
-        `🔥 Great job! You've cleared ${fc(stats.thisMonthTotalPaid)} this month.`,
+        `🔥 Great work! You cleared ${fc(stats.thisMonthTotalPaid)} in repayments this month.`,
       );
     }
 
     return list.length > 0
       ? list
-      : ["📊 Keep tracking to see personalized AI insights!"];
+      : ["📊 Keep tracking payments to unlock personalized insights!"];
   }, [loans, stats]);
 
+  // Insights auto-rotate
   const [activeInsight, setActiveInsight] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => {
       setActiveInsight((prev) => (prev + 1) % insights.length);
-    }, 5000);
+    }, 6000);
     return () => clearInterval(timer);
   }, [insights]);
 
+  // Quote auto-rotate
   useEffect(() => {
     const quoteTimer = setInterval(() => {
       setQuote((prev) => getNextQuote(prev?.id));
@@ -270,59 +347,26 @@ export default function DashboardView() {
     return () => clearInterval(quoteTimer);
   }, []);
 
-  // ─── Analytics Section Data ───────────────────
-  const ANALYTICS_COLORS = [
-    "#10b981",
-    "#38bdf8",
-    "#f59e0b",
-    "#a78bfa",
-    "#e11d48",
-    "#fb923c",
-  ];
+  // Loan calculation helper
+  const getLoanRemainingPrincipal = (loan: any) => {
+    const principal = parseFloat(String(loan.principal).replace(/,/g, "")) || 0;
+    const extraPaid = payments
+      .filter((p) => p.loanId === loan.id)
+      .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
 
-  const today = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, []);
+    const sd = loan.startDate ? new Date(loan.startDate) : new Date();
+    const today = new Date();
+    const months = Math.max(
+      0,
+      (today.getFullYear() - sd.getFullYear()) * 12 +
+        (today.getMonth() - sd.getMonth()),
+    );
+    const emi = parseFloat(String(loan.emiAmount).replace(/,/g, "")) || 0;
+    const emiPaidEstimate = emi * months * 0.3;
+    return Math.max(0, principal - extraPaid - emiPaidEstimate);
+  };
 
-  // Loan share bars — use raw principal minus total extra payments as a quick estimate
-  const loanSharesData = useMemo(() => {
-    const activeLoans = loans.filter((l: any) => l.status !== "closed");
-    const items = activeLoans
-      .map((loan: any, i: number) => {
-        const principal =
-          parseFloat(String(loan.principal).replace(/,/g, "")) || 0;
-        const extraPaid = payments
-          .filter((p: any) => p.loanId === loan.id)
-          .reduce((s: number, p: any) => s + parseFloat(p.amount || 0), 0);
-        const emiPaid = (() => {
-          if (!loan.startDate) return 0;
-          const sd = new Date(loan.startDate);
-          const months = Math.max(
-            0,
-            (today.getFullYear() - sd.getFullYear()) * 12 +
-              (today.getMonth() - sd.getMonth()),
-          );
-          const emi = parseFloat(String(loan.emiAmount).replace(/,/g, "")) || 0;
-          return emi * months;
-        })();
-        const remaining = Math.max(0, principal - extraPaid - emiPaid * 0.3);
-        return {
-          name: loan.loanName,
-          remaining,
-          color: ANALYTICS_COLORS[i % ANALYTICS_COLORS.length],
-        };
-      })
-      .filter((x: any) => x.remaining > 0);
-
-    const total = items.reduce((s: number, x: any) => s + x.remaining, 0);
-    return items
-      .map((x: any) => ({ ...x, share: total > 0 ? x.remaining / total : 0 }))
-      .sort((a: any, b: any) => b.remaining - a.remaining)
-      .slice(0, 5);
-  }, [loans, payments, today]);
-
+  // ── SKELETON PLACEHOLDER ──────────────────────────────────────────────
   if (loading) {
     return (
       <LinearGradient
@@ -332,57 +376,47 @@ export default function DashboardView() {
         <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
-            { paddingTop: insets.top, paddingHorizontal: 20 },
+            { paddingTop: insets.top + 10, paddingHorizontal: 20 },
           ]}
         >
-          {/* Header */}
+          {/* Header Skeleton */}
           <View
             style={[
               styles.headerRow,
-              {
-                paddingHorizontal: 0,
-                marginTop: 10,
-                marginBottom: 20,
-                justifyContent: "center",
-              },
+              { paddingHorizontal: 0, marginBottom: 20 },
             ]}
           >
-            <View style={{ flex: 1, alignItems: "center" }}>
+            <PulseSkeleton width={42} height={42} borderRadius={21} />
+            <View style={{ alignItems: "center" }}>
               <PulseSkeleton
-                width={120}
-                height={32}
-                borderRadius={8}
-                style={{ marginBottom: 8 }}
+                width={130}
+                height={24}
+                borderRadius={6}
+                style={{ marginBottom: 6 }}
               />
-              <PulseSkeleton width={180} height={16} borderRadius={6} />
+              <PulseSkeleton width={90} height={14} borderRadius={4} />
             </View>
+            <PulseSkeleton width={42} height={42} borderRadius={21} />
           </View>
 
-          {/* Insight Banner */}
-          <View style={{ marginBottom: 20 }}>
-            <PulseSkeleton height={48} borderRadius={16} />
-          </View>
+          {/* Insight Pill Skeleton */}
+          <PulseSkeleton
+            height={46}
+            borderRadius={16}
+            style={{ marginBottom: 20 }}
+          />
 
-          {/* Hero Card */}
-          <View
-            style={{
-              backgroundColor: "#fff",
-              borderRadius: 28,
-              padding: 24,
-              marginBottom: 26,
-              borderWidth: 1,
-              borderColor: "rgba(0,0,0,0.04)",
-            }}
-          >
+          {/* Hero Card Skeleton */}
+          <View style={styles.heroSkeletonCard}>
             <PulseSkeleton
-              width={120}
+              width={130}
               height={14}
               borderRadius={4}
-              style={{ marginBottom: 8 }}
+              style={{ marginBottom: 10 }}
             />
             <PulseSkeleton
-              width={200}
-              height={38}
+              width={220}
+              height={40}
               borderRadius={8}
               style={{ marginBottom: 20 }}
             />
@@ -393,180 +427,51 @@ export default function DashboardView() {
                 marginVertical: 14,
               }}
             />
-            <View style={{ flexDirection: "row", gap: 24 }}>
-              <View style={{ flex: 1 }}>
-                <PulseSkeleton
-                  width={80}
-                  height={12}
-                  borderRadius={4}
-                  style={{ marginBottom: 6 }}
-                />
-                <PulseSkeleton width={100} height={18} borderRadius={6} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <PulseSkeleton
-                  width={80}
-                  height={12}
-                  borderRadius={4}
-                  style={{ marginBottom: 6 }}
-                />
-                <PulseSkeleton width={100} height={18} borderRadius={6} />
-              </View>
+            <View style={{ flexDirection: "row", gap: 20 }}>
+              <PulseSkeleton width={100} height={32} borderRadius={6} />
+              <PulseSkeleton width={100} height={32} borderRadius={6} />
             </View>
           </View>
 
-          {/* Quote Card Skeleton */}
-          <View
-            style={{
-              backgroundColor: "#fff",
-              borderRadius: 22,
-              padding: 16,
-              marginBottom: 24,
-              borderWidth: 1,
-              borderColor: "rgba(0,0,0,0.04)",
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: 12,
-              }}
-            >
-              <PulseSkeleton width={90} height={18} borderRadius={6} />
-              <PulseSkeleton width={70} height={14} borderRadius={4} />
-            </View>
+          {/* Activity Skeleton */}
+          <PulseSkeleton
+            height={160}
+            borderRadius={24}
+            style={{ marginBottom: 24 }}
+          />
+
+          {/* Loans Carousel Skeleton */}
+          <PulseSkeleton
+            width={140}
+            height={18}
+            borderRadius={6}
+            style={{ marginBottom: 14 }}
+          />
+          <View style={{ flexDirection: "row", gap: 12, marginBottom: 24 }}>
             <PulseSkeleton
-              width="100%"
-              height={16}
-              borderRadius={4}
-              style={{ marginBottom: 6 }}
+              width={width * 0.65}
+              height={140}
+              borderRadius={22}
             />
             <PulseSkeleton
-              width="75%"
-              height={16}
-              borderRadius={4}
-              style={{ marginBottom: 12 }}
+              width={width * 0.25}
+              height={140}
+              borderRadius={22}
             />
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "flex-end",
-              }}
-            >
-              <PulseSkeleton width={100} height={14} borderRadius={4} />
-            </View>
           </View>
 
-          {/* Activity Section */}
-          <View style={{ marginBottom: 28 }}>
-            <PulseSkeleton
-              width={150}
-              height={20}
-              borderRadius={6}
-              style={{ marginBottom: 14 }}
-            />
-            <View
-              style={{
-                backgroundColor: "#fff",
-                borderRadius: 24,
-                padding: 20,
-                borderWidth: 1,
-                borderColor: "rgba(0,0,0,0.04)",
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  marginBottom: 16,
-                }}
-              >
-                <View>
-                  <PulseSkeleton
-                    width={60}
-                    height={12}
-                    borderRadius={4}
-                    style={{ marginBottom: 6 }}
-                  />
-                  <PulseSkeleton width={80} height={18} borderRadius={6} />
-                </View>
-                <View>
-                  <PulseSkeleton
-                    width={60}
-                    height={12}
-                    borderRadius={4}
-                    style={{ marginBottom: 6 }}
-                  />
-                  <PulseSkeleton width={80} height={18} borderRadius={6} />
-                </View>
-                <View>
-                  <PulseSkeleton
-                    width={60}
-                    height={12}
-                    borderRadius={4}
-                    style={{ marginBottom: 6 }}
-                  />
-                  <PulseSkeleton width={80} height={18} borderRadius={6} />
-                </View>
-              </View>
-              <PulseSkeleton
-                height={8}
-                borderRadius={4}
-                style={{ marginBottom: 16 }}
-              />
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                }}
-              >
-                <PulseSkeleton width={100} height={14} borderRadius={4} />
-                <PulseSkeleton width={100} height={14} borderRadius={4} />
-              </View>
-            </View>
-          </View>
-
-          {/* Quick Access */}
-          <View style={{ marginBottom: 28 }}>
-            <PulseSkeleton
-              width={120}
-              height={20}
-              borderRadius={6}
-              style={{ marginBottom: 14 }}
-            />
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <View
-                  key={i}
-                  style={{
-                    width: "31.3%",
-                    height: 90,
-                    backgroundColor: "#fff",
-                    borderRadius: 20,
-                    padding: 12,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderWidth: 1,
-                    borderColor: "rgba(0,0,0,0.04)",
-                  }}
-                >
-                  <PulseSkeleton
-                    width={32}
-                    height={32}
-                    borderRadius={10}
-                    style={{ marginBottom: 8 }}
-                  />
-                  <PulseSkeleton width={50} height={10} borderRadius={3} />
-                </View>
-              ))}
-            </View>
-          </View>
+          {/* Quote Skeleton */}
+          <PulseSkeleton
+            height={130}
+            borderRadius={24}
+            style={{ marginBottom: 24 }}
+          />
         </ScrollView>
       </LinearGradient>
     );
   }
 
+  // ── MAIN RENDER ───────────────────────────────────────────────────────
   return (
     <LinearGradient
       colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
@@ -576,10 +481,139 @@ export default function DashboardView() {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
       />
+
+      {/* Quick Add Bottom Sheet Modal */}
+      <Modal
+        visible={isAddMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsAddMenuOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setIsAddMenuOpen(false)}
+        >
+          <BlurView
+            intensity={35}
+            tint="dark"
+            style={StyleSheet.absoluteFill}
+          />
+          <Pressable
+            style={styles.modalCardWrap}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalCardHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Quick Add</Text>
+                <Text style={styles.modalSubtitle}>
+                  Choose an action to proceed
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsAddMenuOpen(false)}
+                style={styles.modalCloseBtn}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalOptionsContainer}>
+              {/* Option 1: Add Loan */}
+              <TouchableOpacity
+                style={styles.modalOptionItem}
+                onPress={() => {
+                  try {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  } catch {}
+                  setIsAddMenuOpen(false);
+                  router.push("/add-loan");
+                }}
+                activeOpacity={0.75}
+              >
+                <LinearGradient
+                  colors={["#10b981", "#059669"]}
+                  style={styles.modalOptionIcon}
+                >
+                  <Ionicons name="wallet-outline" size={22} color="#fff" />
+                </LinearGradient>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalOptionTitle}>Add New Loan</Text>
+                  <Text style={styles.modalOptionSub}>
+                    Personal, EMI, Gold, Home, or Bullet loan
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+
+              {/* Option 2: Add Insurance */}
+              <TouchableOpacity
+                style={styles.modalOptionItem}
+                onPress={() => {
+                  try {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  } catch {}
+                  setIsAddMenuOpen(false);
+                  router.push("/add-insurance");
+                }}
+                activeOpacity={0.75}
+              >
+                <LinearGradient
+                  colors={["#f59e0b", "#d97706"]}
+                  style={styles.modalOptionIcon}
+                >
+                  <Ionicons
+                    name="shield-checkmark-outline"
+                    size={22}
+                    color="#fff"
+                  />
+                </LinearGradient>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalOptionTitle}>Add Insurance</Text>
+                  <Text style={styles.modalOptionSub}>
+                    Life, Health, Term, Vehicle, or Property
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+
+              {/* Option 3: Add Expense */}
+              <TouchableOpacity
+                style={styles.modalOptionItem}
+                onPress={() => {
+                  try {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  } catch {}
+                  setIsAddMenuOpen(false);
+                  router.push("/add-transaction");
+                }}
+                activeOpacity={0.75}
+              >
+                <LinearGradient
+                  colors={["#8b5cf6", "#6d28d9"]}
+                  style={styles.modalOptionIcon}
+                >
+                  <Ionicons name="receipt-outline" size={22} color="#fff" />
+                </LinearGradient>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalOptionTitle}>
+                    Add Expense / Income
+                  </Text>
+                  <Text style={styles.modalOptionSub}>
+                    Daily spending, repayment, or credit entry
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: insets.top, paddingBottom: 24 },
+          { paddingTop: insets.top + 6, paddingBottom: 40 },
         ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -590,20 +624,21 @@ export default function DashboardView() {
           />
         }
       >
-        {/* Header Section */}
+        {/* ── 1. HEADER ROW ─────────────────────────────────────── */}
         <View style={styles.headerRow}>
           <TouchableOpacity
-            style={styles.menuBtnWrap}
+            style={styles.headerIconBtn}
             onPress={() => setIsDrawerOpen(true)}
             activeOpacity={0.8}
           >
-            <BlurView intensity={25} tint="light" style={styles.menuBtnInside}>
+            <BlurView intensity={30} tint="light" style={styles.headerIconBlur}>
               <Ionicons name="menu-outline" size={22} color="#0f172a" />
             </BlurView>
           </TouchableOpacity>
+
           <View style={{ flex: 1, alignItems: "center" }}>
-            <Text style={styles.greeting}>Overview</Text>
-            <Text style={styles.dateLabel}>
+            <Text style={styles.headerTitle}>Financial Overview</Text>
+            <Text style={styles.headerSubtitle}>
               {new Date().toLocaleDateString("en-US", {
                 weekday: "short",
                 month: "short",
@@ -611,16 +646,17 @@ export default function DashboardView() {
               })}
             </Text>
           </View>
+
           <View style={styles.headerActions}>
             <TouchableOpacity
-              style={styles.bellBtnWrap}
+              style={styles.headerIconBtn}
               onPress={() => setShowAlerts((prev) => !prev)}
               activeOpacity={0.8}
             >
               <BlurView
-                intensity={25}
+                intensity={30}
                 tint="light"
-                style={styles.bellBtnInside}
+                style={styles.headerIconBlur}
               >
                 <Ionicons
                   name={showAlerts ? "notifications" : "notifications-outline"}
@@ -630,22 +666,28 @@ export default function DashboardView() {
                 {hasUpcomingAlerts && <View style={styles.bellBadge} />}
               </BlurView>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.addBtnWrap}
-              onPress={() => router.push("/add-loan")}
-              activeOpacity={0.8}
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                } catch {}
+                setIsAddMenuOpen(true);
+              }}
+              activeOpacity={0.85}
             >
               <LinearGradient
                 colors={["#10b981", "#059669"]}
                 style={styles.addBtnInside}
               >
-                <Ionicons name="add" size={26} color="#fff" />
+                <Ionicons name="add" size={24} color="#fff" />
               </LinearGradient>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Alerts Dropdown */}
+        {/* ── 2. UPCOMING DUES DROPDOWN ────────────────────────── */}
         {showAlerts && (
           <BlurView intensity={40} tint="light" style={styles.alertsDropdown}>
             <View style={styles.alertsDropdownHeader}>
@@ -669,13 +711,13 @@ export default function DashboardView() {
                           styles.alertIconBg,
                           {
                             backgroundColor: isIns
-                              ? "rgba(245, 158, 11, 0.1)"
-                              : "rgba(79, 70, 229, 0.1)",
+                              ? "rgba(245, 158, 11, 0.12)"
+                              : "rgba(79, 70, 229, 0.12)",
                           },
                         ]}
                       >
                         <Ionicons
-                          name={isIns ? "shield-checkmark" : "analytics"}
+                          name={isIns ? "shield-checkmark" : "wallet"}
                           size={18}
                           color={isIns ? "#f59e0b" : "#4f46e5"}
                         />
@@ -683,13 +725,19 @@ export default function DashboardView() {
                       <View style={{ flex: 1 }}>
                         <Text style={styles.alertItemTitle}>{due.name}</Text>
                         <Text style={styles.alertItemSubtitle}>
-                          Due: {fd(due.date)} (
-                          {due.daysLeft === 0
-                            ? "Today!"
-                            : due.daysLeft === 1
-                              ? "Tomorrow"
-                              : `${due.daysLeft} days away`}
-                          )
+                          Due: {fd(due.date)} •{" "}
+                          <Text
+                            style={{
+                              fontWeight: "700",
+                              color: due.daysLeft === 0 ? "#e11d48" : "#64748b",
+                            }}
+                          >
+                            {due.daysLeft === 0
+                              ? "Today!"
+                              : due.daysLeft === 1
+                                ? "Tomorrow"
+                                : `in ${due.daysLeft} days`}
+                          </Text>
                         </Text>
                       </View>
                       <Text
@@ -707,19 +755,20 @@ export default function DashboardView() {
             ) : (
               <View style={{ paddingVertical: 12, alignItems: "center" }}>
                 <Text style={{ fontSize: 13, color: "#64748b" }}>
-                  No upcoming dues in the next 15 days 👍
+                  🎉 No upcoming dues in the next 15 days!
                 </Text>
               </View>
             )}
           </BlurView>
         )}
 
-        {/* Intelligence Banner */}
+        {/* ── 3. AI ADVISOR INSIGHT BANNER ────────────────────── */}
         <TouchableOpacity
           style={styles.insightBanner}
           onPress={() => router.push("/ai-advisor")}
+          activeOpacity={0.85}
         >
-          <BlurView intensity={25} tint="light" style={styles.insightBlur}>
+          <BlurView intensity={30} tint="light" style={styles.insightBlur}>
             <View style={styles.insightIconWrap}>
               <Ionicons name="sparkles" size={14} color="#7c3aed" />
             </View>
@@ -728,32 +777,33 @@ export default function DashboardView() {
             </Text>
             <Ionicons
               name="chevron-forward"
-              size={12}
+              size={14}
               color="rgba(15,23,42,0.3)"
             />
           </BlurView>
         </TouchableOpacity>
 
-        {/* Hero Card (Outstanding & Next Due) */}
+        {/* ── 4. PRIMARY HERO CARD (PORTFOLIO NET OUTSTANDING) ─── */}
         <LinearGradient
-          colors={["#0f172a", "#1e293b"]}
+          colors={["#0b0f19", "#161f30"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.heroCard}
         >
+          {/* Ambient Diffuse Glows */}
           <View style={styles.heroGlow1} />
           <View style={styles.heroGlow2} />
 
           <View style={styles.heroTopRow}>
             <View>
-              <Text style={styles.heroSubtitle}>Total Outstanding</Text>
+              <Text style={styles.heroSubtitle}>Net Outstanding Debt</Text>
               <Text style={styles.heroTitle}>
                 {fc(stats.totalPrincipalPending)}
               </Text>
             </View>
 
             {/* Next Due Floating Box */}
-            {stats.nextDueDate && (
+            {stats.nextDueDate ? (
               <View style={styles.heroNextDueBox}>
                 <Text style={styles.nextDueLabel}>
                   NEXT DUE • {fd(stats.nextDueDate)}
@@ -761,6 +811,11 @@ export default function DashboardView() {
                 <Text style={styles.nextDueAmount}>
                   {fc(stats.nextPaymentAmount)}
                 </Text>
+              </View>
+            ) : (
+              <View style={styles.heroAllClearBox}>
+                <Ionicons name="checkmark-circle" size={14} color="#10b981" />
+                <Text style={styles.heroAllClearText}>All Clear</Text>
               </View>
             )}
           </View>
@@ -780,104 +835,82 @@ export default function DashboardView() {
                 {fc(stats.totalOutstanding)}
               </Text>
             </View>
+            {(stats as any).totalInterestSaved > 0 && (
+              <View style={styles.heroStatCol}>
+                <Text style={styles.heroStatLabel}>Interest Saved</Text>
+                <Text style={[styles.heroStatValue, { color: "#10b981" }]}>
+                  {fc((stats as any).totalInterestSaved)}
+                </Text>
+              </View>
+            )}
           </View>
         </LinearGradient>
 
-        {/* Interest Savings Highlight Card */}
-        {(stats as any).totalInterestSaved > 0 && (
-          <View style={styles.savingsCardContainer}>
-            <LinearGradient
-              colors={["#065f46", "#047857"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.savingsCard}
-            >
-              <View style={styles.savingsContent}>
-                <View style={styles.savingsIconWrap}>
-                  <Ionicons name="sparkles" size={18} color="#fff" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.savingsLabel}>Total Interest Saved</Text>
-                  <Text style={styles.savingsValue}>
-                    🎉 You saved {fc((stats as any).totalInterestSaved)} in
-                    interest!
-                  </Text>
-                </View>
-              </View>
-            </LinearGradient>
-          </View>
-        )}
-
-        {/* Daily Financial Wisdom Quote Card */}
-        {quote && (
+        {/* ── 5. QUICK SHORTCUTS HUB ───────────────────────────── */}
+        <View style={styles.shortcutsRow}>
           <TouchableOpacity
-            activeOpacity={0.88}
-            onPress={handleNextQuote}
-            style={styles.quoteCardWrap}
+            style={styles.shortcutBtn}
+            onPress={() => router.push("/roadmap" as any)}
+            activeOpacity={0.8}
           >
-            <BlurView intensity={40} tint="light" style={styles.quoteCardBlur}>
-              <View style={styles.quoteCardHeader}>
-                <View style={styles.quoteBadge}>
-                  <Ionicons name="sparkles" size={12} color="#4f46e5" />
-                  <Text style={styles.quoteBadgeText}>Daily Wisdom</Text>
-                </View>
-                <View
-                  style={[
-                    styles.quoteCategoryTag,
-                    {
-                      backgroundColor: getCategoryTheme(quote?.category).bg,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.quoteCategoryText,
-                      {
-                        color: getCategoryTheme(quote?.category).text,
-                      },
-                    ]}
-                  >
-                    #{quote.category}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }} />
-                <TouchableOpacity
-                  style={styles.quoteShuffleBtn}
-                  onPress={handleNextQuote}
-                  activeOpacity={0.7}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Ionicons name="shuffle-outline" size={14} color="#4f46e5" />
-                  <Text style={styles.quoteShuffleText}>Next</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.quoteBodyRow}>
-                <Ionicons
-                  name="chatbubble-ellipses-outline"
-                  size={18}
-                  color="#6366f1"
-                  style={styles.quoteIcon}
-                />
-                <Text style={styles.quoteText}>
-                  &ldquo;{quote.quote}&rdquo;
-                </Text>
-              </View>
-
-              <View style={styles.quoteFooterRow}>
-                <View style={styles.quoteFooterLine} />
-                <Text style={styles.quoteAuthor}>— {quote.author}</Text>
-              </View>
-            </BlurView>
+            <LinearGradient
+              colors={["#4f46e5", "#6366f1"]}
+              style={styles.shortcutIconBox}
+            >
+              <Ionicons name="map" size={18} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.shortcutLabel}>Roadmap</Text>
           </TouchableOpacity>
-        )}
 
-        {/* This Month Spending (Segmented view) */}
-        <View style={styles.monthSection}>
-          <Text style={styles.sectionTitle}>This Month&apos;s Activity</Text>
-          <BlurView intensity={30} tint="light" style={styles.monthCard}>
-            {/* Payment Track */}
-            <View style={styles.trackTop}>
+          <TouchableOpacity
+            style={styles.shortcutBtn}
+            onPress={() => router.push("/spend-tracker" as any)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={["#ec4899", "#db2777"]}
+              style={styles.shortcutIconBox}
+            >
+              <Ionicons name="pie-chart" size={18} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.shortcutLabel}>Spends</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.shortcutBtn}
+            onPress={() => router.push("/ai-advisor" as any)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={["#7c3aed", "#9333ea"]}
+              style={styles.shortcutIconBox}
+            >
+              <Ionicons name="sparkles" size={18} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.shortcutLabel}>AI Advisor</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.shortcutBtn}
+            onPress={() => router.push("/compare-loans" as any)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={["#0ea5e9", "#0284c7"]}
+              style={styles.shortcutIconBox}
+            >
+              <Ionicons name="git-compare-outline" size={18} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.shortcutLabel}>Compare</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── 6. CASHFLOW & BUDGET BENTO BOX ───────────────────── */}
+        <View style={styles.sectionWrap}>
+          <Text style={styles.sectionTitle}>Monthly Cashflow</Text>
+          <BlurView intensity={35} tint="light" style={styles.bentoCard}>
+            {/* Repayment Tracker */}
+            <View style={styles.trackHeaderRow}>
               <View style={styles.trackCol}>
                 <View
                   style={[styles.trackDot, { backgroundColor: "#10b981" }]}
@@ -891,16 +924,24 @@ export default function DashboardView() {
                 <View
                   style={[styles.trackDot, { backgroundColor: "#8b5cf6" }]}
                 />
-                <Text style={styles.trackLabel}>Extra Paid</Text>
+                <Text style={styles.trackLabel}>Prepayments</Text>
                 <Text style={styles.trackValue}>
                   {fc(stats.thisMonthExtraPaid)}
                 </Text>
               </View>
               <View style={styles.trackCol}>
                 <View
-                  style={[styles.trackDot, { backgroundColor: "#f59e0b" }]}
+                  style={[
+                    styles.trackDot,
+                    {
+                      backgroundColor:
+                        stats.thisMonthDueAmount - stats.thisMonthTotalPaid > 0
+                          ? "#f59e0b"
+                          : "#10b981",
+                    },
+                  ]}
                 />
-                <Text style={styles.trackLabel}>Pending</Text>
+                <Text style={styles.trackLabel}>Remaining</Text>
                 <Text style={styles.trackValue}>
                   {fc(
                     Math.max(
@@ -912,7 +953,8 @@ export default function DashboardView() {
               </View>
             </View>
 
-            <View style={styles.progressContainer}>
+            {/* Repayment Dual Progress Bar */}
+            <View style={styles.progressTrack}>
               <View
                 style={[
                   styles.progressFill,
@@ -939,31 +981,25 @@ export default function DashboardView() {
               />
             </View>
 
-            <View style={styles.trackFooter}>
-              <Text style={styles.footerLabel}>
+            <View style={styles.trackFooterRow}>
+              <Text style={styles.trackFooterText}>
                 Total Cleared:{" "}
-                <Text style={{ color: "#10b981", fontWeight: "bold" }}>
+                <Text style={{ color: "#10b981", fontWeight: "700" }}>
                   {fc(stats.thisMonthTotalPaid)}
                 </Text>
               </Text>
-              <Text style={styles.footerLabel}>
-                Target:{" "}
-                <Text style={{ color: "#0f172a", fontWeight: "bold" }}>
+              <Text style={styles.trackFooterText}>
+                Obligation:{" "}
+                <Text style={{ color: "#0f172a", fontWeight: "700" }}>
                   {fc(stats.thisMonthDueAmount)}
                 </Text>
               </Text>
             </View>
 
-            <View
-              style={{
-                height: 1,
-                backgroundColor: "rgba(0,0,0,0.05)",
-                marginVertical: 14,
-              }}
-            />
+            <View style={styles.trackDivider} />
 
-            {/* Spend Budget Track */}
-            <View style={styles.trackTop}>
+            {/* Monthly Spends & Budget */}
+            <View style={styles.trackHeaderRow}>
               <View style={styles.trackCol}>
                 <View
                   style={[styles.trackDot, { backgroundColor: "#ec4899" }]}
@@ -975,7 +1011,7 @@ export default function DashboardView() {
                 <View
                   style={[styles.trackDot, { backgroundColor: "#94a3b8" }]}
                 />
-                <Text style={styles.trackLabel}>Budget Limit</Text>
+                <Text style={styles.trackLabel}>Monthly Budget</Text>
                 <Text style={styles.trackValue}>{fc(budgetLimit)}</Text>
               </View>
               <View style={styles.trackCol}>
@@ -988,7 +1024,7 @@ export default function DashboardView() {
                     },
                   ]}
                 />
-                <Text style={styles.trackLabel}>Remaining</Text>
+                <Text style={styles.trackLabel}>Available</Text>
                 <Text
                   style={[
                     styles.trackValue,
@@ -999,13 +1035,14 @@ export default function DashboardView() {
                   ]}
                 >
                   {spentThisMonth > budgetLimit
-                    ? `Over by ${fc(spentThisMonth - budgetLimit)}`
+                    ? `Over ${fc(spentThisMonth - budgetLimit)}`
                     : fc(budgetLimit - spentThisMonth)}
                 </Text>
               </View>
             </View>
 
-            <View style={styles.progressContainer}>
+            {/* Spend Progress Bar */}
+            <View style={styles.progressTrack}>
               <View
                 style={[
                   styles.progressFill,
@@ -1017,476 +1054,433 @@ export default function DashboardView() {
                 ]}
               />
             </View>
+
+            <TouchableOpacity
+              style={styles.spendLinkRow}
+              onPress={() => router.push("/spend-tracker" as any)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.spendLinkText}>Manage Budget & Spends</Text>
+              <Ionicons name="arrow-forward" size={14} color="#ec4899" />
+            </TouchableOpacity>
           </BlurView>
         </View>
 
-        {/* Repayment Roadmap Shortcut Banner */}
-        <TouchableOpacity
-          style={styles.roadmapBanner}
-          onPress={() => router.push("/roadmap" as any)}
-          activeOpacity={0.85}
-        >
-          <LinearGradient
-            colors={["#4f46e5", "#6366f1", "#8b5cf6"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.roadmapBannerGradient}
-          >
-            <View style={styles.roadmapBannerIconWrap}>
-              <Ionicons name="map" size={22} color="#fff" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.roadmapBannerTitle}>
-                Monthly Repayment Roadmap
-              </Text>
-              <Text style={styles.roadmapBannerSub}>
-                View month-by-month total outstanding & payoff projection list
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#fff" />
-          </LinearGradient>
-        </TouchableOpacity>
-
-        {/* Analytics Section */}
-        <View style={styles.analyticsSection}>
+        {/* ── 7. ACTIVE LOANS CAROUSEL ─────────────────────────── */}
+        <View style={styles.sectionWrap}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Analytics</Text>
-            <TouchableOpacity onPress={() => router.push("/analytics" as any)}>
-              <Text style={styles.seeAllText}>Full View</Text>
+            <Text style={styles.sectionTitle}>
+              Active Loans ({activeLoans.length})
+            </Text>
+            <TouchableOpacity onPress={() => router.push("/loans" as any)}>
+              <Text style={styles.seeAllText}>View All</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Loan Overview — outstanding share bars */}
-          {loanSharesData.length > 0 && (
-            <BlurView intensity={30} tint="light" style={styles.analyticsCard}>
-              <Text style={styles.analyticsCardTitle}>
-                Loan-wise Outstanding
+          {activeLoans.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.horizontalScroll}
+            >
+              {activeLoans.map((loan) => {
+                const remaining = getLoanRemainingPrincipal(loan);
+                const typeMeta =
+                  LOAN_TYPE_META[loan.loanType || "other"] ||
+                  LOAN_TYPE_META.other;
+
+                return (
+                  <TouchableOpacity
+                    key={loan.id}
+                    style={styles.loanCardItem}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/loan-detail",
+                        params: { id: loan.id },
+                      })
+                    }
+                    activeOpacity={0.88}
+                  >
+                    <BlurView
+                      intensity={35}
+                      tint="light"
+                      style={styles.loanCardBlur}
+                    >
+                      <View style={styles.loanCardTop}>
+                        <View
+                          style={[
+                            styles.loanTypeIconBox,
+                            { backgroundColor: typeMeta.bg },
+                          ]}
+                        >
+                          <Ionicons
+                            name={typeMeta.icon}
+                            size={18}
+                            color={typeMeta.color}
+                          />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <Text style={styles.loanCardName} numberOfLines={1}>
+                            {loan.loanName}
+                          </Text>
+                          <Text style={styles.loanCardBank} numberOfLines={1}>
+                            {loan.bankName || "Personal"} • {loan.interest}%
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.loanCardMiddle}>
+                        <Text style={styles.loanCardAmtLabel}>
+                          Remaining Principal
+                        </Text>
+                        <Text style={styles.loanCardAmt}>{fc(remaining)}</Text>
+                      </View>
+
+                      <View style={styles.loanCardFooter}>
+                        <Text style={styles.loanCardDue}>
+                          {loan.loanType === "bullet"
+                            ? `Matures: ${fd(
+                                getBulletMaturityDate(
+                                  loan.startDate,
+                                  parseInt(loan.tenure) || 0,
+                                ),
+                              )}`
+                            : `EMI: ${fc(loan.emiAmount)}`}
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={14}
+                          color="#94a3b8"
+                        />
+                      </View>
+                    </BlurView>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          ) : (
+            <BlurView intensity={25} tint="light" style={styles.emptyCard}>
+              <Ionicons name="wallet-outline" size={32} color="#94a3b8" />
+              <Text style={styles.emptyTitle}>No active loans</Text>
+              <Text style={styles.emptySub}>
+                Track your EMIs and bullet loans in one place.
               </Text>
-              <Text style={styles.analyticsCardSubtitle}>
-                Share of remaining principal
-              </Text>
-              {loanSharesData.map((ls: any, i: number) => (
-                <View key={i} style={styles.analyticsShareRow}>
-                  <View style={styles.analyticsShareMeta}>
-                    <View
-                      style={[
-                        styles.analyticsDot,
-                        { backgroundColor: ls.color },
-                      ]}
-                    />
-                    <Text style={styles.analyticsShareName} numberOfLines={1}>
-                      {ls.name}
-                    </Text>
-                    <Text style={styles.analyticsShareAmt}>
-                      ₹
-                      {parseFloat(ls.remaining).toLocaleString("en-IN", {
-                        maximumFractionDigits: 0,
-                      })}
-                    </Text>
-                  </View>
-                  <View style={styles.analyticsBarBg}>
-                    <View
-                      style={[
-                        styles.analyticsBarFill,
-                        {
-                          width: `${ls.share * 100}%`,
-                          backgroundColor: ls.color,
-                        },
-                      ]}
-                    />
-                  </View>
-                </View>
-              ))}
+              <TouchableOpacity
+                style={styles.emptyBtn}
+                onPress={() => router.push("/add-loan")}
+              >
+                <Text style={styles.emptyBtnText}>+ Add Loan</Text>
+              </TouchableOpacity>
             </BlurView>
           )}
         </View>
 
-        <View style={{ height: 24 }} />
+        {/* ── 8. INSURANCE POLICIES SNAPSHOT ───────────────────── */}
+        <View style={styles.sectionWrap}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>
+              Insurance ({insurances.length})
+            </Text>
+            <TouchableOpacity onPress={() => router.push("/insurances" as any)}>
+              <Text style={styles.seeAllText}>View All</Text>
+            </TouchableOpacity>
+          </View>
+
+          {insurances.length > 0 ? (
+            <TouchableOpacity
+              onPress={() => router.push("/insurances" as any)}
+              activeOpacity={0.88}
+              style={styles.insuranceCardWrap}
+            >
+              <BlurView
+                intensity={35}
+                tint="light"
+                style={styles.insuranceCard}
+              >
+                <View style={styles.insHeaderRow}>
+                  <View style={styles.insIconWrap}>
+                    <Ionicons
+                      name="shield-checkmark"
+                      size={22}
+                      color="#f59e0b"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.insTitle}>
+                      {insurances.length} Active Policies
+                    </Text>
+                    <Text style={styles.insSubtitle}>
+                      {nextInsurance
+                        ? `Next Premium: ${fd(nextInsurance.nextDue)} (${fc(
+                            nextInsurance.premiumAmount,
+                          )})`
+                        : "All coverage up to date"}
+                    </Text>
+                  </View>
+                  <View style={styles.insViewBtn}>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={16}
+                      color="#f59e0b"
+                    />
+                  </View>
+                </View>
+              </BlurView>
+            </TouchableOpacity>
+          ) : (
+            <BlurView intensity={25} tint="light" style={styles.emptyCard}>
+              <Ionicons name="shield-outline" size={32} color="#94a3b8" />
+              <Text style={styles.emptyTitle}>No insurance added</Text>
+              <Text style={styles.emptySub}>
+                Keep track of renewal dates and premiums.
+              </Text>
+              <TouchableOpacity
+                style={[styles.emptyBtn, { backgroundColor: "#f59e0b" }]}
+                onPress={() => router.push("/add-insurance")}
+              >
+                <Text style={styles.emptyBtnText}>+ Add Insurance</Text>
+              </TouchableOpacity>
+            </BlurView>
+          )}
+        </View>
+
+        {/* ── 9. DAILY FINANCIAL WISDOM (EDITORIAL DESIGN) ──────── */}
+        {quote &&
+          (() => {
+            const categoryTheme = getCategoryTheme(quote.category);
+            return (
+              <TouchableOpacity
+                activeOpacity={0.92}
+                onPress={handleNextQuote}
+                style={[
+                  styles.quoteCardWrap,
+                  {
+                    borderColor: categoryTheme.border,
+                    shadowColor: categoryTheme.text,
+                  },
+                ]}
+              >
+                <LinearGradient
+                  colors={[
+                    "#ffffff",
+                    "rgba(248, 250, 252, 0.95)",
+                    categoryTheme.glow,
+                  ]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <BlurView
+                  intensity={25}
+                  tint="light"
+                  style={styles.quoteCardBlur}
+                >
+                  {/* Decorative Background Watermark Quotation Mark */}
+                  <Text
+                    style={[
+                      styles.quoteWatermark,
+                      { color: categoryTheme.text },
+                    ]}
+                    pointerEvents="none"
+                  >
+                    “
+                  </Text>
+
+                  {/* Header Row */}
+                  <View style={styles.quoteCardHeader}>
+                    <View style={styles.quoteBadge}>
+                      <Ionicons name="sparkles" size={11} color="#4f46e5" />
+                      <Text style={styles.quoteBadgeText}>Daily Wisdom</Text>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.quoteCategoryTag,
+                        {
+                          backgroundColor: categoryTheme.bg,
+                          borderColor: categoryTheme.border,
+                        },
+                      ]}
+                    >
+                      <Text style={styles.quoteCategoryEmoji}>
+                        {categoryTheme.emoji}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.quoteCategoryText,
+                          { color: categoryTheme.text },
+                        ]}
+                      >
+                        {quote.category}
+                      </Text>
+                    </View>
+
+                    <View style={{ flex: 1 }} />
+
+                    <TouchableOpacity
+                      style={[
+                        styles.quoteShuffleBtn,
+                        { borderColor: categoryTheme.border },
+                      ]}
+                      onPress={handleNextQuote}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Ionicons
+                        name="shuffle"
+                        size={12}
+                        color={categoryTheme.text}
+                      />
+                      <Text
+                        style={[
+                          styles.quoteShuffleText,
+                          { color: categoryTheme.text },
+                        ]}
+                      >
+                        Shuffle
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Quote Body */}
+                  <View style={styles.quoteBodyRow}>
+                    <Text style={styles.quoteText}>
+                      &ldquo;{quote.quote}&rdquo;
+                    </Text>
+                  </View>
+
+                  {/* Author Signature & Attribution Footer */}
+                  <View style={styles.quoteFooterRow}>
+                    <View
+                      style={[
+                        styles.authorAvatarCircle,
+                        {
+                          backgroundColor: categoryTheme.bg,
+                          borderColor: categoryTheme.border,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.authorAvatarText,
+                          { color: categoryTheme.text },
+                        ]}
+                      >
+                        {getAuthorInitials(quote.author)}
+                      </Text>
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.quoteAuthorName}>{quote.author}</Text>
+                      <Text style={styles.quoteAuthorRole}>
+                        Mindset & Financial Principle
+                      </Text>
+                    </View>
+
+                    <View style={styles.quoteTapHint}>
+                      <Ionicons
+                        name="repeat-outline"
+                        size={12}
+                        color="#94a3b8"
+                      />
+                      <Text style={styles.quoteTapHintText}>Tap to cycle</Text>
+                    </View>
+                  </View>
+                </BlurView>
+              </TouchableOpacity>
+            );
+          })()}
+
+        <View style={{ height: 20 }} />
       </ScrollView>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: {
+    flex: 1,
+  },
   scrollContent: {},
+
+  // Header Styles
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    marginBottom: 24,
-    marginTop: -10,
+    marginBottom: 20,
   },
-  greeting: {
-    fontSize: 32,
+  headerTitle: {
+    fontSize: 22,
     fontWeight: "800",
     color: "#0f172a",
     letterSpacing: -0.5,
   },
-  dateLabel: {
-    fontSize: 13,
+  headerSubtitle: {
+    fontSize: 11,
     color: "#64748b",
-    fontWeight: "500",
+    fontWeight: "700",
     marginTop: 2,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+  },
+  headerIconBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    overflow: "hidden",
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+  },
+  headerIconBlur: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.9)",
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  bellBadge: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#e11d48",
   },
   addBtnWrap: {
     shadowColor: "#10b981",
-    shadowOffset: { width: 0, height: 8 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.3,
-    shadowRadius: 10,
+    shadowRadius: 8,
+    elevation: 4,
   },
   addBtnInside: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     justifyContent: "center",
     alignItems: "center",
   },
-  heroCard: {
-    marginHorizontal: 20,
-    borderRadius: 28,
-    padding: 24,
-    overflow: "hidden",
-    marginBottom: 26,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 14,
-  },
-  heroGlow1: {
-    position: "absolute",
-    top: -50,
-    right: -20,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: "rgba(56,189,248,0.2)",
-  },
-  heroGlow2: {
-    position: "absolute",
-    bottom: -50,
-    left: -20,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "rgba(16,185,129,0.15)",
-  },
-  heroTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-  },
-  heroSubtitle: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.6)",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  heroTitle: {
-    fontSize: 38,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: -1,
-  },
-  heroNextDueBox: {
-    backgroundColor: "rgba(255,255,255,0.1)",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 14,
-    alignItems: "flex-end",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-  },
-  nextDueLabel: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.6)",
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  nextDueAmount: { fontSize: 18, fontWeight: "700", color: "#10b981" },
-  heroDivider: {
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    marginVertical: 20,
-  },
-  heroBottomRow: { flexDirection: "row", gap: 24 },
-  heroStatCol: { flex: 1 },
-  heroStatLabel: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.5)",
-    marginBottom: 4,
-  },
-  heroStatValue: { fontSize: 16, color: "#fff", fontWeight: "600" },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 14,
-    paddingHorizontal: 20,
-  },
-  monthSection: { marginBottom: 28 },
-  monthCard: {
-    marginHorizontal: 20,
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
-    overflow: "hidden",
-  },
-  trackTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  trackCol: { alignItems: "flex-start" },
-  trackDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 6 },
-  trackLabel: {
-    fontSize: 11,
-    color: "#64748b",
-    marginBottom: 2,
-    fontWeight: "500",
-  },
-  trackValue: { fontSize: 16, color: "#0f172a", fontWeight: "700" },
-  progressContainer: {
-    height: 8,
-    backgroundColor: "rgba(0,0,0,0.04)",
-    borderRadius: 4,
-    flexDirection: "row",
-    overflow: "hidden",
-    marginBottom: 14,
-  },
-  progressFill: { height: "100%" },
-  trackFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.04)",
-    paddingTop: 12,
-  },
-  footerLabel: { fontSize: 12, color: "#64748b" },
-  gridSection: { marginBottom: 28 },
-  gridContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    paddingHorizontal: 15,
-  },
-  gridBtnWrap: { width: "33.33%", padding: 5 },
-  gridBtnFrame: {
-    paddingVertical: 18,
-    paddingHorizontal: 10,
-    borderRadius: 20,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.5)",
-    backgroundColor: "rgba(255,255,255,0.4)",
-    overflow: "hidden",
-  },
-  iconCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  gridBtnText: {
-    fontSize: 12,
-    color: "#334155",
-    fontWeight: "600",
-    textAlign: "center",
-    lineHeight: 16,
-  },
-  badgeWrap: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    backgroundColor: "#e11d48",
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#fff",
-  },
-  badgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "bold",
-    paddingHorizontal: 4,
-  },
-  insurancesSection: { marginBottom: 28 },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingRight: 20,
-    marginBottom: 14,
-  },
-  seeAllText: { fontSize: 13, fontWeight: "600", color: "#10b981" },
-  insurancesScroll: { paddingHorizontal: 20, gap: 12 },
-  insCard: {
-    width: 140,
-    padding: 16,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.4)",
-    backgroundColor: "rgba(255,255,255,0.5)",
-  },
-  insIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "rgba(245,158,11,0.15)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  insName: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 4,
-  },
-  insAmt: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#f59e0b",
-    marginBottom: 12,
-  },
-  insDueBox: {
-    backgroundColor: "rgba(0,0,0,0.04)",
-    paddingVertical: 6,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  insDueLabel: { fontSize: 10, fontWeight: "600", color: "#64748b" },
-  secondarySection: { paddingHorizontal: 20, marginBottom: 20 },
-  secondaryCard: {
-    borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
-  },
-  secRow: { flexDirection: "row", alignItems: "center", padding: 16 },
-  secRowBorder: { borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.04)" },
-  secIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "rgba(0,0,0,0.03)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  secTitle: { flex: 1, fontSize: 15, fontWeight: "600", color: "#334155" },
-  insightBanner: {
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(124,58,237,0.15)",
-  },
-  insightBlur: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 12,
-    backgroundColor: "rgba(124,58,237,0.05)",
-  },
-  insightIconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 10,
-    backgroundColor: "rgba(124,58,237,0.12)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  insightText: { flex: 1, fontSize: 13, fontWeight: "600", color: "#334155" },
-  // Analytics section
-  analyticsSection: { marginBottom: 28 },
-  analyticsCard: {
-    marginHorizontal: 20,
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
-    overflow: "hidden",
-    marginBottom: 14,
-  },
-  analyticsCardTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 2,
-  },
-  analyticsCardSubtitle: { fontSize: 12, color: "#64748b", marginBottom: 14 },
-  analyticsShareRow: { marginBottom: 12 },
-  analyticsShareMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 6,
-    gap: 6,
-  },
-  analyticsDot: { width: 8, height: 8, borderRadius: 4 },
-  analyticsShareName: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0f172a",
-  },
-  analyticsShareAmt: { fontSize: 12, fontWeight: "600", color: "#64748b" },
-  analyticsBarBg: {
-    height: 6,
-    backgroundColor: "rgba(0,0,0,0.06)",
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  analyticsBarFill: { height: "100%", borderRadius: 3 },
-  savingsCardContainer: {
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 20,
-    overflow: "hidden",
-    shadowColor: "#10b981",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-  },
-  savingsCard: { padding: 14 },
-  savingsContent: { flexDirection: "row", alignItems: "center", gap: 12 },
-  savingsIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  savingsLabel: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.7)",
-    textTransform: "uppercase",
-    fontWeight: "700",
-    letterSpacing: 0.5,
-  },
-  savingsValue: {
-    fontSize: 15,
-    color: "#fff",
-    fontWeight: "700",
-    marginTop: 1,
-  },
+
+  // Alerts Dropdown
   alertsDropdown: {
     marginHorizontal: 20,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: "rgba(79, 70, 229, 0.15)",
-    backgroundColor: "rgba(255, 255, 255, 0.75)",
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(79, 70, 229, 0.2)",
+    backgroundColor: "rgba(255, 255, 255, 0.8)",
     overflow: "hidden",
     marginBottom: 20,
     padding: 16,
@@ -1494,23 +1488,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
     shadowRadius: 10,
-    elevation: 4,
+    elevation: 3,
   },
   alertsDropdownHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14,
+    marginBottom: 12,
   },
   alertsDropdownTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "800",
     color: "#0f172a",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   alertsCloseBtn: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
     color: "#64748b",
   },
@@ -1518,11 +1512,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   alertIconBg: {
-    width: 38,
-    height: 38,
+    width: 36,
+    height: 36,
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
@@ -1541,198 +1535,666 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
   },
-  alertPlaceholder: {
-    fontSize: 13,
-    color: "#94a3b8",
-    textAlign: "center",
-    paddingVertical: 10,
-    fontWeight: "500",
-  },
   alertDivider: {
     height: 1,
-    backgroundColor: "rgba(0,0,0,0.05)",
+    backgroundColor: "rgba(0,0,0,0.04)",
     marginVertical: 4,
   },
-  bellBtnWrap: {
-    shadowColor: "#4f46e5",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
+
+  // Insight Banner
+  insightBanner: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.15)",
+    shadowColor: "#7c3aed",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
   },
-  bellBtnInside: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  insightBlur: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    backgroundColor: "rgba(124, 58, 237, 0.05)",
+  },
+  insightIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    backgroundColor: "rgba(124, 58, 237, 0.12)",
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(79, 70, 229, 0.15)",
+    marginRight: 10,
+  },
+  insightText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#334155",
+  },
+
+  // Primary Hero Card
+  heroCard: {
+    marginHorizontal: 20,
+    borderRadius: 26,
+    padding: 22,
     overflow: "hidden",
+    marginBottom: 20,
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.24,
+    shadowRadius: 16,
+    elevation: 6,
   },
-  bellBadge: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#e11d48",
+  heroSkeletonCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 26,
+    padding: 22,
+    marginBottom: 24,
     borderWidth: 1,
-    borderColor: "#ffffff",
+    borderColor: "rgba(0,0,0,0.04)",
   },
-  menuBtnWrap: {
-    width: 98,
+  heroGlow1: {
+    position: "absolute",
+    top: -50,
+    right: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: "rgba(56, 189, 248, 0.18)",
+  },
+  heroGlow2: {
+    position: "absolute",
+    bottom: -50,
+    left: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "rgba(16, 185, 129, 0.14)",
+  },
+  heroTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "flex-start",
   },
-  menuBtnInside: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.1)",
-    overflow: "hidden",
-    backgroundColor: "#ffffff",
+  heroSubtitle: {
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.6)",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    fontWeight: "600",
+    marginBottom: 6,
   },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    width: 98,
-    justifyContent: "flex-end",
-  },
-  roadmapBanner: {
-    marginHorizontal: 20,
-    marginBottom: 24,
-    borderRadius: 20,
-    overflow: "hidden",
-    shadowColor: "#6366f1",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  roadmapBannerGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    gap: 12,
-  },
-  roadmapBannerIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  roadmapBannerTitle: {
-    fontSize: 15,
+  heroTitle: {
+    fontSize: 34,
     fontWeight: "800",
     color: "#ffffff",
+    letterSpacing: -1,
   },
-  roadmapBannerSub: {
+  heroNextDueBox: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    alignItems: "flex-end",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  heroAllClearBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 6,
+  },
+  heroAllClearText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#10b981",
+  },
+  nextDueLabel: {
+    fontSize: 10,
+    color: "rgba(255, 255, 255, 0.65)",
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  nextDueAmount: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#10b981",
+  },
+  heroDivider: {
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    marginVertical: 18,
+  },
+  heroBottomRow: {
+    flexDirection: "row",
+    gap: 16,
+  },
+  heroStatCol: {
+    flex: 1,
+  },
+  heroStatLabel: {
     fontSize: 11,
-    color: "rgba(255, 255, 255, 0.85)",
+    color: "rgba(255, 255, 255, 0.5)",
+    marginBottom: 4,
     fontWeight: "500",
-    marginTop: 2,
   },
-  quoteCardWrap: {
-    marginHorizontal: 20,
+  heroStatValue: {
+    fontSize: 15,
+    color: "#ffffff",
+    fontWeight: "700",
+  },
+
+  // Shortcuts Hub
+  shortcutsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
     marginBottom: 24,
+  },
+  shortcutBtn: {
+    alignItems: "center",
+    width: "22%",
+  },
+  shortcutIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 6,
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  shortcutLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#334155",
+    letterSpacing: -0.2,
+  },
+
+  // Section Containers
+  sectionWrap: {
+    marginBottom: 24,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#0f172a",
+    letterSpacing: -0.3,
+    paddingHorizontal: 20,
+  },
+  seeAllText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#4f46e5",
+  },
+
+  // Bento Card (Repayment & Spends)
+  bentoCard: {
+    marginHorizontal: 20,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.85)",
+    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    overflow: "hidden",
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+  },
+  trackHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  trackCol: {
+    alignItems: "flex-start",
+  },
+  trackDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginBottom: 4,
+  },
+  trackLabel: {
+    fontSize: 11,
+    color: "#64748b",
+    marginBottom: 2,
+    fontWeight: "500",
+  },
+  trackValue: {
+    fontSize: 15,
+    color: "#0f172a",
+    fontWeight: "700",
+  },
+  progressTrack: {
+    height: 7,
+    backgroundColor: "rgba(0, 0, 0, 0.05)",
+    borderRadius: 4,
+    flexDirection: "row",
+    overflow: "hidden",
+    marginBottom: 10,
+  },
+  progressFill: {
+    height: "100%",
+  },
+  trackFooterRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  trackFooterText: {
+    fontSize: 11,
+    color: "#64748b",
+    fontWeight: "500",
+  },
+  trackDivider: {
+    height: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.05)",
+    marginVertical: 14,
+  },
+  spendLinkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    marginTop: 10,
+    gap: 4,
+  },
+  spendLinkText: {
+    fontSize: 12,
+    color: "#ec4899",
+    fontWeight: "700",
+  },
+
+  // Active Loans Horizontal Scroll
+  horizontalScroll: {
+    paddingHorizontal: 20,
+    gap: 12,
+  },
+  loanCardItem: {
+    width: width * 0.62,
     borderRadius: 22,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.9)",
-    backgroundColor: "rgba(255, 255, 255, 0.75)",
-    shadowColor: "#4f46e5",
+    borderColor: "rgba(255, 255, 255, 0.85)",
+    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    shadowColor: "#0f172a",
     shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  loanCardBlur: {
+    padding: 16,
+  },
+  loanCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  loanTypeIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loanCardName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  loanCardBank: {
+    fontSize: 11,
+    color: "#64748b",
+    fontWeight: "500",
+    marginTop: 1,
+  },
+  loanCardMiddle: {
+    marginBottom: 12,
+  },
+  loanCardAmtLabel: {
+    fontSize: 10,
+    color: "#64748b",
+    textTransform: "uppercase",
+    fontWeight: "600",
+    letterSpacing: 0.5,
+  },
+  loanCardAmt: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginTop: 2,
+  },
+  loanCardFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0, 0, 0, 0.04)",
+    paddingTop: 8,
+  },
+  loanCardDue: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#4f46e5",
+  },
+
+  // Insurance Card
+  insuranceCardWrap: {
+    marginHorizontal: 20,
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.85)",
+    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    shadowColor: "#f59e0b",
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.06,
+    shadowRadius: 8,
+  },
+  insuranceCard: {
+    padding: 16,
+  },
+  insHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  insIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  insTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  insSubtitle: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "500",
+    marginTop: 2,
+  },
+  insViewBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  // Empty Card
+  emptyCard: {
+    marginHorizontal: 20,
+    borderRadius: 22,
+    padding: 20,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.85)",
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
+    overflow: "hidden",
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#334155",
+    marginTop: 8,
+  },
+  emptySub: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 2,
+    textAlign: "center",
+  },
+  emptyBtn: {
+    marginTop: 12,
+    backgroundColor: "#10b981",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  emptyBtnText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  // Daily Financial Wisdom (Editorial Design)
+  quoteCardWrap: {
+    marginHorizontal: 20,
+    marginBottom: 24,
+    borderRadius: 24,
+    overflow: "hidden",
+    borderWidth: 1.5,
+    backgroundColor: "#ffffff",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
     shadowRadius: 12,
-    elevation: 2,
+    elevation: 3,
+    position: "relative",
   },
   quoteCardBlur: {
-    padding: 16,
+    padding: 20,
+    position: "relative",
+  },
+  quoteWatermark: {
+    position: "absolute",
+    right: 14,
+    top: -12,
+    fontSize: 120,
+    fontWeight: "900",
+    fontFamily: "System",
+    opacity: 0.07,
+    lineHeight: 120,
   },
   quoteCardHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 14,
     gap: 8,
   },
   quoteBadge: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(79, 70, 229, 0.08)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 10,
     gap: 4,
   },
   quoteBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
+    fontSize: 10,
+    fontWeight: "800",
     color: "#4f46e5",
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   quoteCategoryTag: {
-    backgroundColor: "rgba(15, 23, 42, 0.05)",
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 4,
+  },
+  quoteCategoryEmoji: {
+    fontSize: 11,
   },
   quoteCategoryText: {
     fontSize: 11,
-    fontWeight: "600",
-    color: "#64748b",
+    fontWeight: "700",
   },
   quoteShuffleBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(79, 70, 229, 0.08)",
+    backgroundColor: "#ffffff",
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 12,
+    borderWidth: 1,
     gap: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
   },
   quoteShuffleText: {
     fontSize: 11,
-    color: "#4f46e5",
     fontWeight: "700",
   },
   quoteBodyRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
     marginVertical: 4,
-  },
-  quoteIcon: {
-    marginTop: 2,
+    paddingRight: 10,
   },
   quoteText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#1e293b",
-    lineHeight: 20,
-    fontStyle: "italic",
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#0f172a",
+    lineHeight: 23,
+    letterSpacing: -0.2,
   },
   quoteFooterRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 10,
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0, 0, 0, 0.05)",
     gap: 10,
   },
-  quoteFooterLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.06)",
+  authorAvatarCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
   },
-  quoteAuthor: {
-    fontSize: 12,
+  authorAvatarText: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  quoteAuthorName: {
+    fontSize: 13,
     fontWeight: "700",
-    color: "#475569",
+    color: "#0f172a",
+  },
+  quoteAuthorRole: {
+    fontSize: 10,
+    color: "#64748b",
+    fontWeight: "500",
+    marginTop: 1,
+  },
+  quoteTapHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  quoteTapHintText: {
+    fontSize: 10,
+    color: "#94a3b8",
+    fontWeight: "500",
+  },
+
+  // Quick Add Modal Bottom Sheet
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
+  },
+  modalCardWrap: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 38,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  modalCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#0f172a",
+    letterSpacing: -0.3,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: "#64748b",
+    marginTop: 2,
+    fontWeight: "500",
+  },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#f1f5f9",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalOptionsContainer: {
+    gap: 12,
+  },
+  modalOptionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(226, 232, 240, 0.8)",
+    gap: 14,
+  },
+  modalOptionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalOptionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0f172a",
+    marginBottom: 2,
+  },
+  modalOptionSub: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "500",
   },
 });
