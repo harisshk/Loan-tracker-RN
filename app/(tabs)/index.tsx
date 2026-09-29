@@ -19,10 +19,8 @@ import { PulseSkeleton } from "../../components/ui/skeleton";
 import { getBulletMaturityDate } from "../../utils/emiCalculator";
 import {
   FinancialQuote,
-  FINANCIAL_QUOTES,
   getDailyQuote,
-  getNextQuote,
-  getRandomQuote,
+  getNextQuote
 } from "../../utils/quotes";
 import {
   calculateLoanStats,
