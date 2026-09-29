@@ -250,7 +250,7 @@ export interface CategoryTheme {
  * Returns customized tag styling colors based on the quote's financial category
  */
 export function getCategoryTheme(
-  category?: FinancialQuote["category"]
+  category?: FinancialQuote["category"],
 ): CategoryTheme {
   switch (category) {
     case "Debt-Free":
