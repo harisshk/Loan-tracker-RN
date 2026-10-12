@@ -10,7 +10,12 @@ import {
   View,
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
-import { calculateEMIBreakdown } from "../utils/emiCalculator";
+import {
+  calculateEMIBreakdown,
+  getMonthsElapsed,
+  getPaymentDate,
+  parseLocalDate,
+} from "../utils/emiCalculator";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -80,8 +85,13 @@ export default function PrincipalTrajectoryChart({
 
     const points: MonthDataPoint[] = [];
 
-    // Helper: calculate total principal pending across all active loans at a given past/present month offset
-    const getHistoricalPending = (targetYear: number, targetMonth: number) => {
+    // Helper: total principal pending across loans at the end of a month
+    // (as of today for the current month; future months follow the EMI schedule)
+    const getPendingAt = (
+      targetYear: number,
+      targetMonth: number,
+      isFuture: boolean,
+    ) => {
       let totalPending = 0;
       const targetEndDate = new Date(
         targetYear,
@@ -91,11 +101,17 @@ export default function PrincipalTrajectoryChart({
         59,
         59,
       );
+      const isCurrentMonth =
+        targetMonth === currentMonth && targetYear === currentYear;
+      const emisAsOf = isCurrentMonth ? now : targetEndDate;
 
       loans.forEach((loan) => {
-        if (loan.status === "closed" && loan.closedAt) {
-          const closedDate = new Date(loan.closedAt);
-          if (closedDate < new Date(targetYear, targetMonth, 1)) return;
+        if (loan.status === "closed") {
+          if (isFuture) return;
+          if (loan.closedAt) {
+            const closedDate = new Date(loan.closedAt);
+            if (closedDate < new Date(targetYear, targetMonth, 1)) return;
+          }
         }
 
         const principal =
@@ -112,21 +128,19 @@ export default function PrincipalTrajectoryChart({
           return;
         }
 
-        const sd = new Date(loan.startDate);
+        const sd = parseLocalDate(loan.startDate);
         if (sd > targetEndDate) return; // Loan not started yet
 
-        let monthsElapsed =
-          (targetYear - sd.getFullYear()) * 12 + (targetMonth - sd.getMonth());
-        if (targetMonth === currentMonth && targetYear === currentYear) {
-          if (now.getDate() >= sd.getDate()) monthsElapsed++;
-        } else {
-          monthsElapsed++; // full month elapsed
-        }
-        monthsElapsed = Math.max(0, Math.min(monthsElapsed, tenure));
+        const monthsElapsed = Math.min(
+          getMonthsElapsed(loan.startDate, emisAsOf),
+          tenure,
+        );
 
         const extraPaymentsUpToMonth = payments.filter((p) => {
           if (p.loanId !== loan.id) return false;
-          const pDate = new Date(p.paidAt || p.date || p.createdAt);
+          const paidOn = getPaymentDate(p);
+          if (!paidOn) return false;
+          const pDate = parseLocalDate(paidOn);
           return !isNaN(pDate.getTime()) && pDate <= targetEndDate;
         });
 
@@ -138,6 +152,7 @@ export default function PrincipalTrajectoryChart({
           emiAmount || null,
           loanType,
           extraPaymentsUpToMonth,
+          loan.startDate,
         );
 
         totalPending += bd.remainingPrincipalAmount;
@@ -161,34 +176,8 @@ export default function PrincipalTrajectoryChart({
       const isCurrent = offset === 0;
       const isFuture = offset > 0;
 
-      let pending = 0;
-      if (offset <= 0) {
-        pending = getHistoricalPending(year, monthIdx);
-      } else {
-        // Future Projection based on current month active loans reducing balance
-        const prevPending = points[points.length - 1]?.principalPending || 0;
-        let monthlyReduction = 0;
-
-        loans.forEach((loan) => {
-          if (loan.status === "closed") return;
-          const emiAmount =
-            parseFloat(String(loan.emiAmount || 0).replace(/,/g, "")) || 0;
-          const interestRate = parseFloat(loan.interest || 0);
-          const loanType = loan.loanType || "emi";
-
-          if (loanType === "emi" && emiAmount > 0) {
-            // Interest portion ~ principal * r/12, principal reduction ~ emi - interest
-            const monthlyRate = interestRate / 12 / 100;
-            const currentEstPrincipal =
-              prevPending > 0 ? prevPending / Math.max(1, loans.length) : 0;
-            const interestPart = currentEstPrincipal * monthlyRate;
-            const principalPart = Math.max(0, emiAmount - interestPart);
-            monthlyReduction += principalPart;
-          }
-        });
-
-        pending = Math.max(0, prevPending - monthlyReduction);
-      }
+      // Past/current: actual position; future: projected along the EMI schedule
+      const pending = getPendingAt(year, monthIdx, isFuture);
 
       points.push({
         index: points.length,

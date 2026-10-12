@@ -53,6 +53,99 @@ export const getBulletMaturityDate = (startDateStr, tenureMonths) => {
   );
 };
 
+// ── Shared schedule helpers ─────────────────────────────────────────────────
+// Every screen should use these so EMI and premium dates agree everywhere.
+
+export const daysInMonth = (year, monthIndex) => new Date(year, monthIndex + 1, 0).getDate();
+
+/**
+ * `date` moved by `months`, keeping its day but clamping to the month's last day
+ * (31 Jan + 1 month = 28/29 Feb, not 3 Mar).
+ */
+export const addMonthsClamped = (date, months) => {
+  const d = date instanceof Date ? date : parseLocalDate(date);
+  const target = new Date(d.getFullYear(), d.getMonth() + months, 1);
+  const day = Math.min(d.getDate(), daysInMonth(target.getFullYear(), target.getMonth()));
+  return new Date(target.getFullYear(), target.getMonth(), day);
+};
+
+/** Due date of EMI #k (1-based). EMI #1 falls on the start date. */
+export const getInstalmentDate = (startDate, k) => addMonthsClamped(parseLocalDate(startDate), k - 1);
+
+/**
+ * Number of EMIs whose due date has arrived on `asOf` (inclusive). An EMI counts
+ * as paid on its due date, clamped to month end for 29th-31st start dates.
+ */
+export const getMonthsElapsed = (startDate, asOf = new Date()) => {
+  const start = parseLocalDate(startDate);
+  const d = asOf instanceof Date ? asOf : parseLocalDate(asOf);
+  let months = (d.getFullYear() - start.getFullYear()) * 12 + (d.getMonth() - start.getMonth());
+  const dueDay = Math.min(start.getDate(), daysInMonth(d.getFullYear(), d.getMonth()));
+  if (d.getDate() >= dueDay) months += 1;
+  return Math.max(0, months);
+};
+
+/** Next EMI on or after `asOf`: { number, date }, or null once the tenure is over. */
+export const getNextInstalment = (startDate, tenure, asOf = new Date()) => {
+  const start = parseLocalDate(startDate);
+  const today = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
+  let k = Math.max(1, (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth()) + 1);
+  if (getInstalmentDate(start, k) < today) k += 1;
+  const n = parseInt(tenure, 10) || 0;
+  return k <= n ? { number: k, date: getInstalmentDate(start, k) } : null;
+};
+
+const PREMIUM_STEP = { monthly: 1, quarterly: 3, "half-yearly": 6, yearly: 12 };
+export const getPremiumStepMonths = (frequency) => PREMIUM_STEP[frequency] || 12;
+
+/** Next premium date on or after `asOf` (start + n x step months, never drifting). */
+export const getNextPremiumDate = (startDate, frequency, asOf = new Date()) => {
+  if (!startDate) return null;
+  const start = parseLocalDate(startDate);
+  if (isNaN(start.getTime())) return null;
+  const today = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
+  const step = getPremiumStepMonths(frequency);
+  const months = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
+  let n = Math.max(0, Math.floor(months / step));
+  while (addMonthsClamped(start, n * step) < today) n += 1;
+  return addMonthsClamped(start, n * step);
+};
+
+// ── Payments ────────────────────────────────────────────────────────────────
+
+/**
+ * prepayment: extra money towards principal (reduces the balance)
+ * emi:        a regular EMI recorded for history (the schedule already counts it)
+ * settlement: closing / renewal payment (reduces the balance)
+ */
+export const PAYMENT_KINDS = ["prepayment", "emi", "settlement"];
+
+export const getPaymentDate = (p) => (p ? p.date || p.paidAt || p.createdAt || null : null);
+
+const toAmount = (val) => parseFloat(String(val || "0").replace(/,/g, "")) || 0;
+
+/**
+ * Whether a logged payment reduces the loan balance. Tagged payments follow their kind.
+ * Older untagged payments: always for bullet loans; for EMI loans unless the amount
+ * equals one EMI (those were recorded from the Spend Tracker as regular EMIs).
+ */
+export const countsTowardBalance = (p, loanType = "emi", emi = 0) => {
+  if (!p || toAmount(p.amount) <= 0 || !getPaymentDate(p)) return false;
+  if (p.kind) return p.kind !== "emi";
+  if (loanType === "bullet") return true;
+  return !(emi > 0 && Math.abs(toAmount(p.amount) - emi) <= 1);
+};
+
+/**
+ * @param {number} principal
+ * @param {number} annualInterest
+ * @param {number} tenure
+ * @param {number} monthsElapsed
+ * @param {number|null} [userEMI]
+ * @param {string} [loanType]
+ * @param {any[]} [extraPayments]
+ * @param {string|Date|null} [startDate] lets prepayments apply from the month they were made
+ */
 export const calculateEMIBreakdown = (
   principal,
   annualInterest,
@@ -61,27 +154,22 @@ export const calculateEMIBreakdown = (
   userEMI = null,
   loanType = "emi",
   extraPayments = [],
+  startDate = null,
 ) => {
   const monthlyRate = annualInterest / 12 / 100;
-
-  const parseSafe = (val) => parseFloat(String(val || "0").replace(/,/g, ""));
-  const sortedPayments = [...extraPayments]
-    .filter((p) => p && p.amount && p.date)
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const elapsed = monthsElapsed > 0 ? monthsElapsed : 0;
 
   // --- BULLET / GOLD LOAN LOGIC (Simple Interest is standard here) ---
   if (loanType === "bullet") {
     const totalInterest = principal * (annualInterest / 100) * (tenure / 12);
     const monthlyInterest = (principal * (annualInterest / 100)) / 12;
     const totalAmount = principal + totalInterest;
-    const totalPaid = sortedPayments.reduce(
-      (s, p) => s + parseSafe(p.amount),
-      0,
-    );
+    const totalPaid = (extraPayments || [])
+      .filter((p) => countsTowardBalance(p, "bullet"))
+      .reduce((s, p) => s + toAmount(p.amount), 0);
 
-    let interestPaid = Math.min(totalPaid, totalInterest);
-    let principalPaid = Math.max(0, totalPaid - totalInterest);
-
+    const interestPaid = Math.min(totalPaid, totalInterest);
+    const principalPaid = Math.max(0, totalPaid - totalInterest);
     const remainingPrincipal = Math.max(0, principal - principalPaid);
     const remainingInterest = Math.max(0, totalInterest - interestPaid);
 
@@ -91,6 +179,8 @@ export const calculateEMIBreakdown = (
       principalPaid,
       interestPaid,
       totalPaid,
+      extraPaid: totalPaid,
+      interestSaved: 0,
       remainingAmount: remainingPrincipal + remainingInterest,
       remainingPrincipalAmount: remainingPrincipal,
       remainingInterestAmount: remainingInterest,
@@ -109,101 +199,69 @@ export const calculateEMIBreakdown = (
       : (principal * monthlyRate * Math.pow(1 + monthlyRate, tenure)) /
         (Math.pow(1 + monthlyRate, tenure) - 1));
 
-  let currentPrincipal = principal;
-  let totalInterestPaid = 0;
-  let totalPrincipalPaid = 0;
-  let totalExtraPaid = 0;
-  let interestSaved = 0;
-
-  // Track state at monthsElapsed
-  let stateAtElapsed = {
-    remainingPrincipal: principal,
-    interestPaid: 0,
-    principalPaid: 0,
-    extraPaid: 0,
-  };
-
-  // Simulation loop
-  // We run for a large number of months to see when it actually ends
-  for (let m = 1; m <= tenure * 2; m++) {
-    if (currentPrincipal <= 0.01) break;
-
-    // A. Monthly Interest
-    const interestForMonth = currentPrincipal * monthlyRate;
-
-    // B. EMI Payment
-    let principalFromEMI = Math.min(currentPrincipal, emi - interestForMonth);
-    if (principalFromEMI < 0) principalFromEMI = 0;
-
-    // C. Check Extra Payments (Match by month index)
-    // We assume extra payments are applied along with EMI
-    let extraThisMonth = 0;
-    // For simplicity, we apply extra payments if they were made within this month's window
-    // (In our storage, we just track the month count usually in results, but let's use the sequence)
-    // To be precise, we filter payments that happened chronologically
-    // In this simulation, we'll apply them based on their sequence index if dates aren't perfect
-    const paymentForThisMonth = sortedPayments.find((p) => {
-      // Logic: If loan started at S, and we are month M, the date should be approx S + M months.
-      // But usually prepayments are manual. We apply all matching payments.
-      // However, to keep it simple and accurate for CURRENT status:
-      return false; // We'll handle extra payments differently to ensure stability
+  // Each counted prepayment applies right after the last EMI due on or before its
+  // date, so the interest it saves keeps cascading into later EMIs. Without a start
+  // date it applies at the current point.
+  const prepayments = (extraPayments || [])
+    .filter((p) => countsTowardBalance(p, "emi", emi))
+    .map((p) => {
+      const afterEmi = startDate ? getMonthsElapsed(startDate, parseLocalDate(getPaymentDate(p))) : elapsed;
+      return { amount: toAmount(p.amount), afterEmi: Number.isFinite(afterEmi) ? Math.min(afterEmi, elapsed) : elapsed };
     });
 
-    // REVISED EXTRA PAYMENT LOGIC:
-    // Apply all sortedPayments exactly when they happen relative to start
-    // We'll use the 'remainingPrincipalAmount' logic from real-time and just use the simulator for "What-if"
+  const simulate = (withPrepayments) => {
+    let balance = principal;
+    let interestPaid = 0;
+    let extraPaid = 0;
+    let snapshot = null;
+    const applyAfter = (m) => {
+      if (!withPrepayments) return;
+      prepayments.forEach((p) => {
+        if (p.afterEmi !== m || balance <= 0.01) return;
+        const amt = Math.min(balance, p.amount);
+        balance -= amt;
+        extraPaid += amt;
+      });
+    };
+    const take = () => ({ balance: Math.max(0, balance), interestPaid, extraPaid });
 
-    // For now, let's stick to the current month-by-month for EMI
-    currentPrincipal -= principalFromEMI;
-    totalInterestPaid += interestForMonth;
-    totalPrincipalPaid += principalFromEMI;
-
-    if (m === monthsElapsed) {
-      stateAtElapsed = {
-        remainingPrincipal: currentPrincipal,
-        interestPaid: totalInterestPaid,
-        principalPaid: totalPrincipalPaid,
-      };
+    applyAfter(0);
+    if (elapsed === 0) snapshot = take();
+    let interestAfter = 0;
+    const maxMonths = Math.max(tenure * 2, 1);
+    for (let m = 1; m <= maxMonths && balance > 0.01; m++) {
+      const interest = balance * monthlyRate;
+      const fromEmi = Math.max(0, Math.min(balance, emi - interest));
+      balance -= fromEmi;
+      if (m <= elapsed) interestPaid += interest;
+      else interestAfter += interest;
+      if (m <= elapsed) applyAfter(m);
+      if (m === elapsed) snapshot = take();
     }
-  }
+    // Paid off before `elapsed` months: the loan is finished.
+    if (!snapshot) snapshot = take();
+    return { ...snapshot, interestRemaining: interestAfter };
+  };
 
-  // --- APPLY EXTRA PAYMENTS ON TOP OF EMI REDUCTION ---
-  // To match banking logic, extra payments reduce principal directly and "save" future interest
-  const totalExtra = sortedPayments.reduce(
-    (s, p) => s + parseSafe(p.amount),
-    0,
-  );
-  const finalRemainingPrincipal = Math.max(
-    0,
-    stateAtElapsed.remainingPrincipal - totalExtra,
-  );
-
-  // Recalculate remaining interest based on REDUCING BALANCE
-  // This is where online calculators shine.
-  // We simulate from monthsElapsed to END with the NEW lower principal.
-  let simulatedInterestRemaining = 0;
-  let tempPrincipal = finalRemainingPrincipal;
-  for (let sm = 1; sm <= tenure; sm++) {
-    if (tempPrincipal <= 0.01) break;
-    const interest = tempPrincipal * monthlyRate;
-    const principalRed = Math.min(tempPrincipal, emi - interest);
-    simulatedInterestRemaining += interest;
-    tempPrincipal -= principalRed;
-  }
+  const actual = simulate(true);
+  const baseline = prepayments.length ? simulate(false) : actual;
+  const remainingPrincipal = actual.balance;
+  const principalPaid = principal - remainingPrincipal;
+  const totalInterest = actual.interestPaid + actual.interestRemaining;
 
   return {
     emi,
-    principalPaid: stateAtElapsed.principalPaid + totalExtra,
-    interestPaid: stateAtElapsed.interestPaid,
-    totalPaid:
-      stateAtElapsed.principalPaid + totalExtra + stateAtElapsed.interestPaid,
-    remainingAmount: finalRemainingPrincipal + simulatedInterestRemaining,
-    remainingPrincipalAmount: finalRemainingPrincipal,
-    remainingInterestAmount: simulatedInterestRemaining,
-    totalInterest: stateAtElapsed.interestPaid + simulatedInterestRemaining,
-    totalAmount:
-      principal + stateAtElapsed.interestPaid + simulatedInterestRemaining,
-    isMatured: monthsElapsed >= tenure || finalRemainingPrincipal <= 0,
+    principalPaid,
+    interestPaid: actual.interestPaid,
+    totalPaid: principalPaid + actual.interestPaid,
+    extraPaid: actual.extraPaid,
+    interestSaved: Math.max(0, baseline.interestPaid + baseline.interestRemaining - totalInterest),
+    remainingAmount: remainingPrincipal + actual.interestRemaining,
+    remainingPrincipalAmount: remainingPrincipal,
+    remainingInterestAmount: actual.interestRemaining,
+    totalInterest,
+    totalAmount: principal + totalInterest,
+    isMatured: monthsElapsed >= tenure || remainingPrincipal <= 0,
     paymentsMade: Math.min(monthsElapsed, tenure),
   };
 };

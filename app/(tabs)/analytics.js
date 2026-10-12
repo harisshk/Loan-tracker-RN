@@ -1,25 +1,50 @@
-import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import ProgressRing from "../../components/dashboard/ProgressRing";
 import {
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+  AnimatedAmount,
+  Card,
+  colors,
+  EmptyState,
+  Gap,
+  HeaderAction,
+  IconBadge,
+  kindColors,
+  ListRow,
+  Pill,
+  ProgressBar,
+  radius,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  Segmented,
+  shadow,
+  space,
+  type,
+} from "../../components/ui/kit";
 import {
   calculateEMIBreakdown,
+  countsTowardBalance,
   getBulletMaturityDate,
+  getInstalmentDate,
+  getMonthsElapsed,
+  getNextInstalment,
+  getPaymentDate,
+  parseLocalDate,
 } from "../../utils/emiCalculator";
+import {
+  formatDateWithDay,
+  formatINR,
+  formatINRCompact,
+  formatMonthYear,
+  formatPercent,
+  formatRelativeDays,
+} from "../../utils/format";
 import { getLoans, getPayments } from "../../utils/storage";
 
-const fc = (amount) =>
-  `₹${parseFloat(amount || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+const fc = (amount) => formatINR(amount);
 
 const fd = (date) => {
   if (!date) return "N/A";
@@ -38,12 +63,39 @@ const daysFromNow = (date) => {
   return diff;
 };
 
+const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
+const TABS = [
+  { key: "upcoming", label: "Upcoming" },
+  { key: "loans", label: "Progress" },
+  { key: "history", label: "History" },
+];
+
+/** Relative-day pill for an upcoming due date: text + tone, never colour alone. */
+const duePill = (days) => {
+  if (days === null || days === undefined) {
+    return { label: "Scheduled", color: colors.textSecondary, bg: colors.surfaceSunken };
+  }
+  if (days < 0) {
+    return { label: `Overdue ${Math.abs(days)}d`, color: colors.danger, bg: colors.dangerSoft };
+  }
+  if (days <= 3) {
+    return { label: formatRelativeDays(days), color: colors.danger, bg: colors.dangerSoft };
+  }
+  if (days <= 7) {
+    return { label: formatRelativeDays(days), color: colors.warning, bg: colors.warningSoft };
+  }
+  return { label: formatRelativeDays(days), color: colors.textSecondary, bg: colors.surfaceSunken };
+};
+
 export default function EMIPage() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [loans, setLoans] = useState([]);
   const [payments, setPayments] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [tab, setTab] = useState("upcoming");
 
   const loadData = useCallback(async () => {
     try {
@@ -51,8 +103,12 @@ export default function EMIPage() {
       const p = await getPayments();
       setLoans(l);
       setPayments(p);
+      setLoadError(false);
     } catch (e) {
       console.error("Error loading data on analytics:", e);
+      setLoadError(true);
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -88,17 +144,9 @@ export default function EMIPage() {
         const loanType = loan.loanType || "emi";
         const extraPayments = payments.filter((p) => p.loanId === loan.id);
 
-        let monthsElapsed = 0;
-        if (loan.startDate) {
-          const sd = new Date(loan.startDate);
-          monthsElapsed =
-            (today.getFullYear() - sd.getFullYear()) * 12 +
-            (today.getMonth() - sd.getMonth());
-          if (today.getDate() >= sd.getDate()) {
-            monthsElapsed += 1;
-          }
-          monthsElapsed = Math.max(0, monthsElapsed);
-        }
+        const monthsElapsed = loan.startDate
+          ? getMonthsElapsed(loan.startDate, today)
+          : 0;
 
         const bd = calculateEMIBreakdown(
           principal,
@@ -108,22 +156,14 @@ export default function EMIPage() {
           emiAmount,
           loanType,
           extraPayments,
+          loan.startDate,
         );
 
-        // Next due date: same day-of-month as start date, upcoming month
+        // Next due date: next scheduled EMI on/after today (null once the tenure is over)
         let nextDueDate = null;
         if (loan.startDate && loanType === "emi") {
-          const sd = new Date(loan.startDate);
-          const dueDay = sd.getDate();
-          const candidate = new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            dueDay,
-          );
-          nextDueDate =
-            candidate < today
-              ? new Date(today.getFullYear(), today.getMonth() + 1, dueDay)
-              : candidate;
+          const next = getNextInstalment(loan.startDate, tenure, today);
+          nextDueDate = next ? next.date : null;
         } else if (loanType === "bullet" && loan.startDate) {
           nextDueDate = getBulletMaturityDate(loan.startDate, tenure);
         }
@@ -139,6 +179,28 @@ export default function EMIPage() {
         };
       });
   }, [loans, payments, today]);
+
+  // Whether a logged payment is an extra payment (reduces the loan balance)
+  const isExtraPayment = useMemo(() => {
+    const loanById = {};
+    loans.forEach((l) => {
+      loanById[l.id] = l;
+    });
+    const emiByLoan = {};
+    allBreakdowns.forEach((x) => {
+      emiByLoan[x.loan.id] = x.bd.emi;
+    });
+    return (p) => {
+      const loan = loanById[p.loanId];
+      const loanType = (loan && loan.loanType) || "emi";
+      const emi =
+        emiByLoan[p.loanId] ??
+        (loan
+          ? parseFloat(String(loan.emiAmount || "0").replace(/,/g, "")) || 0
+          : 0);
+      return countsTowardBalance(p, loanType, emi);
+    };
+  }, [loans, allBreakdowns]);
 
   // ── Upcoming EMIs list (sorted by next due) ──────────────────────
   const upcomingEMIs = useMemo(() => {
@@ -173,28 +235,26 @@ export default function EMIPage() {
           parseInt(String(loan.tenure || "0").replace(/,/g, "")) || 0;
         if (!loan.startDate || emiAmount === 0) return;
 
-        const sd = new Date(loan.startDate);
-        const emiDueThisMonth = new Date(y, m, sd.getDate());
-        const monthsFromStart =
-          (y - sd.getFullYear()) * 12 + (m - sd.getMonth());
+        // EMI #k falls in this month; none before the first or after the last EMI
+        const sd = parseLocalDate(loan.startDate);
+        const k = (y - sd.getFullYear()) * 12 + (m - sd.getMonth()) + 1;
+        if (k < 1 || k > tenure) return;
+        const emiDueThisMonth = getInstalmentDate(loan.startDate, k);
 
         // Due this month
         dueAmount += emiAmount;
 
         // Auto-paid: the scheduled EMI for this month whose due date has already passed
-        if (
-          emiDueThisMonth <= todayMidnight &&
-          monthsFromStart >= 1 &&
-          monthsFromStart <= tenure
-        ) {
+        if (emiDueThisMonth <= todayMidnight) {
           emiPaid += emiAmount;
         }
       });
 
-    // Extra payments manually logged this month
+    // Extra payments (prepayments / settlements) logged this month
     let extraPaid = 0;
     payments.forEach((p) => {
-      const d = new Date(p.paidAt || p.date);
+      if (!isExtraPayment(p)) return;
+      const d = parseLocalDate(getPaymentDate(p));
       if (isNaN(d) || d.getMonth() !== m || d.getFullYear() !== y) return;
       extraPaid += parseFloat(p.amount || 0);
     });
@@ -203,7 +263,7 @@ export default function EMIPage() {
     const pending = Math.max(0, dueAmount - emiPaid);
     const progress = dueAmount > 0 ? Math.min(1, emiPaid / dueAmount) : 0;
     return { emiPaid, extraPaid, totalPaid, dueAmount, pending, progress };
-  }, [loans, payments]);
+  }, [loans, payments, isExtraPayment]);
 
   // ── Payment History (recent 15) ───────────────────────────────────
   const recentPayments = useMemo(() => {
@@ -213,494 +273,460 @@ export default function EMIPage() {
     });
     return [...payments]
       .sort(
-        (a, b) =>
-          new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt),
+        (a, b) => new Date(getPaymentDate(b)) - new Date(getPaymentDate(a)),
       )
       .slice(0, 15)
       .map((p) => ({
         ...p,
         loanName: loanMap[p.loanId] || "Unknown Loan",
-        displayDate: fd(p.date || p.createdAt),
-        isExtra: p.type === "extra",
+        displayDate: fd(getPaymentDate(p)),
+        isExtra: isExtraPayment(p),
       }));
-  }, [payments, loans]);
+  }, [payments, loans, isExtraPayment]);
 
-  const urgencyColor = (days) => {
-    if (days === null) return "#64748b";
-    if (days <= 3) return "#e11d48";
-    if (days <= 7) return "#f59e0b";
-    return "#10b981";
-  };
+  const openLoan = (id) =>
+    router.push({
+      pathname: "/loan-detail",
+      params: { id },
+    });
 
-  const urgencyLabel = (days) => {
-    if (days === null) return "";
-    if (days === 0) return "Due Today";
-    if (days < 0) return `Overdue ${Math.abs(days)}d`;
-    return `${days}d left`;
-  };
+  const header = (
+    <ScreenHeader
+      title="EMIs"
+      subtitle="What's due, what's paid, and how far each loan has come"
+      actions={
+        <HeaderAction
+          icon="add"
+          label="Add a loan"
+          variant="primary"
+          onPress={() => router.push("/add-loan")}
+        />
+      }
+    />
+  );
+
+  // ── Loading / error / empty ───────────────────────────────────────
+  if (!loaded) {
+    return (
+      <Screen>
+        {header}
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={colors.primaryFill} />
+          <Text style={styles.loadingText}>Loading your EMIs…</Text>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (loadError && loans.length === 0) {
+    return (
+      <Screen onRefresh={onRefresh} refreshing={refreshing}>
+        {header}
+        <Card>
+          <EmptyState
+            icon="cloud-offline-outline"
+            title="Couldn't load your EMIs"
+            message="Pull down to try again."
+          />
+        </Card>
+      </Screen>
+    );
+  }
+
+  const hasActiveLoans = allBreakdowns.length > 0;
+  const hasDue = thisMonthStats.dueAmount > 0;
+  const progressPct = thisMonthStats.progress * 100;
 
   return (
-    <LinearGradient
-      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingTop: insets.top + 16, paddingBottom: 24 },
-        ]}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#10b981"
-          />
-        }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>EMI Tracker</Text>
-            <Text style={styles.headerSubtitle}>
-              Upcoming payments & history
+    <Screen onRefresh={onRefresh} refreshing={refreshing}>
+      {header}
+
+      {/* ── This month hero ───────────────────────────────────── */}
+      {hasActiveLoans ? (
+        <View style={styles.heroCard}>
+          <LinearGradient
+            colors={colors.heroGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.hero}
+          >
+            <Text style={styles.heroOverline}>
+              This month · {formatMonthYear(today)}
             </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.addBtnWrap}
-            onPress={() => router.push("/add-loan")}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={["#10b981", "#059669"]}
-              style={styles.addBtnInside}
-            >
-              <Ionicons name="add" size={26} color="#fff" />
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
 
-        {/* ── This Month Section ────────────────────────────── */}
-        <Text style={styles.sectionTitle}>This Month</Text>
-        <BlurView intensity={30} tint="light" style={styles.card}>
-          <View style={styles.trackTop}>
-            <View style={[styles.trackColCard, { borderLeftColor: "#10b981" }]}>
-              <Text style={styles.trackLabel}>EMI Paid</Text>
-              <Text style={[styles.trackValue, { color: "#10b981" }]}>
-                {fc(thisMonthStats.emiPaid)}
-              </Text>
-            </View>
-            <View style={[styles.trackColCard, { borderLeftColor: "#8b5cf6" }]}>
-              <Text style={styles.trackLabel}>Extra Paid</Text>
-              <Text style={[styles.trackValue, { color: "#8b5cf6" }]}>
-                {fc(thisMonthStats.extraPaid)}
-              </Text>
-            </View>
-            <View style={[styles.trackColCard, { borderLeftColor: "#f59e0b" }]}>
-              <Text style={styles.trackLabel}>Pending</Text>
-              <Text style={[styles.trackValue, { color: "#f59e0b" }]}>
-                {fc(thisMonthStats.pending)}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.progressContainer}>
-            <View
-              style={[
-                styles.progressFill,
-                {
-                  width: `${Math.min(100, thisMonthStats.progress * 100)}%`,
-                  backgroundColor: "#10b981",
-                },
-              ]}
-            />
-          </View>
-
-          <View style={styles.trackFooter}>
-            <Text style={styles.footerLabel}>
-              Cleared:{" "}
-              <Text style={{ color: "#10b981", fontWeight: "bold" }}>
-                {fc(thisMonthStats.totalPaid)}
-              </Text>
-            </Text>
-            <Text style={styles.footerLabel}>
-              Target:{" "}
-              <Text style={{ color: "#0f172a", fontWeight: "bold" }}>
-                {fc(thisMonthStats.dueAmount)}
-              </Text>
-            </Text>
-          </View>
-        </BlurView>
-
-        {/* ── Upcoming EMIs Section ────────────────────────── */}
-        <Text style={[styles.sectionTitle, { marginTop: 8 }]}>
-          Upcoming EMIs
-        </Text>
-
-        {upcomingEMIs.length === 0 ? (
-          <BlurView
-            intensity={30}
-            tint="light"
-            style={[styles.card, styles.emptyCard]}
-          >
-            <Ionicons
-              name="checkmark-circle-outline"
-              size={36}
-              color="#10b981"
-            />
-            <Text style={styles.emptyText}>All caught up! No active EMIs.</Text>
-          </BlurView>
-        ) : (
-          upcomingEMIs.map((item) => {
-            const color = urgencyColor(item.days);
-            return (
-              <TouchableOpacity
-                key={item.loan.id}
-                activeOpacity={0.8}
-                onPress={() =>
-                  router.push({
-                    pathname: "/loan-detail",
-                    params: { id: item.loan.id },
-                  })
-                }
-              >
-                <BlurView intensity={30} tint="light" style={styles.emiCard}>
-                  {/* Left accent bar */}
-                  <View
-                    style={[styles.emiAccent, { backgroundColor: color }]}
+            {hasDue ? (
+              <View style={styles.heroMain}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.heroLabel}>EMIs paid</Text>
+                  <AnimatedAmount
+                    value={thisMonthStats.emiPaid}
+                    format={formatINR}
+                    style={styles.heroAmount}
+                    accessibilityLabel={`${fc(thisMonthStats.emiPaid)} of ${fc(thisMonthStats.dueAmount)} EMIs paid this month`}
                   />
-
-                  <View style={styles.emiBody}>
-                    <View style={styles.emiTopRow}>
-                      <Text style={styles.emiLoanName} numberOfLines={1}>
-                        {item.loan.loanName}
-                      </Text>
-                      <View
-                        style={[
-                          styles.urgencyBadge,
-                          { backgroundColor: color + "20", borderColor: color },
-                        ]}
-                      >
-                        <Text style={[styles.urgencyText, { color }]}>
-                          {urgencyLabel(item.days)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.emiMetaGrid}>
-                      <View style={styles.emiMetaRow}>
-                        <View style={styles.emiMetaCol}>
-                          <Text style={styles.emiMetaLabel}>EMI Amount</Text>
-                          <Text style={styles.emiMetaValue}>
-                            {fc(item.emiAmount)}
-                          </Text>
-                        </View>
-                        <View style={styles.emiMetaCol}>
-                          <Text style={styles.emiMetaLabel}>Due Date</Text>
-                          <Text style={styles.emiMetaValue}>
-                            {fd(item.nextDueDate)}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={[styles.emiMetaRow, { marginTop: 6 }]}>
-                        <View style={styles.emiMetaCol}>
-                          <Text style={styles.emiMetaLabel}>
-                            Rem. Principal
-                          </Text>
-                          <Text
-                            style={[styles.emiMetaValue, { color: "#64748b" }]}
-                          >
-                            {fc(item.bd.remainingPrincipalAmount)}
-                          </Text>
-                        </View>
-                        <View style={styles.emiMetaCol}>
-                          <Text style={styles.emiMetaLabel}>
-                            Total Outstanding
-                          </Text>
-                          <Text
-                            style={[styles.emiMetaValue, { color: "#e11d48" }]}
-                          >
-                            {fc(item.bd.remainingAmount)}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-
-                  <Ionicons
-                    name="chevron-forward"
-                    size={16}
-                    color="#cbd5e1"
-                    style={{ alignSelf: "center" }}
-                  />
-                </BlurView>
-              </TouchableOpacity>
-            );
-          })
-        )}
-
-        {/* ── Payment History Section ───────────────────────── */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
-            Payment History
-          </Text>
-          <TouchableOpacity onPress={() => router.push("/history")}>
-            <Text style={styles.seeAllText}>See All</Text>
-          </TouchableOpacity>
-        </View>
-
-        {recentPayments.length === 0 ? (
-          <BlurView
-            intensity={30}
-            tint="light"
-            style={[styles.card, styles.emptyCard]}
-          >
-            <Ionicons name="receipt-outline" size={36} color="#94a3b8" />
-            <Text style={styles.emptyText}>No payment records yet.</Text>
-          </BlurView>
-        ) : (
-          <BlurView
-            intensity={30}
-            tint="light"
-            style={[styles.card, { padding: 0, overflow: "hidden" }]}
-          >
-            {recentPayments.map((p, i) => (
-              <View
-                key={p.id || i}
-                style={[
-                  styles.historyRow,
-                  i !== recentPayments.length - 1 && styles.historyRowBorder,
-                ]}
-              >
-                <View
-                  style={[
-                    styles.historyIconWrap,
-                    {
-                      backgroundColor: p.isExtra
-                        ? "rgba(139,92,246,0.12)"
-                        : "rgba(16,185,129,0.12)",
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      p.isExtra ? "flash-outline" : "checkmark-circle-outline"
-                    }
-                    size={18}
-                    color={p.isExtra ? "#8b5cf6" : "#10b981"}
-                  />
-                </View>
-                <View style={styles.historyMeta}>
-                  <Text style={styles.historyLoanName} numberOfLines={1}>
-                    {p.loanName}
-                  </Text>
-                  <Text style={styles.historyDate}>
-                    {p.displayDate} · {p.isExtra ? "Extra" : "EMI"}
+                  <Text style={styles.heroSub} numberOfLines={1}>
+                    of {fc(thisMonthStats.dueAmount)} due this month
                   </Text>
                 </View>
-                <Text
-                  style={[
-                    styles.historyAmount,
-                    { color: p.isExtra ? "#8b5cf6" : "#10b981" },
-                  ]}
-                >
-                  {fc(p.amount)}
-                </Text>
+                <ProgressRing
+                  value={progressPct}
+                  size={76}
+                  stroke={8}
+                  trackColor={colors.heroTrack}
+                  colors={[colors.heroAccent]}
+                  label={formatPercent(progressPct, 0)}
+                  labelColor={colors.heroText}
+                  caption="paid"
+                  captionColor={colors.heroTextMuted}
+                  accessibilityLabel={`${formatPercent(progressPct, 0)} of this month's EMIs paid`}
+                />
               </View>
-            ))}
-          </BlurView>
-        )}
+            ) : (
+              <View style={styles.heroMain}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.heroClear}>No EMIs due this month</Text>
+                  <Text style={styles.heroSub}>
+                    Nothing is scheduled for {formatMonthYear(today)}.
+                  </Text>
+                </View>
+              </View>
+            )}
 
-        <View style={{ height: 24 }} />
-      </ScrollView>
-    </LinearGradient>
+            <View style={styles.heroStats}>
+              <HeroStat
+                label="Remaining"
+                value={fc(thisMonthStats.pending)}
+                highlight={thisMonthStats.pending > 0}
+              />
+              <View style={styles.heroStatDivider} />
+              <HeroStat label="Prepaid" value={fc(thisMonthStats.extraPaid)} />
+              <View style={styles.heroStatDivider} />
+              <HeroStat label="Total cleared" value={fc(thisMonthStats.totalPaid)} />
+            </View>
+
+            {hasDue ? (
+              <Text style={styles.heroFootnote}>
+                EMIs count as paid on their due date.
+              </Text>
+            ) : null}
+          </LinearGradient>
+        </View>
+      ) : (
+        <Card>
+          <EmptyState
+            icon="wallet-outline"
+            title="No active loans"
+            message="Add a loan to see upcoming EMIs, this month's progress and your repayment history."
+            actionLabel="Add loan"
+            onAction={() => router.push("/add-loan")}
+          />
+        </Card>
+      )}
+
+      <Gap />
+
+      <Segmented options={TABS} value={tab} onChange={setTab} />
+
+      <Gap size={space.xl} />
+
+      {/* ── Upcoming EMIs ─────────────────────────────────────── */}
+      {tab === "upcoming" ? (
+        <View>
+          <SectionHeader title="Due next" count={upcomingEMIs.length} />
+          {upcomingEMIs.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon="checkmark-circle-outline"
+                title="All caught up"
+                message="No upcoming EMIs or maturities on your active loans."
+              />
+            </Card>
+          ) : (
+            <Card padded={false}>
+              {upcomingEMIs.map((item, i) => {
+                const isBullet = item.loanType === "bullet";
+                const kind = isBullet ? kindColors.bullet : kindColors.emi;
+                const due = new Date(item.nextDueDate);
+                const pill = duePill(item.days);
+                const amount = isBullet
+                  ? item.bd.remainingAmount
+                  : item.emiAmount || item.bd.emi;
+                const subtitle = `${isBullet ? "Bullet maturity" : "EMI"} · ${formatDateWithDay(due)}`;
+                return (
+                  <ListRow
+                    key={item.loan.id}
+                    divider={i > 0}
+                    leading={<DateTile date={due} kind={kind} />}
+                    title={item.loan.loanName}
+                    subtitle={subtitle}
+                    value={fc(amount)}
+                    valueCaption={isBullet ? "at maturity" : undefined}
+                    onPress={() => openLoan(item.loan.id)}
+                    accessibilityLabel={`${item.loan.loanName}, ${subtitle}, ${fc(amount)}, ${pill.label}`}
+                    accessibilityHint="Opens loan details"
+                  >
+                    <Pill label={pill.label} color={pill.color} backgroundColor={pill.bg} />
+                  </ListRow>
+                );
+              })}
+            </Card>
+          )}
+        </View>
+      ) : null}
+
+      {/* ── Per-loan progress ─────────────────────────────────── */}
+      {tab === "loans" ? (
+        <View>
+          <SectionHeader title="Repayment progress" count={allBreakdowns.length} />
+          {allBreakdowns.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon="stats-chart-outline"
+                title="No active loans"
+                message="Progress for each loan appears here once you add one."
+              />
+            </Card>
+          ) : (
+            <Card padded={false}>
+              {allBreakdowns.map((item, i) => {
+                const isBullet = item.loanType === "bullet";
+                const kind = isBullet ? kindColors.bullet : kindColors.emi;
+                const repaidPct =
+                  item.principal > 0
+                    ? Math.max(0, Math.min(100, (item.bd.principalPaid / item.principal) * 100))
+                    : 0;
+                const subtitle = isBullet
+                  ? `Bullet · ${formatINRCompact(item.bd.remainingAmount)} to repay`
+                  : `EMI ${fc(item.emiAmount || item.bd.emi)} · ${formatINRCompact(item.bd.remainingAmount)} outstanding`;
+                return (
+                  <ListRow
+                    key={item.loan.id}
+                    divider={i > 0}
+                    leading={
+                      <IconBadge
+                        name={kind.icon}
+                        color={kind.text}
+                        backgroundColor={kind.soft}
+                      />
+                    }
+                    title={item.loan.loanName}
+                    subtitle={subtitle}
+                    value={fc(item.bd.remainingPrincipalAmount)}
+                    valueCaption="principal left"
+                    onPress={() => openLoan(item.loan.id)}
+                    accessibilityLabel={`${item.loan.loanName}. ${subtitle}. ${fc(item.bd.remainingPrincipalAmount)} principal left. ${formatPercent(repaidPct, 0)} of principal repaid`}
+                    accessibilityHint="Opens loan details"
+                  >
+                    <View style={styles.progressRow}>
+                      <ProgressBar
+                        segments={[{ value: repaidPct, color: colors.primaryFill }]}
+                        height={6}
+                        style={{ flex: 1 }}
+                      />
+                      <Text style={styles.progressText}>
+                        {formatPercent(repaidPct, 0)} repaid
+                      </Text>
+                    </View>
+                  </ListRow>
+                );
+              })}
+            </Card>
+          )}
+        </View>
+      ) : null}
+
+      {/* ── Payment history ───────────────────────────────────── */}
+      {tab === "history" ? (
+        <View>
+          <SectionHeader
+            title="Recent payments"
+            actionLabel="See all"
+            onAction={() => router.push("/history")}
+          />
+          {recentPayments.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon="receipt-outline"
+                title="No payments logged yet"
+                message="Prepayments and EMIs you record show up here."
+              />
+            </Card>
+          ) : (
+            <Card padded={false}>
+              {recentPayments.map((p, i) => {
+                const label = p.isExtra ? "Prepayment" : "EMI";
+                return (
+                  <ListRow
+                    key={p.id || i}
+                    divider={i > 0}
+                    leading={
+                      <IconBadge
+                        name={p.isExtra ? "flash-outline" : "checkmark-circle-outline"}
+                        color={p.isExtra ? colors.violet : colors.primary}
+                        backgroundColor={p.isExtra ? colors.violetSoft : colors.primarySoft}
+                      />
+                    }
+                    title={p.loanName}
+                    subtitle={p.displayDate}
+                    value={fc(p.amount)}
+                    accessibilityLabel={`${p.loanName}, ${label}, ${p.displayDate}, ${fc(p.amount)}`}
+                  >
+                    <Pill
+                      label={label}
+                      color={p.isExtra ? colors.violet : colors.primary}
+                      backgroundColor={p.isExtra ? colors.violetSoft : colors.primarySoft}
+                    />
+                  </ListRow>
+                );
+              })}
+            </Card>
+          )}
+        </View>
+      ) : null}
+    </Screen>
+  );
+}
+
+function HeroStat({ label, value, highlight }) {
+  return (
+    <View style={styles.heroStat} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Text style={styles.heroStatLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      <Text
+        style={[styles.heroStatValue, highlight && { color: colors.heroWarning }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function DateTile({ date, kind }) {
+  return (
+    <View style={[styles.dateTile, { backgroundColor: kind.soft }]}>
+      <Text style={[styles.dateDay, { color: kind.text }]}>{date.getDate()}</Text>
+      <Text style={[styles.dateWeekday, { color: kind.text }]}>
+        {WEEKDAYS[date.getDay()]}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: {},
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  loading: {
     alignItems: "center",
-    paddingHorizontal: 20,
-    marginBottom: 24,
+    paddingVertical: space.xxxl * 2,
+    gap: space.md,
   },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: "800",
-    color: "#0f172a",
-    letterSpacing: -0.5,
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: "#64748b",
+  loadingText: {
+    ...type.label,
     fontWeight: "500",
+    color: colors.textSecondary,
+  },
+  heroCard: {
+    borderRadius: radius.xl,
+    overflow: "hidden",
+    ...shadow.hero,
+  },
+  hero: {
+    paddingHorizontal: space.xl,
+    paddingTop: space.lg + 2,
+    paddingBottom: space.lg,
+  },
+  heroOverline: {
+    ...type.overline,
+    color: colors.heroTextSecondary,
+  },
+  heroMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.lg,
+    marginTop: space.md,
+  },
+  heroLabel: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.heroTextSecondary,
+  },
+  heroAmount: {
+    ...type.display,
+    color: colors.heroText,
     marginTop: 2,
   },
-  addBtnWrap: {
-    shadowColor: "#10b981",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
+  heroSub: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.heroTextSecondary,
+    marginTop: space.xs,
   },
-  addBtnInside: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
+  heroClear: {
+    ...type.title,
+    color: colors.heroText,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 12,
-    paddingHorizontal: 20,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  seeAllText: { fontSize: 13, fontWeight: "600", color: "#10b981" },
-  card: {
-    marginHorizontal: 20,
-    borderRadius: 24,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
-    overflow: "hidden",
-    marginBottom: 14,
-  },
-  emptyCard: {
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 32,
-  },
-  emptyText: { fontSize: 14, color: "#94a3b8", fontWeight: "500" },
-  // This Month
-  trackTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 16,
-  },
-  trackColCard: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 12,
-    borderLeftWidth: 4,
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.04)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.02,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  trackLabel: {
-    fontSize: 11,
-    color: "#64748b",
-    marginBottom: 4,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  trackValue: { fontSize: 15, fontWeight: "800" },
-  progressContainer: {
-    height: 8,
-    backgroundColor: "rgba(0,0,0,0.04)",
-    borderRadius: 4,
-    overflow: "hidden",
-    marginBottom: 14,
-  },
-  progressFill: { height: "100%", borderRadius: 4 },
-  trackFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.04)",
-    paddingTop: 12,
-  },
-  footerLabel: { fontSize: 12, color: "#64748b", fontWeight: "500" },
-  // EMI cards
-  emiCard: {
-    marginHorizontal: 20,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
-    overflow: "hidden",
-    marginBottom: 12,
+  heroStats: {
     flexDirection: "row",
     alignItems: "stretch",
-    paddingRight: 14,
-    backgroundColor: "rgba(255, 255, 255, 0.5)",
+    marginTop: space.lg,
+    paddingTop: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.heroDivider,
   },
-  emiAccent: { width: 5, marginRight: 14 },
-  emiBody: { flex: 1, paddingVertical: 16 },
-  emiTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  emiLoanName: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0f172a",
+  heroStat: {
     flex: 1,
-    marginRight: 8,
+    minWidth: 0,
   },
-  urgencyBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
+  heroStatDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: colors.heroDivider,
+    marginHorizontal: space.md,
   },
-  urgencyText: { fontSize: 11, fontWeight: "700" },
-  emiMetaGrid: { gap: 10 },
-  emiMetaRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  heroStatLabel: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.heroTextMuted,
   },
-  emiMetaCol: { flex: 1 },
-  emiMetaLabel: {
-    fontSize: 9,
-    color: "#94a3b8",
-    fontWeight: "600",
-    marginBottom: 2,
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
+  heroStatValue: {
+    ...type.amountSmall,
+    color: colors.heroText,
+    marginTop: 2,
   },
-  emiMetaValue: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
-  // History
-  historyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-    paddingHorizontal: 16,
+  heroFootnote: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.heroTextMuted,
+    marginTop: space.md,
   },
-  historyRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.04)",
-  },
-  historyIconWrap: {
-    width: 36,
-    height: 36,
+  dateTile: {
+    width: 40,
+    height: 44,
     borderRadius: 12,
-    justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    justifyContent: "center",
   },
-  historyMeta: { flex: 1 },
-  historyLoanName: { fontSize: 14, fontWeight: "600", color: "#0f172a" },
-  historyDate: { fontSize: 11, color: "#94a3b8", marginTop: 2 },
-  historyAmount: { fontSize: 14, fontWeight: "700" },
+  dateDay: {
+    fontSize: 17,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"],
+  },
+  dateWeekday: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+  },
+  progressRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+  },
+  progressText: {
+    ...type.caption,
+    fontWeight: "600",
+    color: colors.textSecondary,
+  },
 });

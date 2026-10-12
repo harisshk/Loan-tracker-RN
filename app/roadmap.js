@@ -1,32 +1,52 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
+  ActivityIndicator,
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
-  RefreshControl,
   Share,
   Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  Card,
+  Chip,
+  colors,
+  EmptyState,
+  HeaderAction,
+  ListRow,
+  Pill,
+  radius,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  shadow,
+  space,
+  type,
+} from '../components/ui/kit';
 import { getLoans, getPayments, calculateLoanStats } from '../utils/storage';
-import { calculateEMIBreakdown } from '../utils/emiCalculator';
+import {
+  calculateEMIBreakdown,
+  getInstalmentDate,
+  getMonthsElapsed,
+  parseLocalDate,
+} from '../utils/emiCalculator';
 
 const parseSafe = (val) => parseFloat(String(val || '0').replace(/,/g, ''));
 const fc = (v) => `₹${Math.round(parseSafe(v)).toLocaleString('en-IN')}`;
 
 export default function RepaymentRoadmap() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [loans, setLoans] = useState([]);
   const [payments, setPayments] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedLoanId, setSelectedLoanId] = useState('all');
+  const [loaded, setLoaded] = useState(false);
+  // Label of the current calendar month, used to tag the first schedule row
+  const [thisMonthLabel] = useState(() =>
+    new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
+  );
 
   const loadData = useCallback(async () => {
     try {
@@ -38,12 +58,15 @@ export default function RepaymentRoadmap() {
       console.error('Error loading roadmap data:', e);
     } finally {
       setRefreshing(false);
+      setLoaded(true);
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData]),
+  );
 
   // Dashboard-synced loan statistics (100% exact match)
   const stats = useMemo(() => {
@@ -61,6 +84,7 @@ export default function RepaymentRoadmap() {
     if (targetLoans.length === 0) return { months: [], totalInterest: 0, debtFreeDate: 'N/A' };
 
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const startYear = today.getFullYear();
     const startMonth = today.getMonth(); // 0-indexed (e.g. Sep = 8)
 
@@ -71,19 +95,13 @@ export default function RepaymentRoadmap() {
       const emiAmount = parseSafe(l.emiAmount);
       const tenure = parseInt(String(l.tenure || '0').replace(/,/g, '')) || 0;
       const loanType = l.loanType || 'emi';
-      const startDate = l.startDate ? new Date(l.startDate) : new Date();
-      const dueDay = startDate.getDate() || 1;
+      const startDate = l.startDate ? parseLocalDate(l.startDate) : new Date(today);
 
-      // Calculate months elapsed since start date (auto-count current month if today >= due date)
-      let elapsed = (today.getFullYear() - startDate.getFullYear()) * 12 + (today.getMonth() - startDate.getMonth());
-      const isPaidThisMonth = today.getDate() >= dueDay;
-      if (isPaidThisMonth) {
-        elapsed += 1;
-      }
-      elapsed = Math.max(0, elapsed);
+      // EMIs whose due date has arrived (today inclusive, due day clamped to month end)
+      const elapsed = getMonthsElapsed(startDate, today);
 
       const loanPayments = payments.filter((p) => p.loanId === l.id);
-      const breakdown = calculateEMIBreakdown(principal, interest, tenure, elapsed, emiAmount, loanType, loanPayments);
+      const breakdown = calculateEMIBreakdown(principal, interest, tenure, elapsed, emiAmount, loanType, loanPayments, startDate);
 
       const remainingPrincipal = breakdown.remainingPrincipalAmount;
       const remainingTenure = Math.max(0, tenure - Math.min(elapsed, tenure));
@@ -93,8 +111,8 @@ export default function RepaymentRoadmap() {
         id: l.id,
         loanName: l.loanName || 'Loan',
         loanType,
-        dueDay,
-        isPaidThisMonth,
+        startDate,
+        emisPaid: elapsed,
         monthlyRate,
         annualInterest: interest,
         emiAmount: breakdown.emi > 0 ? breakdown.emi : emiAmount,
@@ -122,16 +140,21 @@ export default function RepaymentRoadmap() {
 
       let emiPrincipal = 0;
       let emiInterest = 0;
-      const activePayingDueDays = [];
+      const activePayingDueDates = [];
+
+      // Instalment number of a loan that falls in this calendar month
+      const instalmentInMonth = (l) =>
+        (currentProjDate.getFullYear() - l.startDate.getFullYear()) * 12 +
+        (currentProjDate.getMonth() - l.startDate.getMonth()) + 1;
 
       // Deduct EMI payments for active EMI loans due in this cycle
       activeLoans.forEach((l) => {
         if (l.closed || l.loanType === 'bullet') return; // Ignore bullet loan principal
 
-        // In the current month (monthIdx === 0): Only deduct loans that are STILL UPCOMING this month!
-        if (monthIdx === 0 && l.isPaidThisMonth) {
-          return; // Already paid today or earlier this month
-        }
+        // Only deduct EMIs that are STILL UPCOMING (already paid this month, or not started yet)
+        const k = instalmentInMonth(l);
+        if (k <= l.emisPaid) return;
+        l.emisPaid = k;
 
         const iPaid = l.remainingPrincipal * l.monthlyRate;
         const emi = l.emiAmount;
@@ -147,18 +170,17 @@ export default function RepaymentRoadmap() {
 
         emiPrincipal += pPaid;
         emiInterest += iPaid;
-        activePayingDueDays.push(l.dueDay);
+        activePayingDueDates.push(getInstalmentDate(l.startDate, k));
       });
 
       // Format Due Date for this card
-      let displayDay = 10;
+      let dueDateObj = new Date(startYear, startMonth + monthIdx, 10);
       if (selectedLoanId !== 'all' && targetLoans.length === 1 && targetLoans[0].startDate) {
-        displayDay = new Date(targetLoans[0].startDate).getDate();
-      } else if (activePayingDueDays.length > 0) {
-        displayDay = activePayingDueDays[0];
+        dueDateObj = getInstalmentDate(activeLoans[0].startDate, instalmentInMonth(activeLoans[0]));
+      } else if (activePayingDueDates.length > 0) {
+        dueDateObj = activePayingDueDates[0];
       }
 
-      const dueDateObj = new Date(startYear, startMonth + monthIdx, displayDay);
       const formattedDueDate = dueDateObj.toLocaleDateString('en-IN', {
         day: 'numeric',
         month: 'short',
@@ -222,379 +244,315 @@ export default function RepaymentRoadmap() {
     }
   };
 
+  const months = roadmapData.months;
+  const principalLeft =
+    selectedLoanId === 'all'
+      ? stats.totalPrincipalPending
+      : months.length > 0
+        ? months[0].endingOutstanding + months[0].totalPrincipal
+        : 0;
+
+  // Group the schedule into calendar years so long tenures stay scannable.
+  const yearGroups = months.reduce((groups, m) => {
+    const year = String(m.monthLabel).split(' ').pop();
+    const last = groups[groups.length - 1];
+    if (last && last.year === year) {
+      last.items.push(m);
+    } else {
+      groups.push({ year, items: [m] });
+    }
+    return groups;
+  }, []);
+
   return (
-    <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      {/* Top Header */}
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Repayment Roadmap</Text>
-          <Text style={styles.headerSub}>Live Monthly Projections & Debt Payoff Schedule</Text>
+    <Screen onRefresh={loadData} refreshing={refreshing}>
+      <ScreenHeader
+        back
+        title="Repayment roadmap"
+        subtitle="Your EMIs, month by month"
+        actions={<HeaderAction icon="share-outline" label="Share roadmap" onPress={handleShareRoadmap} />}
+      />
+
+      {!loaded ? (
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={colors.primaryFill} />
         </View>
-        <TouchableOpacity onPress={handleShareRoadmap} style={styles.shareBtn}>
-          <Ionicons name="share-outline" size={20} color="#6366f1" />
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadData} />}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Metric Overview Card - 100% Synced with Dashboard */}
-        <BlurView intensity={40} tint="light" style={styles.metricsCard}>
-          <View style={styles.metricsGrid}>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>OUTSTANDING PRINCIPAL</Text>
-              <Text style={styles.metricValPrimary}>
-                {selectedLoanId === 'all' 
-                  ? fc(stats.totalPrincipalPending) 
-                  : fc(roadmapData.months.length > 0 ? (roadmapData.months[0].endingOutstanding + roadmapData.months[0].totalPrincipal) : 0)}
-              </Text>
-              <Text style={styles.metricSub}>Live Dashboard Synced</Text>
-            </View>
-
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>EMI PAYOFF TARGET</Text>
-              <Text style={[styles.metricValPrimary, { color: '#10b981' }]}>
-                {roadmapData.debtFreeDate || 'N/A'}
-              </Text>
-              <Text style={styles.metricSub}>{roadmapData.months.length} months remaining</Text>
-            </View>
-          </View>
-        </BlurView>
-
-        {/* Loan Selection Bar */}
-        {loans.length > 1 && (
-          <View style={styles.filterCard}>
-            <Text style={styles.inputLabel}>SELECT LOAN / VIEW ALL</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
-              <TouchableOpacity
-                style={[styles.chip, selectedLoanId === 'all' && styles.chipActive]}
+      ) : (
+        <>
+          {loans.length > 1 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.chipScroll}
+              contentContainerStyle={styles.chipRow}
+            >
+              <Chip
+                label={`All loans (${loans.length})`}
+                selected={selectedLoanId === 'all'}
                 onPress={() => setSelectedLoanId('all')}
-              >
-                <Text style={[styles.chipText, selectedLoanId === 'all' && styles.chipTextActive]}>
-                  All Loans ({loans.length})
-                </Text>
-              </TouchableOpacity>
-
+              />
               {loans.map((l) => (
-                <TouchableOpacity
+                <Chip
                   key={l.id}
-                  style={[styles.chip, selectedLoanId === l.id && styles.chipActive]}
+                  label={l.loanName || 'Loan'}
+                  selected={selectedLoanId === l.id}
                   onPress={() => setSelectedLoanId(l.id)}
-                >
-                  <Text style={[styles.chipText, selectedLoanId === l.id && styles.chipTextActive]}>
-                    {l.loanName}
-                  </Text>
-                </TouchableOpacity>
+                />
               ))}
             </ScrollView>
-          </View>
-        )}
+          ) : null}
 
-        {/* Monthly Projection List */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionHeaderTitle}>MONTHLY REPAYMENT SCHEDULE</Text>
-          <Text style={styles.sectionHeaderCount}>{roadmapData.months.length} Months Projected</Text>
-        </View>
+          {months.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon="checkmark-circle-outline"
+                title="Nothing to project"
+                message="You're debt-free or have no active loans to project."
+              />
+            </Card>
+          ) : (
+            <>
+              <View style={styles.heroCard}>
+                <LinearGradient
+                  colors={colors.heroGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.hero}
+                >
+                  <Text style={styles.heroOverline}>EMIs paid off by</Text>
+                  <Text
+                    style={styles.heroValue}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                  >
+                    {roadmapData.debtFreeDate || 'N/A'}
+                  </Text>
+                  <Text style={styles.heroSub}>
+                    {months.length} month{months.length === 1 ? '' : 's'} to go
+                  </Text>
 
-        {roadmapData.months.length === 0 ? (
-          <BlurView intensity={30} tint="light" style={styles.emptyCard}>
-            <Ionicons name="checkmark-circle-outline" size={48} color="#10b981" />
-            <Text style={styles.emptyTitle}>No Active Loans Found</Text>
-            <Text style={styles.emptySub}>You are currently debt-free or have no active loans to project.</Text>
-          </BlurView>
-        ) : (
-          roadmapData.months.map((item) => (
-            <BlurView
-              key={item.monthIndex}
-              intensity={35}
-              tint="light"
-              style={styles.monthCard}
-            >
-              <View style={styles.monthHeaderRow}>
-                {/* Month Badge */}
-                <View style={styles.monthDateBadge}>
-                  <Text style={styles.monthIdxText}>M{item.monthIndex}</Text>
-                  <Text style={styles.monthDateText}>{item.monthLabel}</Text>
-                </View>
-
-                {/* 10th Payment Date & Breakdown */}
-                <View style={styles.monthSummaryCol}>
-                  <Text style={styles.dueDateText}>Date: {item.formattedDueDate}</Text>
-                  <View style={styles.breakdownRow}>
-                    <Text style={styles.emiTotalText}>EMI: {fc(item.totalEMIPaid)}</Text>
-                    <Text style={styles.dotSep}>•</Text>
-                    <Text style={styles.prinText}>Prin: {fc(item.totalPrincipal)}</Text>
-                    <Text style={styles.dotSep}>•</Text>
-                    <Text style={styles.intText}>Int: {fc(item.totalInterest)}</Text>
+                  <View style={styles.heroStats}>
+                    <View
+                      style={styles.heroStat}
+                      accessible
+                      accessibilityLabel={`Principal left: ${fc(principalLeft)}`}
+                    >
+                      <Text style={styles.heroStatLabel}>Principal left</Text>
+                      <Text
+                        style={styles.heroStatValue}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                      >
+                        {fc(principalLeft)}
+                      </Text>
+                    </View>
+                    <View style={styles.heroStatDivider} />
+                    <View
+                      style={styles.heroStat}
+                      accessible
+                      accessibilityLabel={`Interest ahead on EMIs: ${fc(roadmapData.totalInterest)}`}
+                    >
+                      <Text style={styles.heroStatLabel}>Interest ahead</Text>
+                      <Text
+                        style={styles.heroStatValue}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                      >
+                        {fc(roadmapData.totalInterest)}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-
-                {/* Ending Outstanding Balance */}
-                <View style={styles.monthEndingCol}>
-                  <Text style={styles.endingLabel}>OUTSTANDING PENDING</Text>
-                  <Text style={styles.endingVal}>{fc(item.endingOutstanding)}</Text>
-                </View>
+                </LinearGradient>
               </View>
-            </BlurView>
-          ))
-        )}
-      </ScrollView>
-    </LinearGradient>
+
+              <SectionHeader title="Month by month" count={months.length} style={styles.sectionGap} />
+              {yearGroups.map((group, gi) => {
+                const yearEnd = group.items[group.items.length - 1];
+                return (
+                  <View key={group.year} style={gi > 0 ? styles.yearGap : null}>
+                    <View style={styles.yearHead}>
+                      <Text style={styles.yearTitle} accessibilityRole="header">
+                        {group.year}
+                      </Text>
+                      <Text style={styles.yearCaption} numberOfLines={1}>
+                        {fc(yearEnd.endingOutstanding)} left after {yearEnd.monthLabel.split(' ')[0]}
+                      </Text>
+                    </View>
+                    <Card padded={false} style={styles.listCard}>
+                      {group.items.map((item, i) => (
+                        <MonthRow
+                          key={item.monthIndex}
+                          item={item}
+                          divider={i > 0}
+                          isNext={gi === 0 && i === 0}
+                          thisMonth={thisMonthLabel}
+                        />
+                      ))}
+                    </Card>
+                  </View>
+                );
+              })}
+            </>
+          )}
+        </>
+      )}
+    </Screen>
+  );
+}
+
+// ── Month row ─────────────────────────────────────────────────────────────────
+
+function MonthRow({ item, divider, isNext, thisMonth }) {
+  const monthShort = String(item.monthLabel).split(' ')[0];
+  const nextLabel = item.monthLabel === thisMonth ? 'This month' : 'Up next';
+
+  return (
+    <View style={isNext ? styles.rowHighlight : null}>
+      <ListRow
+        divider={divider}
+        leading={
+          <View style={[styles.monthTile, isNext && styles.monthTileActive]}>
+            <Text style={[styles.monthTileText, isNext && styles.monthTileTextActive]}>{monthShort}</Text>
+            <Text style={[styles.monthTileIndex, isNext && styles.monthTileTextActive]}>M{item.monthIndex}</Text>
+          </View>
+        }
+        title={`EMIs ${fc(item.totalEMIPaid)}`}
+        subtitle={`Due ${item.formattedDueDate} · ${fc(item.totalPrincipal)} principal + ${fc(item.totalInterest)} interest`}
+        value={fc(item.endingOutstanding)}
+        valueCaption="left after"
+        accessibilityLabel={`${isNext ? `${nextLabel}, ` : ''}${item.fullMonthLabel}: EMIs ${fc(item.totalEMIPaid)}, due ${item.formattedDueDate}, ${fc(item.totalPrincipal)} principal and ${fc(item.totalInterest)} interest, ${fc(item.endingOutstanding)} principal left after`}
+      >
+        {isNext ? (
+          <Pill label={nextLabel} icon="time-outline" color={colors.primary} backgroundColor={colors.surface} />
+        ) : null}
+      </ListRow>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
+  loading: {
+    paddingVertical: space.xxxl * 2,
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.2)',
   },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  headerSub: {
-    fontSize: 12,
-    color: '#64748b',
-    fontWeight: '500',
-  },
-  shareBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  metricsCard: {
-    borderRadius: 20,
-    padding: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 10,
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  metricItem: {
-    flex: 1,
-  },
-  metricLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  metricValPrimary: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  metricSub: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginTop: 2,
-  },
-  filterCard: {
-    borderRadius: 16,
-    padding: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.65)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
-    marginBottom: 8,
+  chipScroll: {
+    marginHorizontal: -space.lg,
+    marginBottom: space.xl,
+    flexGrow: 0,
   },
   chipRow: {
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+  },
+  heroCard: {
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    ...shadow.hero,
+  },
+  hero: {
+    paddingHorizontal: space.xl,
+    paddingTop: space.lg + 2,
+    paddingBottom: space.lg,
+  },
+  heroOverline: {
+    ...type.overline,
+    color: colors.heroTextSecondary,
+  },
+  heroValue: {
+    ...type.display,
+    color: colors.heroText,
+    marginTop: space.sm,
+  },
+  heroSub: {
+    ...type.label,
+    fontWeight: '500',
+    color: colors.heroTextSecondary,
+    marginTop: space.xs,
+  },
+  heroStats: {
     flexDirection: 'row',
+    alignItems: 'stretch',
+    marginTop: space.lg,
+    paddingTop: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.heroDivider,
   },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: '#f1f5f9',
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  chipActive: {
-    backgroundColor: '#6366f1',
-    borderColor: '#6366f1',
-  },
-  chipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  chipTextActive: {
-    color: '#ffffff',
-    fontWeight: '700',
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  },
-  sectionHeaderTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#475569',
-    letterSpacing: 1,
-  },
-  sectionHeaderCount: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748b',
-  },
-  emptyCard: {
-    borderRadius: 16,
-    padding: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginTop: 10,
-  },
-  emptySub: {
-    fontSize: 12,
-    color: '#64748b',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  monthCard: {
-    borderRadius: 16,
-    padding: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 10,
-  },
-  monthHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  monthDateBadge: {
-    width: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-    backgroundColor: '#f1f5f9',
-    borderRadius: 10,
-    marginRight: 12,
-  },
-  monthIdxText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#6366f1',
-  },
-  monthDateText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  monthSummaryCol: {
+  heroStat: {
     flex: 1,
+    minWidth: 0,
   },
-  dueDateText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0f172a',
+  heroStatDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: colors.heroDivider,
+    marginHorizontal: space.md,
   },
-  paidStatusText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#10b981',
+  heroStatLabel: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.heroTextMuted,
+  },
+  heroStatValue: {
+    ...type.amount,
+    color: colors.heroText,
     marginTop: 2,
   },
-  breakdownRow: {
+  sectionGap: {
+    marginTop: space.xxl,
+  },
+  yearGap: {
+    marginTop: space.xl,
+  },
+  yearHead: {
     flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: space.md,
+    marginBottom: space.sm,
+    paddingHorizontal: space.xs,
+  },
+  yearTitle: {
+    ...type.label,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  yearCaption: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    flexShrink: 1,
+  },
+  listCard: {
+    overflow: 'hidden',
+  },
+  rowHighlight: {
+    backgroundColor: colors.primarySoft,
+  },
+  monthTile: {
+    width: 40,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceSunken,
     alignItems: 'center',
-    marginTop: 4,
-    flexWrap: 'wrap',
+    justifyContent: 'center',
   },
-  emiTotalText: {
-    fontSize: 11,
+  monthTileActive: {
+    backgroundColor: colors.primary,
+  },
+  monthTileText: {
+    ...type.label,
     fontWeight: '800',
-    color: '#6366f1',
+    color: colors.text,
   },
-  prinText: {
-    fontSize: 11,
-    color: '#10b981',
-    fontWeight: '600',
-  },
-  intText: {
-    fontSize: 11,
-    color: '#ef4444',
-    fontWeight: '600',
-  },
-  dotSep: {
-    marginHorizontal: 3,
-    color: '#94a3b8',
+  monthTileIndex: {
     fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
   },
-  monthEndingCol: {
-    alignItems: 'flex-end',
-  },
-  endingLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#94a3b8',
-    letterSpacing: 0.5,
-  },
-  endingVal: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#334155',
+  monthTileTextActive: {
+    color: colors.textOnAccent,
   },
 });

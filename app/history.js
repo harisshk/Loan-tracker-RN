@@ -1,41 +1,92 @@
-import React, { useState, useEffect } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  RefreshControl,
-  Alert,
-  TextInput,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
-import { getPayments, addPayment, getLoans } from '../utils/storage';
+  Button,
+  Card,
+  Chip,
+  colors,
+  EmptyState,
+  Field,
+  Gap,
+  HeaderAction,
+  IconBadge,
+  ListRow,
+  Pill,
+  Screen,
+  ScreenHeader,
+  Segmented,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from '../components/ui/kit';
+import { countsTowardBalance, parseLocalDate, toLocalISOString } from '../utils/emiCalculator';
+import { formatDateWithDay, formatINR, formatINRCompact, formatMonthYear } from '../utils/format';
+import { addPayment, getLoans, getPayments } from '../utils/storage';
+
+const PAYMENT_TYPES = [
+  { key: 'prepayment', label: 'Prepayment' },
+  { key: 'emi', label: 'Regular EMI' },
+];
+
+const PAYMENT_TYPE_HINT = {
+  prepayment: 'Extra payment that reduces your principal.',
+  emi: 'A regular EMI, recorded for history only. It does not change the balance.',
+};
+
+/** Display style per payment kind; untagged (older) payments fall back to "Payment". */
+const KIND_META = {
+  prepayment: { label: 'Prepayment', icon: 'trending-down-outline', text: colors.primary, soft: colors.primarySoft },
+  emi: { label: 'EMI', icon: 'card-outline', text: colors.indigo, soft: colors.indigoSoft },
+  settlement: { label: 'Settlement', icon: 'checkmark-done-outline', text: colors.violet, soft: colors.violetSoft },
+};
+const DEFAULT_KIND = { label: 'Payment', icon: 'cash-outline', text: colors.textSecondary, soft: colors.surfaceSunken };
+
+/** Date-only strings ("2026-10-12") are read as local dates; full timestamps as-is. */
+const toDisplayDate = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return parseLocalDate(value);
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+};
 
 export default function History() {
-  const router = useRouter();
   const [payments, setPayments] = useState([]);
   const [loans, setLoans] = useState([]);
+  const [loanNames, setLoanNames] = useState({});
+  const [loanInfo, setLoanInfo] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
   const [showAddPayment, setShowAddPayment] = useState(false);
   const [newPayment, setNewPayment] = useState({
     loanId: '',
     amount: '',
-    date: new Date().toISOString().split('T')[0],
+    date: toLocalISOString(new Date()),
+    kind: 'prepayment',
   });
 
-  const loadData = async () => {
-    const paymentsData = await getPayments();
-    const loansData = await getLoans();
-    setPayments(paymentsData.sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt)));
-    setLoans(loansData.filter(l => l.status !== 'closed'));
-  };
-
-  useEffect(() => {
-    loadData();
+  const loadData = useCallback(async () => {
+    try {
+      const paymentsData = await getPayments();
+      const loansData = await getLoans();
+      setPayments(paymentsData.sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt)));
+      setLoans(loansData.filter(l => l.status !== 'closed'));
+      setLoanNames(Object.fromEntries(loansData.map(l => [l.id, l.loanName])));
+      setLoanInfo(Object.fromEntries(loansData.map(l => [l.id, l])));
+    } finally {
+      setLoaded(true);
+    }
   }, []);
+
+  // Runs on first focus too, so no separate mount effect is needed.
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData]),
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -48,11 +99,16 @@ export default function History() {
     const amountVal = parseSafe(newPayment.amount);
 
     if (!newPayment.loanId || amountVal <= 0) {
-      Alert.alert('Error', 'Please fill all fields with a valid amount');
+      setErrors({
+        loanId: newPayment.loanId ? undefined : 'Choose the loan this payment was for',
+        amount: amountVal > 0 ? undefined : 'Enter an amount greater than ₹0',
+      });
       return;
     }
+    setErrors({});
 
     try {
+      setSaving(true);
       const selectedLoan = loans.find(l => l.id === newPayment.loanId);
       await addPayment({
         ...newPayment,
@@ -63,344 +119,272 @@ export default function History() {
       setNewPayment({
         loanId: '',
         amount: '',
-        date: new Date().toISOString().split('T')[0],
+        date: toLocalISOString(new Date()),
+        kind: 'prepayment',
       });
       await loadData();
       Alert.alert('Success', 'Payment recorded successfully');
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Error', 'Failed to record payment');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount || 0).toLocaleString('en-IN', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    })}`;
-  };
-
-  const formatDate = (date) => {
-    if (!date) return 'N/A';
-    return new Date(date).toLocaleDateString('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
+  const toggleForm = () => {
+    setErrors({});
+    setShowAddPayment(!showAddPayment);
   };
 
   const getTotalPaid = () => {
     return payments.reduce((sum, payment) => sum + parseFloat(payment.amount || 0), 0);
   };
 
+  // Older payments have no kind; classify them the same way the loan calculator does.
+  const kindOf = (p) => {
+    if (p.kind) return p.kind;
+    const loan = loanInfo[p.loanId];
+    const isBullet = loan?.loanType === 'bullet';
+    if (!countsTowardBalance(p, isBullet ? 'bullet' : 'emi', parseFloat(loan?.emiAmount) || 0)) return 'emi';
+    return isBullet ? 'settlement' : 'prepayment';
+  };
+
+  const totalPrepaid = payments
+    .filter((p) => kindOf(p) !== 'emi')
+    .reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+
+  // Group the (already newest-first) payments by calendar month.
+  const groups = payments.reduce((acc, payment) => {
+    const d = toDisplayDate(payment.paidAt);
+    const key = d ? `${d.getFullYear()}-${d.getMonth()}` : 'unknown';
+    let group = acc.find((g) => g.key === key);
+    if (!group) {
+      group = { key, title: d ? formatMonthYear(d) : 'Undated', total: 0, items: [] };
+      acc.push(group);
+    }
+    group.items.push(payment);
+    group.total += parseFloat(payment.amount || 0) || 0;
+    return acc;
+  }, []);
+
   return (
-    <LinearGradient
-      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+    <Screen onRefresh={onRefresh} refreshing={refreshing}>
+      <ScreenHeader
+        title="Payment history"
+        subtitle="Prepayments and EMIs you've recorded"
+        back
+        actions={
+          <HeaderAction
+            icon={showAddPayment ? 'close' : 'add'}
+            label={showAddPayment ? 'Cancel recording payment' : 'Record a payment'}
+            variant={showAddPayment ? 'plain' : 'primary'}
+            onPress={toggleForm}
+          />
         }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Payment History</Text>
-          <TouchableOpacity onPress={() => setShowAddPayment(!showAddPayment)}>
-            <Text style={styles.addButton}>
-              {showAddPayment ? 'Cancel' : '+ Add'}
-            </Text>
-          </TouchableOpacity>
+      />
+
+      {!loaded ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={colors.primaryFill} />
         </View>
+      ) : (
+        <>
+          {/* Summary */}
+          <Card>
+            <StatRow>
+              <StatTile label="Total paid" value={formatINRCompact(getTotalPaid())} caption="all payments" />
+              <StatTile
+                label="Prepaid"
+                value={formatINRCompact(totalPrepaid)}
+                caption="towards principal"
+                tone={totalPrepaid > 0 ? 'positive' : 'default'}
+              />
+              <StatTile
+                label="Payments"
+                value={String(payments.length)}
+                caption="recorded"
+              />
+            </StatRow>
+          </Card>
 
-        {/* Total Paid Summary */}
-        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
-          <View style={styles.cardContent}>
-            <Text style={styles.summaryLabel}>Total Paid</Text>
-            <Text style={styles.summaryAmount}>
-              {formatCurrency(getTotalPaid())}
-            </Text>
-            <Text style={styles.summarySubtext}>
-              {payments.length} payment{payments.length !== 1 ? 's' : ''} recorded
-            </Text>
-          </View>
-        </BlurView>
+          {/* Add Payment Form */}
+          {showAddPayment ? (
+            <>
+              <Gap />
+              <Card>
+                <Text style={styles.formTitle} accessibilityRole="header">
+                  Record payment
+                </Text>
 
-        {/* Add Payment Form */}
-        {showAddPayment && (
-          <BlurView intensity={20} tint="light" style={styles.formCard}>
-            <View style={styles.formContent}>
-              <Text style={styles.formTitle}>Record Payment</Text>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Select Loan</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={styles.loanSelector}>
+                <Text style={styles.label}>Loan</Text>
+                {loans.length === 0 ? (
+                  <Text style={styles.hint}>You have no active loans to record a payment against.</Text>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.chipScroll}
+                    contentContainerStyle={styles.chipRow}
+                  >
                     {loans.map((loan) => (
-                      <TouchableOpacity
+                      <Chip
                         key={loan.id}
-                        style={[
-                          styles.loanOption,
-                          newPayment.loanId === loan.id && styles.loanOptionSelected,
-                        ]}
-                        onPress={() =>
-                          setNewPayment((prev) => ({ ...prev, loanId: loan.id }))
-                        }
-                      >
-                        <Text
-                          style={[
-                            styles.loanOptionText,
-                            newPayment.loanId === loan.id && styles.loanOptionTextSelected,
-                          ]}
-                        >
-                          {loan.loanName}
-                        </Text>
-                      </TouchableOpacity>
+                        label={loan.loanName}
+                        selected={newPayment.loanId === loan.id}
+                        onPress={() => setNewPayment((prev) => ({ ...prev, loanId: loan.id }))}
+                      />
                     ))}
-                  </View>
-                </ScrollView>
-              </View>
+                  </ScrollView>
+                )}
+                {errors.loanId ? <Text style={styles.error}>{errors.loanId}</Text> : null}
+                <View style={styles.spacer} />
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Amount (₹)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter amount"
-                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
+                <Field
+                  label="Amount"
+                  prefix="₹"
+                  placeholder="0"
                   keyboardType="numeric"
                   value={newPayment.amount}
-                  onChangeText={(value) =>
-                    setNewPayment((prev) => ({ ...prev, amount: value }))
-                  }
+                  onChangeText={(value) => setNewPayment((prev) => ({ ...prev, amount: value }))}
+                  error={errors.amount}
                 />
-              </View>
 
-              <TouchableOpacity style={styles.submitButton} onPress={handleAddPayment}>
-                <Text style={styles.submitButtonText}>Record Payment</Text>
-              </TouchableOpacity>
-            </View>
-          </BlurView>
-        )}
+                <Text style={styles.label}>Payment type</Text>
+                <Segmented
+                  options={PAYMENT_TYPES}
+                  value={newPayment.kind}
+                  onChange={(kind) => setNewPayment((prev) => ({ ...prev, kind }))}
+                />
+                <Text style={styles.hint}>{PAYMENT_TYPE_HINT[newPayment.kind]}</Text>
 
-        {/* Payment List */}
-        <Text style={styles.sectionTitle}>Recent Payments</Text>
-
-        {payments.length === 0 ? (
-          <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-            <View style={styles.emptyContent}>
-              <Text style={styles.emptyText}>No payments recorded</Text>
-              <Text style={styles.emptySubtext}>
-                Tap the + button to record your first payment
-              </Text>
-            </View>
-          </BlurView>
-        ) : (
-          payments.map((payment) => (
-            <BlurView
-              key={payment.id}
-              intensity={15}
-              tint="light"
-              style={styles.paymentCard}
-            >
-              <View style={styles.paymentContent}>
-                <View style={styles.paymentLeft}>
-                  <Text style={styles.paymentLoanName}>{payment.loanName}</Text>
-                  <Text style={styles.paymentDate}>
-                    {formatDate(payment.paidAt)}
-                  </Text>
+                <View style={styles.formActions}>
+                  <Button label="Cancel" variant="secondary" onPress={toggleForm} style={styles.flex} />
+                  <Button
+                    label="Save payment"
+                    icon="checkmark"
+                    onPress={handleAddPayment}
+                    loading={saving}
+                    disabled={loans.length === 0}
+                    style={styles.flex}
+                  />
                 </View>
-                <Text style={styles.paymentAmount}>
-                  {formatCurrency(payment.amount)}
-                </Text>
+              </Card>
+            </>
+          ) : null}
+
+          <Gap />
+
+          {/* Payment List */}
+          {payments.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon="receipt-outline"
+                title="No payments recorded"
+                message="Record prepayments to see how much principal you've cleared early."
+                actionLabel={showAddPayment ? undefined : 'Record payment'}
+                onAction={showAddPayment ? undefined : toggleForm}
+              />
+            </Card>
+          ) : (
+            groups.map((group, gi) => (
+              <View key={group.key} style={gi > 0 ? styles.groupGap : null}>
+                <View style={styles.groupHeader}>
+                  <Text style={styles.groupTitle} accessibilityRole="header">
+                    {group.title}
+                  </Text>
+                  <Text style={styles.groupTotal}>{formatINR(group.total)}</Text>
+                </View>
+                <Card padded={false}>
+                  {group.items.map((payment, i) => {
+                    const meta = KIND_META[kindOf(payment)] || DEFAULT_KIND;
+                    const date = toDisplayDate(payment.paidAt);
+                    const name = loanNames[payment.loanId] || 'Loan';
+                    return (
+                      <ListRow
+                        key={payment.id}
+                        divider={i > 0}
+                        leading={<IconBadge name={meta.icon} color={meta.text} backgroundColor={meta.soft} />}
+                        title={name}
+                        subtitle={date ? formatDateWithDay(date) : 'No date'}
+                        value={formatINR(payment.amount)}
+                        accessibilityLabel={`${name}, ${meta.label}, ${formatINR(payment.amount)}, ${
+                          date ? formatDateWithDay(date) : 'no date'
+                        }`}
+                      >
+                        <Pill label={meta.label} color={meta.text} backgroundColor={meta.soft} />
+                      </ListRow>
+                    );
+                  })}
+                </Card>
               </View>
-            </BlurView>
-          ))
-        )}
-      </ScrollView>
-    </LinearGradient>
+            ))
+          )}
+        </>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingTop: 60,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  loading: {
+    paddingVertical: space.xxxl * 2,
     alignItems: 'center',
-    marginBottom: 24,
   },
-  headerTitle: {
-    fontSize: 34,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  addButton: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#10b981',
-  },
-  summaryCard: {
-    borderRadius: 30,
-    overflow: 'hidden',
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  cardContent: {
-    padding: 24,
-  },
-  summaryLabel: {
-    fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.6)',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  summaryAmount: {
-    fontSize: 38,
-    fontWeight: '700',
-    color: '#10b981',
-    marginBottom: 8,
-  },
-  summarySubtext: {
-    fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.5)',
-  },
-  formCard: {
-    borderRadius: 30,
-    overflow: 'hidden',
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  formContent: {
-    padding: 24,
-    gap: 16,
+  flex: {
+    flex: 1,
   },
   formTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 8,
-  },
-  inputGroup: {
-    gap: 8,
+    ...type.headline,
+    color: colors.text,
+    marginBottom: space.lg,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: 'rgba(15, 23, 42, 0.8)',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    ...type.label,
+    color: colors.textSecondary,
+    marginBottom: space.xs + 2,
   },
-  loanSelector: {
+  chipScroll: {
+    marginHorizontal: -space.lg,
+  },
+  chipRow: {
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+  },
+  spacer: {
+    height: space.lg,
+  },
+  hint: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textMuted,
+    marginTop: space.xs,
+  },
+  error: {
+    ...type.caption,
+    color: colors.danger,
+    marginTop: space.xs,
+  },
+  formActions: {
     flexDirection: 'row',
-    gap: 8,
+    gap: space.md,
+    marginTop: space.xl,
   },
-  loanOption: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
+  groupGap: {
+    marginTop: space.xxl,
   },
-  loanOptionSelected: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    borderColor: '#10b981',
-  },
-  loanOptionText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: 'rgba(15, 23, 42, 0.6)',
-  },
-  loanOptionTextSelected: {
-    color: '#10b981',
-  },
-  input: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-    borderRadius: 16,
-    padding: 16,
-    fontSize: 16,
-    color: '#0f172a',
-  },
-  submitButton: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    borderRadius: 20,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#10b981',
-  },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#10b981',
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 16,
-  },
-  paymentCard: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  paymentContent: {
+  groupHeader: {
     flexDirection: 'row',
+    alignItems: 'baseline',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
+    marginBottom: space.md,
   },
-  paymentLeft: {
-    flex: 1,
+  groupTitle: {
+    ...type.headline,
+    color: colors.text,
   },
-  paymentLoanName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 4,
-  },
-  paymentDate: {
-    fontSize: 13,
-    color: 'rgba(15, 23, 42, 0.5)',
-  },
-  paymentAmount: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#10b981',
-  },
-  emptyCard: {
-    borderRadius: 30,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  emptyContent: {
-    padding: 48,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: 'rgba(15, 23, 42, 0.6)',
-    textAlign: 'center',
+  groupTotal: {
+    ...type.label,
+    color: colors.textSecondary,
+    fontVariant: ['tabular-nums'],
   },
 });

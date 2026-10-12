@@ -1,25 +1,38 @@
-import React, { useState, useMemo } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React, { useMemo, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import {
+  Card,
+  colors,
+  Divider,
+  Field,
+  IconBadge,
+  Pill,
+  Screen,
+  ScreenHeader,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from '../components/ui/kit';
+import { formatINR } from '../utils/format';
 
-const fc = (v) =>
-  `₹${parseFloat(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const fc = (v) => formatINR(v);
+
+/** Width at which the two offers sit side by side instead of stacking. */
+const WIDE_BREAKPOINT = 600;
 
 export default function Compare() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  
+  const { width } = useWindowDimensions();
+  const wide = width >= WIDE_BREAKPOINT;
+
   // Offer A
   const [p1, setP1] = useState('1000000');
   const [i1, setI1] = useState('9');
@@ -31,15 +44,20 @@ export default function Compare() {
   const [t2, setT2] = useState('120');
 
   const calc = (p, r, t) => {
-    const princ = parseFloat(String(p).replace(/,/g, '')) || 0;
-    const rate  = parseFloat(r) || 0;
-    const tenure = parseInt(t) || 0;
-    if (!princ || !rate || !tenure) return { emi: 0, total: 0, interest: 0 };
-    
+    const clean = (v) => String(v ?? '').replace(/[^0-9.]/g, '');
+    const princ = parseFloat(clean(p)) || 0;
+    const rate  = parseFloat(clean(r)) || 0;
+    const tenure = Math.round(parseFloat(clean(t)) || 0);
+    if (princ <= 0 || tenure <= 0 || rate < 0) {
+      return { emi: 0, total: 0, interest: 0, valid: false };
+    }
+
     const monthlyRate = rate / 12 / 100;
-    const emi = (princ * monthlyRate * Math.pow(1 + monthlyRate, tenure)) / (Math.pow(1 + monthlyRate, tenure) - 1);
+    const emi = monthlyRate === 0
+      ? princ / tenure
+      : (princ * monthlyRate * Math.pow(1 + monthlyRate, tenure)) / (Math.pow(1 + monthlyRate, tenure) - 1);
     const total = emi * tenure;
-    return { emi, total, interest: total - princ };
+    return { emi, total, interest: total - princ, valid: true };
   };
 
   const a = useMemo(() => calc(p1, i1, t1), [p1, i1, t1]);
@@ -49,112 +67,285 @@ export default function Compare() {
     emi: Math.abs(a.emi - b.emi),
     total: Math.abs(a.total - b.total),
     interest: Math.abs(a.interest - b.interest),
-    winner: a.total < b.total ? 'A' : 'B'
+    winner: !a.valid || !b.valid
+      ? null
+      : Math.round(a.total) === Math.round(b.total)
+        ? 'tie'
+        : a.total < b.total ? 'A' : 'B',
   };
 
+  const hasWinner = diff.winner === 'A' || diff.winner === 'B';
+
   return (
-    <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}><Text style={styles.backButton}>← Dashboard</Text></TouchableOpacity>
-          <Text style={styles.headerTitle}>Comparison Lab</Text>
-          <Text style={styles.headerSubtitle}>Compare two loan offers side-by-side</Text>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.flex}
+    >
+      <Screen>
+        <ScreenHeader
+          back
+          title="Compare loans"
+          subtitle="See which of two offers costs you less overall"
+        />
+
+        <View style={[styles.offers, wide && styles.offersWide]}>
+          <OfferCard
+            name="A"
+            result={a}
+            cheaper={diff.winner === 'A'}
+            principal={p1}
+            rate={i1}
+            tenure={t1}
+            onPrincipal={setP1}
+            onRate={setI1}
+            onTenure={setT1}
+            wide={wide}
+          />
+          <OfferCard
+            name="B"
+            result={b}
+            cheaper={diff.winner === 'B'}
+            principal={p2}
+            rate={i2}
+            tenure={t2}
+            onPrincipal={setP2}
+            onRate={setI2}
+            onTenure={setT2}
+            wide={wide}
+          />
         </View>
 
-        <View style={styles.comparisonGrid}>
-          {/* Card A */}
-          <View style={styles.col}>
-            <LinearGradient colors={['#fff', '#f0fdf4']} style={[styles.offerCard, diff.winner === 'A' && styles.winnerCard]}>
-              <Text style={styles.offerLabel}>OFFER A</Text>
-              <InputField label="Principal" value={p1} onChangeText={setP1} />
-              <InputField label="Rate (%)" value={i1} onChangeText={setI1} />
-              <InputField label="Tenure (m)" value={t1} onChangeText={setT1} />
-              <View style={styles.resultBox}>
-                <Text style={styles.resultLabel}>Monthly EMI</Text>
-                <Text style={styles.resultValue}>{fc(a.emi)}</Text>
-                <Text style={styles.resultLabel}>Total Interest</Text>
-                <Text style={styles.resultValue}>{fc(a.interest)}</Text>
-              </View>
-            </LinearGradient>
+        <Card style={styles.verdict}>
+          <View style={styles.verdictHead}>
+            <IconBadge
+              name={hasWinner ? 'trophy-outline' : diff.winner === 'tie' ? 'git-compare-outline' : 'create-outline'}
+              color={hasWinner ? colors.primary : colors.indigo}
+              backgroundColor={hasWinner ? colors.primarySoft : colors.indigoSoft}
+            />
+            <View style={styles.verdictText}>
+              <Text style={styles.overline}>Verdict</Text>
+              <Text style={styles.verdictTitle} accessibilityRole="header">
+                {diff.winner === null
+                  ? 'Enter both offers to compare'
+                  : diff.winner === 'tie'
+                    ? 'Both offers cost the same'
+                    : `Offer ${diff.winner} is cheaper`}
+              </Text>
+            </View>
           </View>
 
-          {/* Card B */}
-          <View style={styles.col}>
-            <LinearGradient colors={['#fff', '#f0fdf4']} style={[styles.offerCard, diff.winner === 'B' && styles.winnerCard]}>
-              <Text style={styles.offerLabel}>OFFER B</Text>
-              <InputField label="Principal" value={p2} onChangeText={setP2} />
-              <InputField label="Rate (%)" value={i2} onChangeText={setI2} />
-              <InputField label="Tenure (m)" value={t2} onChangeText={setT2} />
-              <View style={styles.resultBox}>
-                <Text style={styles.resultLabel}>Monthly EMI</Text>
-                <Text style={styles.resultValue}>{fc(b.emi)}</Text>
-                <Text style={styles.resultLabel}>Total Interest</Text>
-                <Text style={styles.resultValue}>{fc(b.interest)}</Text>
-              </View>
-            </LinearGradient>
-          </View>
-        </View>
-
-        <BlurView intensity={30} tint="light" style={styles.verdictCard}>
-          <View style={styles.verdictHeader}>
-            <Ionicons name="trophy" size={24} color="#f59e0b" />
-            <Text style={styles.verdictTitle}>The Better Choice: Offer {diff.winner}</Text>
-          </View>
-          <View style={styles.verdictBody}>
+          {hasWinner ? (
             <Text style={styles.verdictSaving}>
-              You save {fc(diff.interest)} in total interest with Offer {diff.winner}!
+              You save <Text style={styles.verdictSavingAmount}>{fc(diff.total)}</Text> in total
+              outflow with Offer {diff.winner}.
             </Text>
-            <View style={styles.divider} />
-            <Text style={styles.verdictDetail}>• EMI Difference: {fc(diff.emi)}/mo</Text>
-            <Text style={styles.verdictDetail}>• Total Outflow Diff: {fc(diff.total)}</Text>
-          </View>
-        </BlurView>
-        
-        <Text style={styles.footerNote}>💡 Tip: Sometimes a lower EMI means a much higher total interest if the tenure is longer. Use this lab to see the full picture.</Text>
-      </ScrollView>
-    </LinearGradient>
+          ) : null}
+
+          {diff.winner !== null ? (
+            <>
+              <Divider style={styles.verdictDivider} />
+              <DiffRow label="EMI difference" value={`${fc(diff.emi)}/mo`} />
+              <DiffRow label="Interest difference" value={fc(diff.interest)} />
+              <DiffRow label="Total outflow difference" value={fc(diff.total)} />
+            </>
+          ) : null}
+        </Card>
+
+        <View style={styles.tip}>
+          <Ionicons name="bulb-outline" size={16} color={colors.textSecondary} />
+          <Text style={styles.tipText}>
+            A lower EMI can still cost more overall if the tenure is longer. Compare the total payable,
+            not just the EMI.
+          </Text>
+        </View>
+      </Screen>
+    </KeyboardAvoidingView>
   );
 }
 
-function InputField({ label, value, onChangeText }) {
+function OfferCard({
+  name,
+  result,
+  cheaper,
+  principal,
+  rate,
+  tenure,
+  onPrincipal,
+  onRate,
+  onTenure,
+  wide,
+}) {
   return (
-    <View style={styles.inputWrap}>
-      <Text style={styles.inputLabel}>{label}</Text>
-      <TextInput
-        style={styles.input}
-        value={value}
-        onChangeText={onChangeText}
+    <Card style={[styles.offerCard, wide && styles.offerCardWide, cheaper && styles.offerCardCheaper]}>
+      <View style={styles.offerHead}>
+        <Text style={styles.offerTitle} accessibilityRole="header">
+          Offer {name}
+        </Text>
+        {cheaper ? (
+          <Pill label="Cheaper" icon="checkmark-circle" color={colors.primary} backgroundColor={colors.primarySoft} />
+        ) : null}
+      </View>
+
+      <Field
+        label="Principal"
+        prefix="₹"
+        value={principal}
+        onChangeText={onPrincipal}
+        placeholder="1000000"
         keyboardType="numeric"
-        placeholderTextColor="#94a3b8"
       />
+      <Field
+        label="Interest rate"
+        suffix="% p.a."
+        value={rate}
+        onChangeText={onRate}
+        placeholder="8.5"
+        keyboardType="decimal-pad"
+      />
+      <Field
+        label="Tenure"
+        suffix="months"
+        value={tenure}
+        onChangeText={onTenure}
+        placeholder="120"
+        keyboardType="numeric"
+      />
+
+      <Divider style={styles.offerDivider} />
+
+      {result.valid ? (
+        <StatRow>
+          <StatTile label="EMI" value={fc(result.emi)} caption="per month" />
+          <StatTile label="Interest" value={fc(result.interest)} caption="total" />
+          <StatTile
+            label="Payable"
+            value={fc(result.total)}
+            caption="total"
+            tone={cheaper ? 'positive' : 'default'}
+          />
+        </StatRow>
+      ) : (
+        <Text style={styles.invalidText} accessibilityLiveRegion="polite">
+          Enter a principal and tenure above zero to see the EMI.
+        </Text>
+      )}
+    </Card>
+  );
+}
+
+function DiffRow({ label, value }) {
+  return (
+    <View style={styles.diffRow} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Text style={styles.diffLabel}>{label}</Text>
+      <Text style={styles.diffValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+        {value}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 60 },
-  header: { marginBottom: 28 },
-  backButton: { fontSize: 15, color: '#10b981', marginBottom: 12 },
-  headerTitle: { fontSize: 32, fontWeight: '800', color: '#0f172a' },
-  headerSubtitle: { fontSize: 14, color: 'rgba(15,23,42,0.5)', marginTop: 4 },
-  comparisonGrid: { flexDirection: 'row', gap: 12, marginBottom: 20 },
-  col: { flex: 1 },
-  offerCard: { borderRadius: 24, padding: 16, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 10 },
-  winnerCard: { borderColor: '#10b981', borderWidth: 2, backgroundColor: '#f0fdf4' },
-  offerLabel: { fontSize: 11, fontWeight: '800', color: 'rgba(15,23,42,0.4)', marginBottom: 14, letterSpacing: 1 },
-  inputWrap: { marginBottom: 12 },
-  inputLabel: { fontSize: 10, fontWeight: '600', color: 'rgba(15,23,42,0.5)', marginBottom: 4, textTransform: 'uppercase' },
-  input: { height: 44, backgroundColor: 'rgba(255,255,255,0.7)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)', paddingHorizontal: 10, fontSize: 15, fontWeight: '700', color: '#0f172a' },
-  resultBox: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.05)' },
-  resultLabel: { fontSize: 10, color: 'rgba(15,23,42,0.5)', marginBottom: 2 },
-  resultValue: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 10 },
-  verdictCard: { borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(245,158,11,0.2)' },
-  verdictHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 16, backgroundColor: 'rgba(245,158,11,0.08)', borderBottomWidth: 1, borderBottomColor: 'rgba(245,158,11,0.1)' },
-  verdictTitle: { fontSize: 16, fontWeight: '700', color: '#b45309' },
-  verdictBody: { padding: 18 },
-  verdictSaving: { fontSize: 18, fontWeight: '800', color: '#10b981', marginBottom: 12 },
-  divider: { height: 1, backgroundColor: 'rgba(0,0,0,0.05)', marginVertical: 12 },
-  verdictDetail: { fontSize: 13, color: 'rgba(15,23,42,0.6)', marginBottom: 4, fontWeight: '500' },
-  footerNote: { fontSize: 12, color: 'rgba(15,23,42,0.4)', textAlign: 'center', marginTop: 30, fontStyle: 'italic', lineHeight: 18 },
+  flex: { flex: 1, backgroundColor: colors.page },
+  offers: {
+    gap: space.lg,
+  },
+  offersWide: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  offerCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  offerCardWide: {
+    flex: 1,
+    minWidth: 0,
+  },
+  offerCardCheaper: {
+    borderColor: colors.primaryFill,
+  },
+  offerHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 28,
+    marginBottom: space.md,
+  },
+  offerTitle: {
+    ...type.headline,
+    color: colors.text,
+  },
+  offerDivider: {
+    marginTop: space.xs,
+    marginBottom: space.lg,
+  },
+  invalidText: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textMuted,
+  },
+  verdict: {
+    marginTop: space.xxl,
+  },
+  verdictHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  verdictText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  overline: {
+    ...type.overline,
+    color: colors.textMuted,
+  },
+  verdictTitle: {
+    ...type.headline,
+    color: colors.text,
+    marginTop: 2,
+  },
+  verdictSaving: {
+    ...type.body,
+    color: colors.textSecondary,
+    marginTop: space.md,
+  },
+  verdictSavingAmount: {
+    ...type.amountSmall,
+    color: colors.primary,
+  },
+  verdictDivider: {
+    marginVertical: space.md,
+  },
+  diffRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+    paddingVertical: space.xs + 2,
+  },
+  diffLabel: {
+    ...type.label,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  diffValue: {
+    ...type.amountSmall,
+    color: colors.text,
+    flexShrink: 0,
+  },
+  tip: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    marginTop: space.xxl,
+    paddingHorizontal: space.xs,
+  },
+  tipText: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    flex: 1,
+  },
 });

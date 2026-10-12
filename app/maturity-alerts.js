@@ -1,24 +1,37 @@
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import {
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+  Button,
+  Card,
+  colors,
+  Divider,
+  EmptyState,
+  Gap,
+  IconBadge,
+  kindColors,
+  ListRow,
+  Pill,
+  PressableScale,
+  ProgressBar,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from "../components/ui/kit";
 import {
-    calculateEMIBreakdown,
-    getBulletMaturityDate,
+  calculateEMIBreakdown,
+  getBulletMaturityDate,
+  getInstalmentDate,
+  getMonthsElapsed,
+  parseLocalDate,
+  toLocalISOString,
 } from "../utils/emiCalculator";
+import { formatINR, formatINRCompact, formatPercent } from "../utils/format";
 import { getLoans, getPayments } from "../utils/storage";
-
-const fc = (v) =>
-  `₹${parseFloat(v || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
 const fd = (date) =>
   new Date(date).toLocaleDateString("en-IN", {
@@ -27,121 +40,30 @@ const fd = (date) =>
     year: "numeric",
   });
 
+/** Urgency tone for a bullet loan; label + icon so colour is never the only signal. */
 function urgencyMeta(days) {
   if (days < 0)
-    return {
-      label: "Matured",
-      color: "#64748b",
-      bg: "rgba(100,116,139,0.1)",
-      icon: "⬜",
-      ring: "#64748b",
-    };
+    return { label: "Matured", icon: "alert-circle", text: colors.danger, soft: colors.dangerSoft, fill: colors.dangerFill };
   if (days <= 30)
-    return {
-      label: "Critical",
-      color: "#e11d48",
-      bg: "rgba(225,29,72,0.1)",
-      icon: "🔴",
-      ring: "#e11d48",
-    };
+    return { label: "Due soon", icon: "alert-circle", text: colors.danger, soft: colors.dangerSoft, fill: colors.dangerFill };
   if (days <= 90)
-    return {
-      label: "Warning",
-      color: "#f59e0b",
-      bg: "rgba(245,158,11,0.1)",
-      icon: "🟡",
-      ring: "#f59e0b",
-    };
+    return { label: "Coming up", icon: "time-outline", text: colors.warning, soft: colors.warningSoft, fill: colors.warningFill };
   if (days <= 180)
-    return {
-      label: "Upcoming",
-      color: "#38bdf8",
-      bg: "rgba(56,189,248,0.1)",
-      icon: "🔵",
-      ring: "#38bdf8",
-    };
-  return {
-    label: "Safe",
-    color: "#10b981",
-    bg: "rgba(16,185,129,0.1)",
-    icon: "🟢",
-    ring: "#10b981",
-  };
-}
-
-// Animated countdown ring (pure RN, no Animated API needed — just a styled arc approximation)
-function CountdownRing({ days, totalDays, color, size = 100 }) {
-  const pct = totalDays > 0 ? Math.max(0, Math.min(1, days / totalDays)) : 0;
-  const ringThickness = 10;
-  const r = (size - ringThickness) / 2;
-
-  // We fake the ring with two half-circle views
-  const rotateDeg = Math.round((1 - pct) * 360);
-
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      {/* Background ring */}
-      <View
-        style={{
-          position: "absolute",
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: ringThickness,
-          borderColor: "rgba(0,0,0,0.08)",
-        }}
-      />
-      {/* Progress arc — approximate with a conic-like border trick */}
-      <View
-        style={{
-          position: "absolute",
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: ringThickness,
-          borderTopColor: color,
-          borderRightColor: pct > 0.25 ? color : "transparent",
-          borderBottomColor: pct > 0.5 ? color : "transparent",
-          borderLeftColor: pct > 0.75 ? color : "transparent",
-          transform: [{ rotate: "-90deg" }],
-        }}
-      />
-      <View style={{ alignItems: "center" }}>
-        <Text
-          style={{ fontSize: days < 0 ? 12 : 22, fontWeight: "800", color }}
-        >
-          {days < 0 ? "Done" : days > 999 ? `${Math.floor(days / 30)}mo` : days}
-        </Text>
-        {days >= 0 && (
-          <Text
-            style={{ fontSize: 9, color: "rgba(15,23,42,0.4)", marginTop: -2 }}
-          >
-            days
-          </Text>
-        )}
-      </View>
-    </View>
-  );
+    return { label: "Upcoming", icon: "calendar-outline", text: colors.info, soft: colors.infoSoft, fill: colors.infoFill };
+  return { label: "On track", icon: "checkmark-circle", text: colors.primary, soft: colors.primarySoft, fill: colors.primaryFill };
 }
 
 export default function MaturityAlerts() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [bulletLoans, setBulletLoans] = useState([]);
   const [nearingEMIs, setNearingEMIs] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const [loaded, setLoaded] = useState(false);
 
   const loadData = useCallback(async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     const loans = await getLoans();
     const payments = await getPayments();
 
@@ -158,19 +80,12 @@ export default function MaturityAlerts() {
         const tenure = parseInt(String(loan.tenure).replace(/,/g, "")) || 0;
         const emiAmount = parseSafe(loan.emiAmount);
         const loanType = loan.loanType || "emi";
-        const start = new Date(loan.startDate);
 
         if (loanType === "bullet") {
           const maturity = getBulletMaturityDate(loan.startDate, tenure);
           const daysLeft = Math.ceil((maturity - today) / 86400000);
 
-          let monthsElapsed =
-            (today.getFullYear() - start.getFullYear()) * 12 +
-            (today.getMonth() - start.getMonth());
-          if (today.getDate() >= start.getDate()) {
-            monthsElapsed += 1;
-          }
-          monthsElapsed = Math.max(0, monthsElapsed);
+          const monthsElapsed = getMonthsElapsed(loan.startDate, today);
 
           const extraPayments = payments.filter((p) => p.loanId === loan.id);
           const bd = calculateEMIBreakdown(
@@ -181,6 +96,7 @@ export default function MaturityAlerts() {
             emiAmount,
             "bullet",
             extraPayments,
+            loan.startDate,
           );
 
           // Monthly savings needed to accumulate remaining amount
@@ -206,21 +122,13 @@ export default function MaturityAlerts() {
         } else {
           // EMI loans nearing end (last 3 EMIs)
           const emisDone = Math.min(
-            Math.max(
-              0,
-              (today.getFullYear() - start.getFullYear()) * 12 +
-                (today.getMonth() - start.getMonth()) +
-                (today.getDate() >= start.getDate() ? 1 : 0),
-            ),
+            getMonthsElapsed(loan.startDate, today),
             tenure,
           );
           const remaining = tenure - emisDone;
           if (remaining > 0 && remaining <= 6) {
-            const endDate = new Date(
-              start.getFullYear(),
-              start.getMonth() + tenure,
-              start.getDate(),
-            );
+            // Due date of the last EMI
+            const endDate = getInstalmentDate(loan.startDate, tenure);
             const extraPayments = payments.filter((p) => p.loanId === loan.id);
             const bd = calculateEMIBreakdown(
               principal,
@@ -230,6 +138,7 @@ export default function MaturityAlerts() {
               emiAmount,
               "emi",
               extraPayments,
+              loan.startDate,
             );
             nearEMI.push({
               loan,
@@ -248,12 +157,13 @@ export default function MaturityAlerts() {
 
     setBulletLoans(bullets);
     setNearingEMIs(nearEMI);
+    setLoaded(true);
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, []),
+    }, [loadData]),
   );
 
   const onRefresh = async () => {
@@ -262,408 +172,340 @@ export default function MaturityAlerts() {
     setRefreshing(false);
   };
 
+  // ── Navigation (same routes/params as the loan detail screen) ────────────
+  const openLoan = (loan) =>
+    router.push({
+      pathname: "/loan-detail",
+      params: {
+        id: loan.id,
+        loanName: loan.loanName,
+        principal: loan.principal,
+        interest: loan.interest,
+        emiAmount: loan.emiAmount,
+        tenure: loan.tenure,
+        startDate: loan.startDate,
+        loanType: loan.loanType || "emi",
+      },
+    });
+
+  const renewLoan = (item) =>
+    router.push({
+      pathname: "/renew-loan",
+      params: {
+        id: item.loan.id,
+        action: "renew",
+        loanName: item.loan.loanName,
+        remainingInterest: item.interest,
+        oldPrincipal: item.loan.principal,
+        oldInterestRate: item.loan.interest,
+        oldMaturity: toLocalISOString(item.maturity),
+      },
+    });
+
+  const closeLoan = (item) =>
+    router.push({
+      pathname: "/renew-loan",
+      params: {
+        id: item.loan.id,
+        action: "close",
+        loanName: item.loan.loanName,
+        remainingAmount: item.dueAmount,
+      },
+    });
+
   // Total exposure
   const totalExposure = bulletLoans.reduce((s, b) => s + b.dueAmount, 0);
   const criticalCount = bulletLoans.filter((b) => b.daysLeft <= 30).length;
 
   return (
-    <LinearGradient
-      colors={["#fff7ed", "#fef3c7", "#f8fafc"]}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingTop: Math.max(insets.top, 20) + 10 },
-        ]}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={styles.backBtn}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>⏰ Maturity Alerts</Text>
-          <Text style={styles.headerSub}>
-            Bullet loan countdowns & EMI endings
-          </Text>
+    <Screen onRefresh={onRefresh} refreshing={refreshing}>
+      <ScreenHeader
+        title="Maturity alerts"
+        subtitle="Bullet loan countdowns and EMI endings"
+        back
+      />
+
+      {!loaded ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={colors.primaryFill} />
         </View>
+      ) : bulletLoans.length === 0 && nearingEMIs.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon="checkmark-done-outline"
+            title="All clear"
+            message="No active bullet or gold loans, and no EMI loans in their last six months."
+          />
+        </Card>
+      ) : (
+        <>
+          {/* Summary */}
+          {bulletLoans.length > 0 ? (
+            <>
+              <Card>
+                <StatRow>
+                  <StatTile
+                    label="Due at maturity"
+                    value={formatINRCompact(totalExposure)}
+                    caption="all bullet loans"
+                  />
+                  <StatTile
+                    label="Bullet loans"
+                    value={String(bulletLoans.length)}
+                    caption="active"
+                  />
+                  <StatTile
+                    label="Within 30 days"
+                    value={String(criticalCount)}
+                    caption={criticalCount > 0 ? "need attention" : "none"}
+                    tone={criticalCount > 0 ? "critical" : "default"}
+                  />
+                </StatRow>
+              </Card>
+              <Gap />
 
-        {/* Total exposure banner */}
-        {bulletLoans.length > 0 && (
-          <BlurView intensity={20} tint="light" style={styles.exposureBanner}>
-            <View style={styles.exposureBannerInner}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.exposureLabel}>
-                  Total Bullet Loan Exposure
-                </Text>
-                <Text style={styles.exposureAmount}>{fc(totalExposure)}</Text>
-                <Text style={styles.exposureSub}>
-                  {bulletLoans.length} active bullet loan
-                  {bulletLoans.length !== 1 ? "s" : ""}
-                  {criticalCount > 0 ? ` · ${criticalCount} critical` : ""}
-                </Text>
-              </View>
-              {criticalCount > 0 && (
-                <View style={styles.alertBadge}>
-                  <Text style={styles.alertBadgeText}>⚠️ {criticalCount}</Text>
+              <SectionHeader title="Bullet and gold loans" count={bulletLoans.length} />
+              {bulletLoans.map((item, i) => (
+                <View key={item.loan.id} style={i > 0 ? styles.cardGap : null}>
+                  <BulletCard
+                    item={item}
+                    onOpen={() => openLoan(item.loan)}
+                    onRenew={() => renewLoan(item)}
+                    onClose={() => closeLoan(item)}
+                  />
                 </View>
-              )}
-            </View>
-          </BlurView>
-        )}
+              ))}
+              <Gap />
+            </>
+          ) : null}
 
-        {/* Bullet loan cards */}
-        {bulletLoans.length === 0 ? (
-          <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-            <Text style={styles.emptyIcon}>🎉</Text>
-            <Text style={styles.emptyText}>No bullet loans</Text>
-            <Text style={styles.emptySub}>
-              You have no active bullet / gold loans
-            </Text>
-          </BlurView>
-        ) : (
-          <>
-            <Text style={styles.sectionTitle}>Bullet / Gold Loans</Text>
-            {bulletLoans.map((item, i) => {
-              const meta = urgencyMeta(item.daysLeft);
-              return (
-                <BlurView
-                  key={item.loan.id}
-                  intensity={20}
-                  tint="light"
-                  style={[styles.card, { borderColor: meta.ring + "50" }]}
-                >
-                  <View style={styles.cardInner}>
-                    {/* Top row: ring + info */}
-                    <View style={styles.cardTop}>
-                      <CountdownRing
-                        days={item.daysLeft}
-                        totalDays={item.totalDays}
-                        color={meta.color}
-                        size={90}
+          {/* EMI loans nearing end */}
+          {nearingEMIs.length > 0 ? (
+            <>
+              <SectionHeader title="EMI loans nearing completion" count={nearingEMIs.length} />
+              <Card padded={false}>
+                {nearingEMIs.map((item, i) => (
+                  <ListRow
+                    key={item.loan.id}
+                    divider={i > 0}
+                    leading={
+                      <IconBadge
+                        name={kindColors.emi.icon}
+                        color={kindColors.emi.text}
+                        backgroundColor={kindColors.emi.soft}
                       />
-                      <View style={{ flex: 1, marginLeft: 16 }}>
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 8,
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <Text style={styles.loanName} numberOfLines={1}>
-                            {item.loan.loanName}
-                          </Text>
-                          <View
-                            style={[
-                              styles.urgencyBadge,
-                              { backgroundColor: meta.bg },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.urgencyBadgeText,
-                                { color: meta.color },
-                              ]}
-                            >
-                              {meta.icon} {meta.label}
-                            </Text>
-                          </View>
-                        </View>
-                        <Text style={styles.maturityDate}>
-                          Matures: {fd(item.maturity)}
-                        </Text>
-                        <Text style={[styles.dueAmt, { color: meta.color }]}>
-                          {fc(item.dueAmount)}
-                        </Text>
-                        <Text style={styles.dueAmtLabel}>
-                          Total Due at Maturity
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Detail grid */}
-                    <View
-                      style={[
-                        styles.detailGrid,
-                        { borderTopColor: meta.ring + "30" },
-                      ]}
-                    >
-                      <DetailTile
-                        label="Principal"
-                        value={fc(item.principal)}
-                      />
-                      <DetailTile
-                        label="Interest Due"
-                        value={fc(item.interest)}
-                        color="#f59e0b"
-                      />
-                      <DetailTile
-                        label="Months Left"
-                        value={`${item.monthsRemaining} mo`}
-                      />
-                      <DetailTile
-                        label="Save/Month"
-                        value={fc(item.monthlySavingsNeeded)}
-                        color={meta.color}
-                        bold
-                      />
-                    </View>
-
-                    {/* Savings strategy hint */}
-                    <View
-                      style={[styles.hintBox, { backgroundColor: meta.bg }]}
-                    >
-                      <Text style={[styles.hintText, { color: meta.color }]}>
-                        💡 To cover this loan at maturity, set aside{" "}
-                        <Text style={{ fontWeight: "700" }}>
-                          {fc(item.monthlySavingsNeeded)}/month
-                        </Text>{" "}
-                        for the next{" "}
-                        <Text style={{ fontWeight: "700" }}>
-                          {item.monthsRemaining} months
-                        </Text>
-                      </Text>
-                    </View>
-                  </View>
-                </BlurView>
-              );
-            })}
-          </>
-        )}
-
-        {/* EMI loans nearing end */}
-        {nearingEMIs.length > 0 && (
-          <>
-            <Text style={[styles.sectionTitle, { marginTop: 8 }]}>
-              EMI Loans Nearing Completion 🏁
-            </Text>
-            {nearingEMIs.map((item) => (
-              <BlurView
-                key={item.loan.id}
-                intensity={20}
-                tint="light"
-                style={[styles.card, { borderColor: "rgba(16,185,129,0.3)" }]}
-              >
-                <View style={styles.cardInner}>
-                  <View style={styles.cardTop}>
-                    <View style={styles.emisLeftBadge}>
-                      <Text style={styles.emisLeftNum}>{item.emisLeft}</Text>
-                      <Text style={styles.emisLeftLabel}>EMIs{"\n"}left</Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 16 }}>
-                      <Text style={styles.loanName}>{item.loan.loanName}</Text>
-                      <Text style={styles.maturityDate}>
-                        Ends: {fd(item.endDate)}
-                      </Text>
-                      <Text style={[styles.dueAmt, { color: "#10b981" }]}>
-                        {fc(item.remainingAmount)}
-                      </Text>
-                      <Text style={styles.dueAmtLabel}>
-                        Principal Remaining
-                      </Text>
-                    </View>
-                  </View>
-                  <View
-                    style={[
-                      styles.hintBox,
-                      { backgroundColor: "rgba(16,185,129,0.08)" },
-                    ]}
+                    }
+                    title={item.loan.loanName}
+                    subtitle={`Last EMI ${fd(item.endDate)} · ${formatINR(item.monthlyEMI)}/month`}
+                    value={formatINR(item.remainingAmount)}
+                    valueCaption="principal left"
+                    onPress={() => openLoan(item.loan)}
+                    accessibilityHint="Opens loan details"
                   >
-                    <Text style={[styles.hintText, { color: "#10b981" }]}>
-                      🎉 Only {item.emisLeft} EMI
-                      {item.emisLeft !== 1 ? "s" : ""} of {fc(item.monthlyEMI)}{" "}
-                      remaining — you&apos;re almost done!
-                    </Text>
-                  </View>
-                </View>
-              </BlurView>
-            ))}
-          </>
-        )}
-
-        {bulletLoans.length === 0 && nearingEMIs.length === 0 && (
-          <BlurView
-            intensity={15}
-            tint="light"
-            style={[styles.emptyCard, { marginTop: 16 }]}
-          >
-            <Text style={styles.emptyIcon}>✅</Text>
-            <Text style={styles.emptyText}>All clear!</Text>
-            <Text style={styles.emptySub}>
-              No bullet loans and no EMIs nearing completion
-            </Text>
-          </BlurView>
-        )}
-      </ScrollView>
-    </LinearGradient>
+                    <Pill
+                      label={`${item.emisLeft} EMI${item.emisLeft !== 1 ? "s" : ""} left`}
+                      icon="flag-outline"
+                      color={colors.primary}
+                      backgroundColor={colors.primarySoft}
+                    />
+                  </ListRow>
+                ))}
+              </Card>
+            </>
+          ) : null}
+        </>
+      )}
+    </Screen>
   );
 }
 
-function DetailTile({ label, value, color, bold }) {
+function BulletCard({ item, onOpen, onRenew, onClose }) {
+  const meta = urgencyMeta(item.daysLeft);
+  const matured = item.daysLeft < 0;
+  const kind = kindColors.bullet;
+
+  // Share of the term that has passed, from the start date to maturity.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = parseLocalDate(item.loan.startDate);
+  const termMs = item.maturity - start;
+  const elapsedPct = termMs > 0 ? Math.max(0, Math.min(100, ((today - start) / termMs) * 100)) : 100;
+
+  const countdownValue = matured ? "Matured" : item.daysLeft === 0 ? "Today" : String(item.daysLeft);
+  const countdownCaption = matured
+    ? `${Math.abs(item.daysLeft)} day${Math.abs(item.daysLeft) === 1 ? "" : "s"} ago`
+    : item.daysLeft === 0
+      ? "matures"
+      : `day${item.daysLeft === 1 ? "" : "s"} left`;
+
   return (
-    <View style={styles.detailTile}>
-      <Text style={styles.detailTileLabel}>{label}</Text>
-      <Text
-        style={[
-          styles.detailTileValue,
-          color && { color },
-          bold && { fontWeight: "700" },
-        ]}
+    <Card>
+      <PressableScale
+        onPress={onOpen}
+        style={styles.cardTop}
+        accessibilityLabel={`${item.loan.loanName}. ${meta.label}. Matures ${fd(item.maturity)}. ${countdownValue} ${countdownCaption}.`}
+        accessibilityHint="Opens loan details"
       >
-        {value}
-      </Text>
-    </View>
+        <IconBadge name={kind.icon} color={kind.text} backgroundColor={kind.soft} />
+        <View style={styles.cardTitleWrap}>
+          <Text style={styles.loanName} numberOfLines={1}>
+            {item.loan.loanName}
+          </Text>
+          <Text style={styles.maturityDate} numberOfLines={1}>
+            {matured ? "Matured" : "Matures"} {fd(item.maturity)}
+          </Text>
+          <Pill label={meta.label} icon={meta.icon} color={meta.text} backgroundColor={meta.soft} style={styles.pill} />
+        </View>
+        <View style={styles.countdown}>
+          <Text
+            style={[styles.countdownValue, matured && styles.countdownValueSmall, { color: matured || item.daysLeft <= 30 ? colors.danger : colors.text }]}
+            numberOfLines={1}
+          >
+            {countdownValue}
+          </Text>
+          <Text style={[styles.countdownCaption, matured && { color: colors.danger }]}>{countdownCaption}</Text>
+        </View>
+      </PressableScale>
+
+      <View style={styles.progressWrap}>
+        <ProgressBar
+          segments={[{ value: elapsedPct, color: meta.fill }]}
+          height={6}
+          accessibilityLabel={`${formatPercent(elapsedPct, 0)} of the term elapsed`}
+        />
+        <View style={styles.progressLabels}>
+          <Text style={styles.progressText}>{formatPercent(elapsedPct, 0)} of term elapsed</Text>
+          <Text style={styles.progressText}>
+            {matured ? "Term over" : `${item.monthsRemaining} month${item.monthsRemaining === 1 ? "" : "s"} left`}
+          </Text>
+        </View>
+      </View>
+
+      <Divider style={styles.divider} />
+
+      <View style={styles.figures}>
+        <View style={styles.figure}>
+          <Text style={styles.figureLabel}>Due at maturity</Text>
+          <Text style={[styles.figureValue, matured && { color: colors.danger }]} numberOfLines={1} adjustsFontSizeToFit>
+            {formatINR(item.dueAmount)}
+          </Text>
+          <Text style={styles.figureCaption} numberOfLines={1}>
+            {formatINRCompact(item.principal)} principal + {formatINRCompact(item.interest)} interest
+          </Text>
+        </View>
+        <View style={styles.figure}>
+          <Text style={styles.figureLabel}>Save each month</Text>
+          <Text style={styles.figureValue} numberOfLines={1} adjustsFontSizeToFit>
+            {formatINR(item.monthlySavingsNeeded)}
+          </Text>
+          <Text style={styles.figureCaption} numberOfLines={1}>
+            for {item.monthsRemaining} month{item.monthsRemaining === 1 ? "" : "s"}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.actions}>
+        <Button label="Renew" icon="refresh" variant="secondary" onPress={onRenew} style={styles.action} />
+        <Button label="Close loan" icon="checkmark-done" variant="secondary" onPress={onClose} style={styles.action} />
+      </View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 60 },
-
-  header: { marginBottom: 24 },
-  backBtn: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#f59e0b",
-    marginBottom: 12,
-  },
-  headerTitle: { fontSize: 30, fontWeight: "700", color: "#0f172a" },
-  headerSub: { fontSize: 13, color: "rgba(15,23,42,0.5)", marginTop: 2 },
-
-  exposureBanner: {
-    borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(245,158,11,0.3)",
-    marginBottom: 20,
-  },
-  exposureBannerInner: {
-    padding: 20,
-    flexDirection: "row",
+  loading: {
+    paddingVertical: space.xxxl * 2,
     alignItems: "center",
-    backgroundColor: "rgba(245,158,11,0.06)",
   },
-  exposureLabel: {
-    fontSize: 12,
-    color: "rgba(15,23,42,0.5)",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 4,
+  cardGap: {
+    marginTop: space.md,
   },
-  exposureAmount: { fontSize: 32, fontWeight: "700", color: "#0f172a" },
-  exposureSub: { fontSize: 12, color: "rgba(15,23,42,0.5)", marginTop: 2 },
-  alertBadge: {
-    backgroundColor: "#e11d48",
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  cardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: space.md,
   },
-  alertBadgeText: { fontSize: 14, fontWeight: "800", color: "#fff" },
-
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 12,
+  cardTitleWrap: {
+    flex: 1,
+    minWidth: 0,
   },
-
-  card: {
-    borderRadius: 28,
-    overflow: "hidden",
-    borderWidth: 1.5,
-    marginBottom: 16,
-  },
-  cardInner: { padding: 22 },
-
-  cardTop: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-
   loanName: {
-    fontSize: 18,
+    ...type.body,
     fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 4,
+    color: colors.text,
   },
-  maturityDate: { fontSize: 13, color: "rgba(15,23,42,0.5)", marginBottom: 6 },
-  dueAmt: { fontSize: 26, fontWeight: "700" },
-  dueAmtLabel: {
-    fontSize: 11,
-    color: "rgba(15,23,42,0.4)",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
+  maturityDate: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
     marginTop: 2,
   },
-
-  urgencyBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  urgencyBadgeText: { fontSize: 11, fontWeight: "700" },
-
-  detailGrid: {
+  pill: {
+    marginTop: space.sm,
+  },
+  countdown: {
+    alignItems: "flex-end",
+    maxWidth: "40%",
+  },
+  countdownValue: {
+    ...type.display,
+    fontSize: 30,
+    lineHeight: 34,
+  },
+  countdownValueSmall: {
+    ...type.amount,
+  },
+  countdownCaption: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
+  },
+  progressWrap: {
+    marginTop: space.lg,
+  },
+  progressLabels: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    borderTopWidth: 1,
-    paddingTop: 14,
-    marginBottom: 14,
-    gap: 0,
+    justifyContent: "space-between",
+    marginTop: space.xs + 2,
   },
-  detailTile: { width: "50%", paddingVertical: 6, paddingRight: 8 },
-  detailTileLabel: {
-    fontSize: 11,
-    color: "rgba(15,23,42,0.45)",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
+  progressText: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
   },
-  detailTileValue: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#0f172a",
+  divider: {
+    marginVertical: space.lg,
+  },
+  figures: {
+    flexDirection: "row",
+    gap: space.md,
+  },
+  figure: {
+    flex: 1,
+    minWidth: 0,
+  },
+  figureLabel: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
+  },
+  figureValue: {
+    ...type.amount,
+    color: colors.text,
     marginTop: 2,
   },
-
-  hintBox: { borderRadius: 14, padding: 14 },
-  hintText: { fontSize: 13, lineHeight: 19 },
-
-  emisLeftBadge: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "rgba(16,185,129,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "#10b981",
-    flexShrink: 0,
+  figureCaption: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textSecondary,
+    marginTop: 1,
   },
-  emisLeftNum: {
-    fontSize: 26,
-    fontWeight: "800",
-    color: "#10b981",
-    lineHeight: 30,
+  actions: {
+    flexDirection: "row",
+    gap: space.md,
+    marginTop: space.lg,
   },
-  emisLeftLabel: {
-    fontSize: 10,
-    color: "#10b981",
-    textAlign: "center",
-    lineHeight: 12,
+  action: {
+    flex: 1,
   },
-
-  emptyCard: {
-    borderRadius: 28,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.07)",
-    padding: 48,
-    alignItems: "center",
-    marginTop: 40,
-  },
-  emptyIcon: { fontSize: 40, marginBottom: 12 },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 6,
-  },
-  emptySub: { fontSize: 14, color: "rgba(15,23,42,0.45)", textAlign: "center" },
 });

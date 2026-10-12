@@ -1,32 +1,51 @@
+import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { parseLocalDate, toLocalISOString } from "../utils/emiCalculator";
+import {
+  Button,
+  Card,
+  Chip,
+  colors,
+  Divider,
+  Field,
+  hapticImpact,
+  IconBadge,
+  PressableScale,
+  radius,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  space,
+  type,
+} from "../components/ui/kit";
+import {
+  getBulletMaturityDate,
+  parseLocalDate,
+  toLocalISOString,
+} from "../utils/emiCalculator";
 import { addPayment, saveLoan, updateLoan } from "../utils/storage";
+
+const TENURE_PRESETS = [3, 6, 12, 24];
 
 export default function RenewLoan() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const insets = useSafeAreaInsets();
   const action = params.action; // 'renew' or 'close'
 
   // Common State
   const [paymentDate, setPaymentDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
 
   // Close State
   const closingPayment = parseFloat(params.remainingAmount || 0);
@@ -50,6 +69,7 @@ export default function RenewLoan() {
 
   const handleInputChange = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   };
 
   const onDateChange = (event, date) => {
@@ -88,6 +108,7 @@ export default function RenewLoan() {
       return;
     }
 
+    setSaving(true);
     try {
       // Log the full payment to close out the loan
       await addPayment({
@@ -95,6 +116,7 @@ export default function RenewLoan() {
         loanName: params.loanName,
         amount: closingPayment.toString(),
         date: toLocalISOString(paymentDate),
+        kind: "settlement",
       });
 
       // Mark the old loan as closed
@@ -106,6 +128,8 @@ export default function RenewLoan() {
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Failed to close the loan.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -114,20 +138,18 @@ export default function RenewLoan() {
     const i = parseFloat(formData.newInterest);
     const t = parseInt(formData.newTenure);
 
-    if (!p || p <= 0) return Alert.alert("Error", "Enter a valid principal.");
-    if (i < 0 || isNaN(i))
-      return Alert.alert("Error", "Enter a valid interest rate.");
-    if (!t || t <= 0) return Alert.alert("Error", "Enter a valid tenure.");
+    const next = {};
+    if (!p || p <= 0) next.newPrincipal = "Enter a valid principal";
+    if (i < 0 || isNaN(i)) next.newInterest = "Enter a valid interest rate";
+    if (!t || t <= 0) next.newTenure = "Enter a valid tenure";
+    setErrors(next);
+    if (Object.keys(next).length > 0) {
+      hapticImpact();
+      return;
+    }
 
+    setSaving(true);
     try {
-      // 1. Calculate the payment required on the old loan.
-      // At minimum, they must pay all outstanding interest to renew.
-      // Additionally, if they reduced the principal, they pay the difference.
-      let paymentToOldLoan = remainingInterest;
-      if (p < oldPrincipal) {
-        paymentToOldLoan += oldPrincipal - p;
-      }
-
       // We will record the payment that perfectly clears the old loan so it can be closed.
       // To keep history clean, we formally clear the total old principal + interest.
       // Actually, since emiCalculator relies on `totalExtraPaid` to calculate how much is paid,
@@ -140,6 +162,7 @@ export default function RenewLoan() {
         amount: fullSettlementAmount.toString(),
         date: toLocalISOString(paymentDate),
         note: "Automatic settlement on renewal/rollover",
+        kind: "settlement",
       });
 
       // 2. Close old loan
@@ -167,271 +190,343 @@ export default function RenewLoan() {
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Failed to renew the loan.");
+    } finally {
+      setSaving(false);
     }
   };
 
   const isRenew = action === "renew";
 
+  // What leaves your pocket on the settlement date (display only): all outstanding
+  // interest, plus any principal you are paying down by renewing for less.
+  const newP = parseFloat(formData.newPrincipal);
+  const newI = parseFloat(formData.newInterest);
+  const newT = parseInt(formData.newTenure);
+  const principalChange = Number.isFinite(newP) ? newP - oldPrincipal : 0;
+  const payToday = remainingInterest + Math.max(0, -principalChange);
+  const newTermsValid = newP > 0 && newI >= 0 && newT > 0;
+  const newTermInterest = newTermsValid ? newP * (newI / 100) * (newT / 12) : 0;
+  const newMaturity = newTermsValid
+    ? getBulletMaturityDate(formData.startDate, newT)
+    : null;
+
+  const footer = (
+    <Button
+      label={isRenew ? "Confirm renewal" : "Confirm closure"}
+      icon={isRenew ? "refresh" : "checkmark-done"}
+      onPress={isRenew ? handleRenew : handleClose}
+      loading={saving}
+    />
+  );
+
   return (
-    <LinearGradient
-      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
-      style={styles.container}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.flex}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(insets.top, 20) + 10 },
-          ]}
-        >
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Text style={styles.backButton}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>
-              {isRenew ? "Renew Loan" : "Close Loan"}
-            </Text>
-            <Text style={styles.headerSubtitle}>{params.loanName}</Text>
-          </View>
+      <Screen footer={footer}>
+        <ScreenHeader
+          back
+          title={isRenew ? "Renew loan" : "Close loan"}
+          subtitle={params.loanName}
+        />
 
-          <BlurView intensity={20} tint="light" style={styles.formCard}>
-            <View style={styles.formContent}>
-              {isRenew ? (
-                <>
-                  <Text style={styles.infoText}>
-                    You must clear your outstanding interest to renew. This will
-                    generate a new gold loan for the next term.
-                  </Text>
+        {/* What this action does */}
+        <View style={styles.modeRow}>
+          <IconBadge
+            name={isRenew ? "refresh-outline" : "lock-closed-outline"}
+            color={isRenew ? colors.warning : colors.primary}
+            backgroundColor={isRenew ? colors.warningSoft : colors.primarySoft}
+          />
+          <Text style={styles.modeText}>
+            {isRenew
+              ? "Pay the outstanding interest and roll the principal into a new gold loan for the next term."
+              : "Pay off the full principal and interest. The loan moves to your closed loans."}
+          </Text>
+        </View>
 
-                  <View style={styles.disabledBox}>
-                    <Text style={styles.label}>
-                      Outstanding Interest Paid Today
-                    </Text>
-                    <Text style={styles.disabledValue}>
-                      {formatCurrency(remainingInterest)}
-                    </Text>
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Settlement Date</Text>
-                    <TouchableOpacity
-                      style={styles.dateButton}
-                      onPress={() => setShowDatePicker(true)}
-                    >
-                      <Text style={styles.dateButtonText}>
-                        📅 {formatDisplayDate(paymentDate)}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.divider} />
-                  <Text style={styles.sectionTitle}>New Loan Details</Text>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>New Principal (₹)</Text>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.newPrincipal}
-                      onChangeText={(val) =>
-                        handleInputChange("newPrincipal", val)
-                      }
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>New Interest Rate (%)</Text>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="decimal-pad"
-                      value={formData.newInterest}
-                      onChangeText={(val) =>
-                        handleInputChange("newInterest", val)
-                      }
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>New Tenure (months)</Text>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      value={formData.newTenure}
-                      onChangeText={(val) =>
-                        handleInputChange("newTenure", val)
-                      }
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>New Loan Start Date</Text>
-                    <TouchableOpacity
-                      style={styles.dateButton}
-                      onPress={() => setShowStartDatePicker(true)}
-                    >
-                      <Text style={styles.dateButtonText}>
-                        📅 {formatDisplayDate(newStartDate)}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.infoText}>
-                    You are closing this Bullet Loan by paying off the full
-                    Principal and Interest.
-                  </Text>
-                  <View style={styles.disabledBox}>
-                    <Text style={styles.label}>Total Settlement Amount</Text>
-                    <Text style={[styles.disabledValue, { color: "#e11d48" }]}>
-                      {formatCurrency(closingPayment)}
-                    </Text>
-                  </View>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Date of Closure</Text>
-                    <TouchableOpacity
-                      style={styles.dateButton}
-                      onPress={() => setShowDatePicker(true)}
-                    >
-                      <Text style={styles.dateButtonText}>
-                        📅 {formatDisplayDate(paymentDate)}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </>
-              )}
-            </View>
-          </BlurView>
-
-          {showDatePicker && (
-            <DateTimePicker
-              value={paymentDate}
-              mode="date"
-              display={Platform.OS === "ios" ? "spinner" : "default"}
-              onChange={onDateChange}
-            />
-          )}
-
-          {showStartDatePicker && (
-            <DateTimePicker
-              value={newStartDate}
-              mode="date"
-              display={Platform.OS === "ios" ? "spinner" : "default"}
-              onChange={onNewStartDateChange}
-            />
-          )}
-
-          <TouchableOpacity
-            style={isRenew ? styles.saveButton : styles.closeButton}
-            onPress={isRenew ? handleRenew : handleClose}
+        {/* Summary of what will be paid */}
+        <Card style={styles.summaryCard}>
+          <Text style={styles.overline}>
+            {isRenew ? "You pay on settlement" : "Total settlement amount"}
+          </Text>
+          <Text
+            style={styles.summaryAmount}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            accessibilityLabel={`${isRenew ? "You pay" : "Settlement amount"} ${formatCurrency(isRenew ? payToday : closingPayment)}`}
           >
-            <BlurView intensity={25} tint="light" style={styles.saveBlur}>
-              <Text
-                style={[
-                  styles.saveButtonText,
-                  !isRenew && { color: "#ffffff" },
-                ]}
-              >
-                {isRenew ? "Confirm Renewal" : "Confirm Closure"}
+            {formatCurrency(isRenew ? payToday : closingPayment)}
+          </Text>
+
+          {isRenew ? (
+            <View style={styles.lines}>
+              <SummaryLine label="Outstanding interest" value={formatCurrency(remainingInterest)} />
+              {principalChange < 0 ? (
+                <SummaryLine label="Principal paid down" value={formatCurrency(-principalChange)} />
+              ) : null}
+              {principalChange > 0 ? (
+                <SummaryLine
+                  label="Top-up on new loan"
+                  value={`+${formatCurrency(principalChange)}`}
+                  muted
+                />
+              ) : null}
+              <SummaryLine label="Current principal" value={formatCurrency(oldPrincipal)} muted />
+            </View>
+          ) : null}
+
+          <Divider style={styles.summaryDivider} />
+          <DateRow
+            label={isRenew ? "Settlement date" : "Date of closure"}
+            value={formatDisplayDate(paymentDate)}
+            open={showDatePicker}
+            onPress={() => setShowDatePicker((v) => !v)}
+          />
+          {showDatePicker ? (
+            <View>
+              <DateTimePicker
+                value={paymentDate}
+                mode="date"
+                display={Platform.OS === "ios" ? "spinner" : "default"}
+                onChange={onDateChange}
+              />
+              {Platform.OS === "ios" ? (
+                <Button label="Done" variant="ghost" onPress={() => setShowDatePicker(false)} />
+              ) : null}
+            </View>
+          ) : null}
+        </Card>
+
+        {isRenew ? (
+          <>
+            <SectionHeader title="New loan terms" style={styles.sectionGap} />
+            <Card style={styles.formCard}>
+              <Field
+                label="New principal"
+                prefix="₹"
+                keyboardType="numeric"
+                value={formData.newPrincipal}
+                onChangeText={(val) => handleInputChange("newPrincipal", val)}
+                error={errors.newPrincipal}
+                hint="Lower it to pay down principal now"
+              />
+              <Field
+                label="Interest rate"
+                suffix="% p.a."
+                keyboardType="decimal-pad"
+                value={formData.newInterest}
+                onChangeText={(val) => handleInputChange("newInterest", val)}
+                error={errors.newInterest}
+              />
+              <Field
+                label="Tenure"
+                suffix="months"
+                keyboardType="numeric"
+                value={formData.newTenure}
+                onChangeText={(val) => handleInputChange("newTenure", val)}
+                error={errors.newTenure}
+              />
+              <View style={styles.chips}>
+                {TENURE_PRESETS.map((m) => (
+                  <Chip
+                    key={m}
+                    label={`${m} mo`}
+                    selected={String(m) === String(formData.newTenure)}
+                    onPress={() => handleInputChange("newTenure", String(m))}
+                  />
+                ))}
+              </View>
+              <DateRow
+                label="New loan start date"
+                value={formatDisplayDate(newStartDate)}
+                open={showStartDatePicker}
+                onPress={() => setShowStartDatePicker((v) => !v)}
+              />
+              {showStartDatePicker ? (
+                <View>
+                  <DateTimePicker
+                    value={newStartDate}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
+                    onChange={onNewStartDateChange}
+                  />
+                  {Platform.OS === "ios" ? (
+                    <Button
+                      label="Done"
+                      variant="ghost"
+                      onPress={() => setShowStartDatePicker(false)}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+
+              {newMaturity ? (
+                <View style={styles.previewBox}>
+                  <SummaryLine label="Interest for new term" value={formatCurrency(newTermInterest)} />
+                  <SummaryLine label="Due at maturity" value={formatCurrency(newP + newTermInterest)} />
+                  <SummaryLine label="Matures on" value={formatDisplayDate(newMaturity)} />
+                </View>
+              ) : null}
+            </Card>
+
+            <View style={styles.note}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
+              <Text style={styles.noteText}>
+                The current loan is closed with a settlement of{" "}
+                {formatCurrency(remainingInterest + oldPrincipal)} in your history, and a
+                new bullet loan is created as “{params.loanName}
+                {String(params.loanName || "").endsWith("(Renewed)") ? "" : " (Renewed)"}”.
               </Text>
-            </BlurView>
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+            </View>
+          </>
+        ) : null}
+      </Screen>
+    </KeyboardAvoidingView>
+  );
+}
+
+function SummaryLine({ label, value, muted }) {
+  return (
+    <View style={styles.line} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Text style={styles.lineLabel}>{label}</Text>
+      <Text style={[styles.lineValue, muted && styles.lineValueMuted]}>{value}</Text>
+    </View>
+  );
+}
+
+/** Field-styled row that opens a date picker. */
+function DateRow({ label, value, open, onPress }) {
+  return (
+    <View style={styles.dateField}>
+      <Text style={styles.dateLabel}>{label}</Text>
+      <PressableScale
+        onPress={onPress}
+        style={[styles.dateInput, open && styles.dateInputOpen]}
+        accessibilityLabel={`${label}: ${value}`}
+        accessibilityHint="Opens the date picker"
+        accessibilityState={{ expanded: open }}
+      >
+        <Ionicons name="calendar-outline" size={18} color={colors.textMuted} />
+        <Text style={styles.dateValue}>{value}</Text>
+        <Ionicons name={open ? "chevron-up" : "chevron-down"} size={16} color={colors.textMuted} />
+      </PressableScale>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 40 },
-  header: { marginBottom: 24 },
-  backButton: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#10b981",
-    marginBottom: 12,
-  },
-  headerTitle: { fontSize: 34, fontWeight: "700", color: "#0f172a" },
-  headerSubtitle: { fontSize: 16, color: "rgba(15, 23, 42, 0.6)" },
-  formCard: {
-    borderRadius: 30,
-    overflow: "hidden",
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.08)",
-  },
-  formContent: { padding: 24, gap: 20 },
-  infoText: { fontSize: 14, color: "rgba(15, 23, 42, 0.6)", lineHeight: 20 },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginTop: 8,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "rgba(0,0,0,0.05)",
-    marginVertical: 4,
-  },
-  disabledBox: {
-    padding: 16,
-    backgroundColor: "rgba(15,23,42,0.03)",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.05)",
-  },
-  disabledValue: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginTop: 4,
-  },
-  inputGroup: { gap: 8 },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "rgba(15, 23, 42, 0.8)",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  input: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.08)",
-    borderRadius: 16,
-    padding: 16,
-    fontSize: 16,
-    color: "#0f172a",
-  },
-  dateButton: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.08)",
-    borderRadius: 16,
-    padding: 16,
-  },
-  dateButtonText: { fontSize: 16, color: "#0f172a", fontWeight: "500" },
-  saveButton: {
-    borderRadius: 30,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(16, 185, 129, 0.3)",
-  },
-  closeButton: {
-    borderRadius: 30,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e11d48",
-    backgroundColor: "#e11d48",
-  },
-  saveBlur: {
-    padding: 18,
+  flex: { flex: 1, backgroundColor: colors.page },
+  modeRow: {
+    flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
+    gap: space.md,
   },
-  saveButtonText: { fontSize: 18, fontWeight: "700", color: "#10b981" },
+  modeText: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  summaryCard: {
+    marginTop: space.xl,
+  },
+  overline: {
+    ...type.overline,
+    color: colors.textMuted,
+  },
+  summaryAmount: {
+    ...type.display,
+    color: colors.text,
+    marginTop: space.xs,
+  },
+  lines: {
+    marginTop: space.md,
+    gap: space.sm,
+  },
+  line: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.md,
+  },
+  lineLabel: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  lineValue: {
+    ...type.amountSmall,
+    color: colors.text,
+  },
+  lineValueMuted: {
+    color: colors.textMuted,
+    fontWeight: "600",
+  },
+  summaryDivider: {
+    marginTop: space.lg,
+    marginBottom: space.lg,
+  },
+  sectionGap: {
+    marginTop: space.xxl,
+  },
+  formCard: {
+    paddingBottom: space.lg,
+  },
+  chips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.sm,
+    marginTop: -space.sm,
+    marginBottom: space.lg,
+  },
+  previewBox: {
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderStrong,
+  },
+  note: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: space.sm,
+    marginTop: space.lg,
+    paddingHorizontal: space.xs,
+  },
+  noteText: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  dateField: {
+    marginBottom: space.lg,
+  },
+  dateLabel: {
+    ...type.label,
+    color: colors.textSecondary,
+    marginBottom: space.xs + 2,
+  },
+  dateInput: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    minHeight: 50,
+    paddingHorizontal: space.md + 2,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  dateInputOpen: {
+    borderColor: colors.indigo,
+  },
+  dateValue: {
+    ...type.body,
+    color: colors.text,
+    flex: 1,
+  },
 });

@@ -1,54 +1,88 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  RefreshControl,
-  Alert,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getInsurances, deleteInsurance } from '../utils/storage';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import SidePanelDrawer from '../components/SidePanelDrawer';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Card,
+  Chip,
+  colors,
+  Divider,
+  EmptyState,
+  Gap,
+  HeaderAction,
+  IconBadge,
+  kindColors,
+  Pill,
+  PressableScale,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from '../components/ui/kit';
+import { getNextPremiumDate } from '../utils/emiCalculator';
+import { daysFromToday, formatDateShort, formatINR, formatINRCompact, formatRelativeDays } from '../utils/format';
+import { deleteInsurance, getInsurances } from '../utils/storage';
 
 // ── Sort options ──────────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
-  { id: 'nextDue',        label: '📅 Due Soon'    },
-  { id: 'premiumDesc',    label: '💰 Premium ↓'   },
-  { id: 'premiumAsc',     label: '💰 Premium ↑'   },
-  { id: 'annualDesc',     label: '📊 Annual ↓'    },
-  { id: 'annualAsc',      label: '📊 Annual ↑'    },
-  { id: 'name',           label: '🔤 Name A→Z'    },
+  { id: 'nextDue',     label: 'Due soon',       icon: 'calendar-outline' },
+  { id: 'premiumDesc', label: 'Highest premium', icon: 'arrow-down-outline' },
+  { id: 'premiumAsc',  label: 'Lowest premium',  icon: 'arrow-up-outline' },
+  { id: 'annualDesc',  label: 'Highest yearly',  icon: 'trending-up-outline' },
+  { id: 'annualAsc',   label: 'Lowest yearly',   icon: 'trending-down-outline' },
+  { id: 'name',        label: 'Name A–Z',        icon: 'text-outline' },
 ];
 
-const INS_TYPE_META = {
-  life:     { label: 'Life',     emoji: '❤️',  color: '#e11d48' },
-  health:   { label: 'Health',   emoji: '🏥',  color: '#10b981' },
-  vehicle:  { label: 'Vehicle',  emoji: '🚗',  color: '#38bdf8' },
-  property: { label: 'Property', emoji: '🏠',  color: '#f59e0b' },
-  other:    { label: 'Other',    emoji: '📋',  color: '#a78bfa' },
+const INS_TYPE_LABEL = {
+  life: 'Life',
+  health: 'Health',
+  vehicle: 'Vehicle',
+  property: 'Property',
+  other: 'Other',
+};
+
+const FREQUENCY_LABEL = {
+  monthly: 'Monthly',
+  quarterly: 'Quarterly',
+  'half-yearly': 'Half-yearly',
+  yearly: 'Yearly',
+};
+
+const frequencyLabel = (f) =>
+  FREQUENCY_LABEL[f] || (f ? f.charAt(0).toUpperCase() + f.slice(1) : 'Yearly');
+
+/** Tone for the "next premium" pill, so urgency is shown with text and colour. */
+const dueTone = (days) => {
+  if (days <= 7) return { text: colors.danger, soft: colors.dangerSoft };
+  if (days <= 30) return { text: colors.warning, soft: colors.warningSoft };
+  return { text: colors.info, soft: colors.infoSoft };
 };
 
 export default function Insurances() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [insurances, setInsurances] = useState([]);
   const [sortId, setSortId]         = useState('nextDue');
   const [refreshing, setRefreshing] = useState(false);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [loaded, setLoaded]         = useState(false);
 
-  const loadInsurances = async () => {
-    const data = await getInsurances();
-    setInsurances(data);
-  };
+  const loadInsurances = useCallback(async () => {
+    try {
+      const data = await getInsurances();
+      setInsurances(data);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
 
-  useEffect(() => { loadInsurances(); }, []);
-  useFocusEffect(React.useCallback(() => { loadInsurances(); }, []));
+  // Runs on first focus too, so no separate mount effect is needed.
+  useFocusEffect(
+    useCallback(() => {
+      loadInsurances();
+    }, [loadInsurances]),
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -74,30 +108,22 @@ export default function Insurances() {
     );
   };
 
-  const formatCurrency = (amount) =>
-    `₹${parseFloat(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-
-  const formatDate = (date) => {
-    if (!date) return 'N/A';
-    return new Date(date).toLocaleDateString('en-IN', {
-      day: 'numeric', month: 'short', year: 'numeric',
+  const openEdit = (ins) =>
+    router.push({
+      pathname: '/edit-insurance',
+      params: {
+        id: ins.id,
+        name: ins.name,
+        insuranceType: ins.insuranceType || 'life',
+        premiumAmount: ins.premiumAmount,
+        frequency: ins.frequency,
+        startDate: ins.startDate,
+      },
     });
-  };
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
-  const getNextDueDate = (ins) => {
-    if (!ins.startDate) return new Date(9999, 0);
-    const start = new Date(ins.startDate);
-    const today = new Date();
-    let step = 12;
-    if (ins.frequency === 'monthly')     step = 1;
-    if (ins.frequency === 'quarterly')   step = 3;
-    if (ins.frequency === 'half-yearly') step = 6;
-
-    let next = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-    while (next < today) next.setMonth(next.getMonth() + step);
-    return next;
-  };
+  const getNextDueDate = (ins) =>
+    getNextPremiumDate(ins.startDate, ins.frequency) || new Date(9999, 0);
 
   const getAnnualPremium = (ins) => {
     const p = parseFloat(ins.premiumAmount) || 0;
@@ -123,248 +149,269 @@ export default function Insurances() {
 
   const totalAnnual = insurances.reduce((s, i) => s + getAnnualPremium(i), 0);
 
+  // Soonest upcoming premium across all policies (independent of the chosen sort).
+  const nextUp = insurances
+    .map((ins) => ({ ins, date: getNextDueDate(ins) }))
+    .filter((x) => x.date.getFullYear() !== 9999)
+    .sort((a, b) => a.date - b.date)[0];
+  const nextUpDays = nextUp ? daysFromToday(nextUp.date) : 0;
+  const nextUpTone = dueTone(nextUpDays);
+
+  const subtitle =
+    insurances.length > 0
+      ? `${insurances.length} polic${insurances.length === 1 ? 'y' : 'ies'} · ${formatINRCompact(totalAnnual)} a year`
+      : undefined;
+
   return (
-    <LinearGradient
-      colors={['#f8fafc', '#f1f5f9', '#e2e8f0']}
-      style={styles.container}
-    >
-      <SidePanelDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setIsDrawerOpen(true)} style={{ marginRight: 10 }}>
-            <Ionicons name="menu-outline" size={24} color="#0f172a" />
-          </TouchableOpacity>
-          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={styles.headerTitle}>All Insurances</Text>
-            <TouchableOpacity onPress={() => router.push('/add-insurance')}>
-              <Text style={styles.addButton}>+ Add</Text>
-            </TouchableOpacity>
-          </View>
+    <Screen onRefresh={onRefresh} refreshing={refreshing}>
+      <ScreenHeader
+        title="Insurance"
+        subtitle={subtitle}
+        back
+        actions={
+          <HeaderAction
+            icon="add"
+            label="Add insurance policy"
+            variant="primary"
+            onPress={() => router.push('/add-insurance')}
+          />
+        }
+      />
+
+      {!loaded ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={colors.primaryFill} />
         </View>
-
-        {/* Annual Total Strip */}
-        {insurances.length > 0 && (
-          <BlurView intensity={15} tint="light" style={styles.totalStrip}>
-            <View style={styles.totalStripInner}>
-              <Text style={styles.totalStripLabel}>Total Annual Premium</Text>
-              <Text style={styles.totalStripValue}>{formatCurrency(totalAnnual)}/yr</Text>
-            </View>
-          </BlurView>
-        )}
-
-        {/* ── Sort Bar ── */}
-        {insurances.length > 0 && (
-          <BlurView intensity={18} tint="light" style={styles.sortCard}>
-            <View style={styles.sortCardInner}>
-              <Text style={styles.sortLabel}>SORT BY</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.sortRow}
-              >
-                {SORT_OPTIONS.map((opt) => (
-                  <TouchableOpacity
-                    key={opt.id}
-                    style={[styles.sortBtn, sortId === opt.id && styles.sortBtnActive]}
-                    onPress={() => setSortId(opt.id)}
-                    activeOpacity={0.75}
-                  >
-                    <Text style={[styles.sortBtnText, sortId === opt.id && styles.sortBtnTextActive]}>
-                      {opt.label}
+      ) : insurances.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon="shield-checkmark-outline"
+            title="No policies yet"
+            message="Add your life, health or vehicle policies to get reminded before each premium is due."
+            actionLabel="Add policy"
+            onAction={() => router.push('/add-insurance')}
+          />
+        </Card>
+      ) : (
+        <>
+          {/* Summary */}
+          <Card>
+            <StatRow>
+              <StatTile
+                label="Policies"
+                value={String(insurances.length)}
+                caption="active"
+              />
+              <StatTile
+                label="Yearly premium"
+                value={formatINRCompact(totalAnnual)}
+                caption={`≈ ${formatINRCompact(totalAnnual / 12)} / month`}
+              />
+            </StatRow>
+            {nextUp ? (
+              <>
+                <Divider style={styles.summaryDivider} />
+                <View
+                  style={styles.nextRow}
+                  accessible
+                  accessibilityLabel={`Next premium: ${nextUp.ins.name}, ${formatINR(nextUp.ins.premiumAmount)}, ${formatDateShort(nextUp.date)}, ${formatRelativeDays(nextUpDays)}`}
+                >
+                  <View style={styles.nextText}>
+                    <Text style={styles.nextLabel}>Next premium</Text>
+                    <Text style={styles.nextTitle} numberOfLines={1}>
+                      {nextUp.ins.name}
                     </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </BlurView>
-        )}
-
-        {/* Insurance List */}
-        {sorted.length === 0 ? (
-          <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-            <View style={styles.emptyContent}>
-              <Text style={styles.emptyText}>No insurances yet</Text>
-              <Text style={styles.emptySubtext}>Tap the + button to add your first policy</Text>
-            </View>
-          </BlurView>
-        ) : (
-          sorted.map((ins) => {
-            const nextDue   = getNextDueDate(ins);
-            const annual    = getAnnualPremium(ins);
-            const daysUntil = Math.ceil((nextDue - new Date()) / 86400000);
-            const isUrgent  = daysUntil <= 7;
-            const isWarning = daysUntil <= 30 && !isUrgent;
-            const dueBorder = isUrgent ? '#e11d48' : isWarning ? '#f59e0b' : 'rgba(0,0,0,0.08)';
-            const typeMeta  = INS_TYPE_META[ins.insuranceType] || INS_TYPE_META.other;
-
-            return (
-              <BlurView
-                key={ins.id}
-                intensity={20}
-                tint="light"
-                style={[
-                  styles.card,
-                  (isUrgent || isWarning) && { borderColor: dueBorder, borderWidth: 1.5 },
-                ]}
-              >
-                <View style={styles.cardContent}>
-                  {/* Card Header */}
-                  <View style={styles.cardHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                      <Text style={styles.name} numberOfLines={1}>{ins.name}</Text>
-                      {ins.insuranceType && (
-                        <View style={[styles.typeBadge, { backgroundColor: typeMeta.color + '18' }]}>
-                          <Text style={[styles.typeBadgeText, { color: typeMeta.color }]}>
-                            {typeMeta.emoji} {typeMeta.label}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.amount}>{formatCurrency(ins.premiumAmount)}</Text>
-                    <Text style={styles.amountLabel}>
-                      {ins.frequency.charAt(0).toUpperCase() + ins.frequency.slice(1)} Premium
+                    <Text style={styles.nextMeta} numberOfLines={1}>
+                      {formatINR(nextUp.ins.premiumAmount)} · {formatDateShort(nextUp.date)}
                     </Text>
                   </View>
-
-                  {/* Due date pill */}
-                  <View style={[styles.duePill, {
-                    backgroundColor: isUrgent
-                      ? 'rgba(225,29,72,0.09)'
-                      : isWarning
-                      ? 'rgba(245,158,11,0.09)'
-                      : 'rgba(56,189,248,0.09)',
-                  }]}>
-                    <Text style={[styles.duePillText, {
-                      color: isUrgent ? '#e11d48' : isWarning ? '#f59e0b' : '#38bdf8',
-                    }]}>
-                      {isUrgent ? '🔴' : isWarning ? '🟡' : '📅'}
-                      {'  '}Next Premium:{' '}
-                      <Text style={{ fontWeight: '700' }}>{formatDate(nextDue)}</Text>
-                      <Text style={{ opacity: 0.65 }}>
-                        {'  '}({daysUntil > 0 ? `${daysUntil}d away` : 'Today!'})
-                      </Text>
-                    </Text>
-                  </View>
-
-                  {/* Details */}
-                  <View style={styles.details}>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Frequency</Text>
-                      <Text style={styles.detailValue}>
-                        {ins.frequency.charAt(0).toUpperCase() + ins.frequency.slice(1)}
-                      </Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Annual Cost</Text>
-                      <Text style={[styles.detailValue, { color: '#2563eb' }]}>
-                        {formatCurrency(annual)}/yr
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.startDateContainer}>
-                    <Text style={styles.startDateLabel}>Base Date: {formatDate(ins.startDate)}</Text>
-                  </View>
-
-                  {/* Action Buttons */}
-                  <View style={styles.actionRow}>
-                    <TouchableOpacity
-                      style={styles.editBtn}
-                      onPress={() =>
-                        router.push({
-                          pathname: '/edit-insurance',
-                          params: {
-                            id: ins.id,
-                            name: ins.name,
-                            insuranceType: ins.insuranceType || 'life',
-                            premiumAmount: ins.premiumAmount,
-                            frequency: ins.frequency,
-                            startDate: ins.startDate,
-                          },
-                        })
-                      }
-                    >
-                      <Text style={styles.editBtnText}>✏️ Edit</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={() => handleDelete(ins.id, ins.name)}
-                    >
-                      <Text style={styles.deleteBtnText}>🗑️ Delete</Text>
-                    </TouchableOpacity>
-                  </View>
+                  <Pill
+                    label={formatRelativeDays(nextUpDays)}
+                    icon="time-outline"
+                    color={nextUpTone.text}
+                    backgroundColor={nextUpTone.soft}
+                    style={styles.nextPill}
+                  />
                 </View>
-              </BlurView>
-            );
-          })
-        )}
-      </ScrollView>
-    </LinearGradient>
+              </>
+            ) : null}
+          </Card>
+
+          <Gap />
+
+          {/* Sort */}
+          {insurances.length > 1 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.sortRow}
+              style={styles.sortScroll}
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <Chip
+                  key={opt.id}
+                  label={opt.label}
+                  icon={opt.icon}
+                  selected={sortId === opt.id}
+                  onPress={() => setSortId(opt.id)}
+                />
+              ))}
+            </ScrollView>
+          ) : null}
+
+          <SectionHeader title="Policies" count={sorted.length} />
+          <Card padded={false}>
+            {sorted.map((ins, i) => (
+              <PolicyRow
+                key={ins.id}
+                ins={ins}
+                nextDue={getNextDueDate(ins)}
+                annual={getAnnualPremium(ins)}
+                first={i === 0}
+                onPress={() => openEdit(ins)}
+                onLongPress={() => handleDelete(ins.id, ins.name)}
+              />
+            ))}
+          </Card>
+          <Text style={styles.footnote}>Tap a policy to edit it. Press and hold to delete.</Text>
+        </>
+      )}
+    </Screen>
+  );
+}
+
+function PolicyRow({ ins, nextDue, annual, first, onPress, onLongPress }) {
+  const kind = kindColors.insurance;
+  const hasDate = nextDue.getFullYear() !== 9999;
+  const days = hasDate ? daysFromToday(nextDue) : 0;
+  const tone = dueTone(days);
+  const freq = frequencyLabel(ins.frequency);
+  const typeLabel = ins.insuranceType ? INS_TYPE_LABEL[ins.insuranceType] || 'Other' : null;
+  const meta = [
+    `${freq} · ${formatINR(ins.premiumAmount)}`,
+    ins.frequency !== 'yearly' ? `${formatINRCompact(annual)}/yr` : null,
+    typeLabel,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <PressableScale
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={[styles.row, !first && styles.rowDivider]}
+      accessibilityLabel={`${ins.name}. ${meta}. ${
+        hasDate ? `Next premium ${formatDateShort(nextDue)}, ${formatRelativeDays(days)}` : 'No due date'
+      }`}
+      accessibilityHint="Opens the policy to edit. Press and hold to delete."
+    >
+      <IconBadge name={kind.icon} color={kind.text} backgroundColor={kind.soft} />
+      <View style={styles.rowBody}>
+        <Text style={styles.rowTitle} numberOfLines={1}>
+          {ins.name}
+        </Text>
+        <Text style={styles.rowMeta} numberOfLines={1}>
+          {meta}
+        </Text>
+      </View>
+      <View style={styles.rowTrail}>
+        <Text style={styles.rowDate} numberOfLines={1}>
+          {hasDate ? formatDateShort(nextDue) : '—'}
+        </Text>
+        {hasDate ? (
+          <Pill label={formatRelativeDays(days)} color={tone.text} backgroundColor={tone.soft} />
+        ) : null}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+    </PressableScale>
   );
 }
 
 const styles = StyleSheet.create({
-  container:     { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 40 },
-
-  header:         { marginBottom: 20 },
-  backButtonWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 12 },
-  backArrow:      { fontSize: 18, fontWeight: '600', color: '#10b981', lineHeight: 22 },
-  backLabel:      { fontSize: 16, fontWeight: '600', color: '#10b981', lineHeight: 22 },
-  headerTitle:    { fontSize: 34, fontWeight: '700', color: '#0f172a' },
-  addButton:      { fontSize: 18, fontWeight: '600', color: '#10b981' },
-
-  // Total strip
-  totalStrip:      { borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(37,99,235,0.2)', marginBottom: 14 },
-  totalStripInner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, backgroundColor: 'rgba(37,99,235,0.05)' },
-  totalStripLabel: { fontSize: 13, fontWeight: '600', color: 'rgba(15,23,42,0.6)' },
-  totalStripValue: { fontSize: 18, fontWeight: '700', color: '#2563eb' },
-
-  // Sort bar
-  sortCard:          { borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)', marginBottom: 18 },
-  sortCardInner:     { padding: 14 },
-  sortLabel:         { fontSize: 10, fontWeight: '700', color: 'rgba(15,23,42,0.4)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10 },
-  sortRow:           { flexDirection: 'row', gap: 8 },
-  sortBtn:           { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)', backgroundColor: '#fff' },
-  sortBtnActive:     { backgroundColor: 'rgba(37,99,235,0.1)', borderColor: '#2563eb' },
-  sortBtnText:       { fontSize: 12, fontWeight: '600', color: 'rgba(15,23,42,0.55)' },
-  sortBtnTextActive: { color: '#2563eb' },
-
-  // Cards
-  card:        { borderRadius: 30, overflow: 'hidden', marginBottom: 16, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)' },
-  cardContent: { padding: 24 },
-  cardHeader:  { marginBottom: 12 },
-  name:        { fontSize: 20, fontWeight: '700', color: '#0f172a', flex: 1 },
-  amount:      { fontSize: 32, fontWeight: '700', color: '#10b981', marginTop: 6 },
-  amountLabel: { fontSize: 11, color: 'rgba(15,23,42,0.45)', textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 2, marginBottom: 4 },
-
-  duePill:     { borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 14 },
-  duePillText: { fontSize: 13, lineHeight: 18 },
-
-  typeBadge:     { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  typeBadgeText: { fontSize: 11, fontWeight: '700' },
-
-  details:    { gap: 10, marginBottom: 16 },
-  detailRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  detailLabel:{ fontSize: 14, color: 'rgba(15,23,42,0.6)' },
-  detailValue:{ fontSize: 15, fontWeight: '600', color: '#0f172a' },
-
-  startDateContainer: { paddingTop: 14, borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.05)' },
-  startDateLabel:     { fontSize: 12, color: 'rgba(15,23,42,0.4)', marginBottom: 12 },
-
-  actionRow:     { flexDirection: 'row', gap: 10 },
-  editBtn:       { flex: 1, backgroundColor: 'rgba(37,99,235,0.08)', borderRadius: 12, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(37,99,235,0.2)' },
-  editBtnText:   { fontSize: 14, fontWeight: '600', color: '#2563eb' },
-  deleteBtn:     { flex: 1, backgroundColor: 'rgba(239,68,68,0.08)', borderRadius: 12, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)' },
-  deleteBtnText: { fontSize: 14, fontWeight: '600', color: '#ef4444' },
-
-  emptyCard:    { borderRadius: 30, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)' },
-  emptyContent: { padding: 48, alignItems: 'center' },
-  emptyText:    { fontSize: 20, fontWeight: '600', color: '#0f172a', marginBottom: 8 },
-  emptySubtext: { fontSize: 14, color: 'rgba(15,23,42,0.6)', textAlign: 'center' },
+  loading: {
+    paddingVertical: space.xxxl * 2,
+    alignItems: 'center',
+  },
+  summaryDivider: {
+    marginVertical: space.md + 2,
+  },
+  nextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  nextText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nextLabel: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textMuted,
+  },
+  nextTitle: {
+    ...type.body,
+    fontWeight: '700',
+    color: colors.text,
+    marginTop: 2,
+  },
+  nextMeta: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  nextPill: {
+    alignSelf: 'center',
+  },
+  sortScroll: {
+    marginHorizontal: -space.lg,
+    marginBottom: space.xl,
+  },
+  sortRow: {
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    minHeight: 68,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md + 2,
+  },
+  rowDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderStrong,
+  },
+  rowBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rowTitle: {
+    ...type.body,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  rowMeta: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  rowTrail: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  rowDate: {
+    ...type.amountSmall,
+    color: colors.text,
+  },
+  footnote: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: space.md,
+  },
 });

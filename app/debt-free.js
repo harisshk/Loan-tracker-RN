@@ -1,41 +1,66 @@
-import { BlurView } from "expo-blur";
+import { useFocusEffect } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
-    RefreshControl,
-    ScrollView,
     StyleSheet,
     Text,
-    TextInput,
-    TouchableOpacity,
     View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+    Button,
+    Card,
+    Chip,
+    colors,
+    Divider,
+    EmptyState,
+    Field,
+    IconBadge,
+    kindColors,
+    ListRow,
+    radius,
+    Screen,
+    ScreenHeader,
+    SectionHeader,
+    shadow,
+    space,
+    StatRow,
+    StatTile,
+    type,
+} from "../components/ui/kit";
 import {
     calculateEMIBreakdown,
     getBulletMaturityDate,
+    getInstalmentDate,
+    getMonthsElapsed,
 } from "../utils/emiCalculator";
+import { formatINR, formatINRCompact, formatMonthYear } from "../utils/format";
 import { getLoans, getPayments } from "../utils/storage";
 
-const fc = (v) =>
-  `₹${parseFloat(v || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
-const fd = (d) =>
-  new Date(d).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+const fc = (v) => formatINR(v);
 const fmo = (d) =>
   new Date(d).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
-const TODAY = new Date();
-TODAY.setHours(0, 0, 0, 0);
+/** One-tap extra monthly amounts for the simulator. */
+const QUICK_EXTRAS = [2000, 5000, 10000, 20000];
+
+const startOfToday = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+// Calendar months from `from` to `to` (0 = same month)
+const monthOffset = (from, to) =>
+  (to.getFullYear() - from.getFullYear()) * 12 +
+  (to.getMonth() - from.getMonth());
 
 // ── Core simulation engine ───────────────────────────────────────────────────
-function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
+// Month 1 is the current calendar month. Each EMI loan pays one EMI per month
+// starting from the month of its next unpaid instalment (l.firstEmiMonth).
+function simulateDebtFree(loanStates, extraMonthlyBudget = 0, asOf = startOfToday()) {
   // Deep copy
   const states = loanStates.map((l) => ({ ...l }));
   const closures = [];
@@ -44,13 +69,15 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
 
   while (states.some((l) => !l.closed) && month < MAX_MONTHS) {
     month++;
-    const date = new Date(TODAY.getFullYear(), TODAY.getMonth() + month - 1, 1);
+    const date = new Date(asOf.getFullYear(), asOf.getMonth() + month - 1, 1);
 
     // Step 1: Aging Logic
     states.forEach((l) => {
       if (l.closed) return;
 
       if (l.loanType === "emi") {
+        // This month's EMI is already paid (or the loan hasn't started yet)
+        if (month < l.firstEmiMonth) return;
         const r = l.interest / 12 / 100;
         const interestPortion = l.remainingPrincipal * r;
         const principalPortion = Math.max(0, l.emiAmount - interestPortion);
@@ -60,6 +87,7 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
         );
         l.interestPaid = (l.interestPaid || 0) + interestPortion;
         l.tenureRemaining -= 1;
+        l.emisPaid += 1;
         if (l.remainingPrincipal < 5 || l.tenureRemaining <= 0) {
           l.remainingPrincipal = 0;
           l.closed = true;
@@ -68,7 +96,10 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
             name: l.name,
             loanType: l.loanType,
             month,
-            date: new Date(date),
+            date:
+              l.emisPaid <= l.tenure
+                ? getInstalmentDate(l.startDate, l.emisPaid)
+                : new Date(date),
           });
         }
       } else if (l.loanType === "bullet") {
@@ -124,14 +155,14 @@ function simulateDebtFree(loanStates, extraMonthlyBudget = 0) {
 
   const debtFreeDate =
     month < MAX_MONTHS
-      ? new Date(TODAY.getFullYear(), TODAY.getMonth() + month - 1, 1)
+      ? new Date(asOf.getFullYear(), asOf.getMonth() + month - 1, 1)
       : null;
 
   return { closures, debtFreeMonth: month, debtFreeDate };
 }
 
 // ── Prep loan states from raw data ────────────────────────────────────────────
-function buildLoanStates(loans, payments) {
+function buildLoanStates(loans, payments, asOf = startOfToday()) {
   const parseSafe = (val) => parseFloat(String(val || "0").replace(/,/g, ""));
   return loans
     .filter((l) => l.status !== "closed")
@@ -141,15 +172,9 @@ function buildLoanStates(loans, payments) {
       const tenure = parseInt(String(loan.tenure).replace(/,/g, "")) || 0;
       const emiAmount = parseSafe(loan.emiAmount);
       const loanType = loan.loanType || "emi";
-      const start = new Date(loan.startDate);
 
-      let monthsElapsed =
-        (TODAY.getFullYear() - start.getFullYear()) * 12 +
-        (TODAY.getMonth() - start.getMonth());
-      if (TODAY.getDate() >= start.getDate()) {
-        monthsElapsed += 1;
-      }
-      monthsElapsed = Math.max(0, monthsElapsed);
+      // Same starting point as the Loans and Dashboard screens
+      const monthsElapsed = getMonthsElapsed(loan.startDate, asOf);
 
       const extraPayments = payments.filter((p) => p.loanId === loan.id);
       const bd = calculateEMIBreakdown(
@@ -160,6 +185,7 @@ function buildLoanStates(loans, payments) {
         emiAmount,
         loanType,
         extraPayments,
+        loan.startDate,
       );
 
       // For bullet loans — fixed maturity date regardless of extra payments
@@ -167,6 +193,15 @@ function buildLoanStates(loans, payments) {
       if (loanType === "bullet") {
         bulletMaturity = getBulletMaturityDate(loan.startDate, tenure);
       }
+
+      // Simulation month (1 = this month) of the next unpaid EMI
+      const firstEmiMonth =
+        monthsElapsed < tenure
+          ? Math.max(
+              1,
+              monthOffset(asOf, getInstalmentDate(loan.startDate, monthsElapsed + 1)) + 1,
+            )
+          : 1;
 
       return {
         id: loan.id,
@@ -176,147 +211,124 @@ function buildLoanStates(loans, payments) {
         emiAmount,
         remainingPrincipal: bd.remainingPrincipalAmount,
         totalInterestRemaining: bd.remainingInterestAmount,
-        tenureRemaining: Math.max(0, tenure - monthsElapsed),
+        // Bullet: months until the maturity month (closes in that month)
+        tenureRemaining:
+          loanType === "bullet"
+            ? Math.max(0, monthOffset(asOf, bulletMaturity) + 1)
+            : Math.max(0, tenure - monthsElapsed),
         closed: bd.remainingAmount <= 5,
+        startDate: loan.startDate,
+        tenure,
+        emisPaid: Math.min(monthsElapsed, tenure),
+        firstEmiMonth,
         interestPaid: 0,
         bulletMaturity, // bullet loans have a fixed date
       };
     });
 }
 
-// ── Timeline Bar ──────────────────────────────────────────────────────────────
-function TimelineItem({
-  name,
-  loanType,
-  date,
-  month,
-  isLast,
-  accentColor,
-  daysFromNow,
-  isMaturityClosure,
-}) {
+// ── Small pieces ──────────────────────────────────────────────────────────────
+
+/** Numbered marker for the payoff order list. */
+function OrderBadge({ index, loanType }) {
+  const kind = loanType === "bullet" ? kindColors.bullet : kindColors.emi;
   return (
-    <View style={tl.row}>
-      {/* Line + dot */}
-      <View style={tl.lineCol}>
-        <View style={[tl.dot, { backgroundColor: accentColor }]} />
-        {!isLast && <View style={tl.line} />}
-      </View>
-      {/* Content */}
-      <View style={[tl.content, isLast && { marginBottom: 0 }]}>
-        <View style={tl.contentTop}>
-          <Text style={tl.loanName} numberOfLines={1}>
-            {name}
-          </Text>
-          <View
-            style={[
-              tl.typePill,
-              {
-                backgroundColor:
-                  loanType === "bullet"
-                    ? "rgba(245,158,11,0.15)"
-                    : "rgba(56,189,248,0.15)",
-              },
-            ]}
-          >
-            <Text
-              style={[
-                tl.typePillText,
-                { color: loanType === "bullet" ? "#f59e0b" : "#38bdf8" },
-              ]}
-            >
-              {loanType === "bullet" ? "GOLD" : "EMI"}
-            </Text>
-          </View>
-        </View>
-        <Text style={[tl.date, { color: accentColor }]}>
-          {fmo(date)} {isMaturityClosure && "⚠️"}
-        </Text>
-        <Text style={tl.sub}>
-          {isMaturityClosure
-            ? `Fixed Maturity Payoff`
-            : daysFromNow > 0
-              ? `${Math.round(daysFromNow / 30)} months from now`
-              : "Already done"}
-        </Text>
-      </View>
+    <View
+      style={[styles.orderBadge, { backgroundColor: kind.soft }]}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+    >
+      <Text style={[styles.orderBadgeText, { color: kind.text }]}>{index}</Text>
     </View>
   );
 }
 
-const TIMELINE_COLORS = [
-  "#10b981",
-  "#38bdf8",
-  "#a78bfa",
-  "#f59e0b",
-  "#e11d48",
-  "#fb923c",
-];
+const formatDuration = (months) => {
+  const y = Math.floor(months / 12);
+  const m = months % 12;
+  if (y && m) return `${y} yr ${m} mo`;
+  if (y) return `${y} yr`;
+  return `${m} mo`;
+};
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function DebtFree() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [loanStates, setLoanStates] = useState([]);
   const [extraInput, setExtraInput] = useState("");
+  // Latest typed amount, read by loadData without making it re-fetch on every keystroke.
+  const extraRef = useRef("");
   const hasSuggested = useRef(false);
+  const [suggestedAmount, setSuggestedAmount] = useState(null);
   const [baseline, setBaseline] = useState(null);
   const [accelerated, setAccelerated] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [totalEMI, setTotalEMI] = useState(0);
   const [totalRemaining, setTotalRemaining] = useState(0);
+  const [asOf, setAsOf] = useState(startOfToday);
 
   const loadData = useCallback(async () => {
-    const loans = await getLoans();
-    const payments = await getPayments();
-    const states = buildLoanStates(loans, payments);
+    try {
+      const loans = await getLoans();
+      const payments = await getPayments();
+      const today = startOfToday();
+      const states = buildLoanStates(loans, payments, today);
 
-    setLoanStates(states);
-    setTotalEMI(
-      states
-        .filter((l) => l.loanType === "emi")
-        .reduce((s, l) => s + l.emiAmount, 0),
-    );
-    setTotalRemaining(states.reduce((s, l) => s + l.remainingPrincipal, 0));
-
-    const base = simulateDebtFree(
-      states.map((l) => ({ ...l })),
-      0,
-    );
-    setBaseline(base);
-
-    // Smart suggestion for Gold loans
-    if (!hasSuggested.current && states.some((l) => l.loanType === "bullet")) {
-      const gold = states.find((l) => l.loanType === "bullet");
-      // Suggest closing in roughly half the remaining time or at least 10k
-      const suggested = Math.max(
-        1000,
-        Math.ceil(
-          gold.remainingPrincipal / Math.max(1, gold.tenureRemaining / 2),
-        ),
+      setAsOf(today);
+      setLoanStates(states);
+      setTotalEMI(
+        states
+          .filter((l) => l.loanType === "emi")
+          .reduce((s, l) => s + l.emiAmount, 0),
       );
-      setExtraInput(String(suggested));
-      setAccelerated(
-        simulateDebtFree(
-          states.map((l) => ({ ...l })),
-          suggested,
-        ),
+      setTotalRemaining(states.reduce((s, l) => s + l.remainingPrincipal, 0));
+
+      const base = simulateDebtFree(
+        states.map((l) => ({ ...l })),
+        0,
+        today,
       );
-      hasSuggested.current = true;
-    } else {
-      const extra = parseFloat(extraInput) || 0;
-      if (extra > 0) {
+      setBaseline(base);
+
+      // Smart suggestion for Gold loans
+      if (!hasSuggested.current && states.some((l) => l.loanType === "bullet")) {
+        const gold = states.find((l) => l.loanType === "bullet");
+        // Suggest closing in roughly half the remaining time or at least 10k
+        const suggested = Math.max(
+          1000,
+          Math.ceil(
+            gold.remainingPrincipal / Math.max(1, gold.tenureRemaining / 2),
+          ),
+        );
+        setExtraInput(String(suggested));
+        extraRef.current = String(suggested);
+        setSuggestedAmount(suggested);
         setAccelerated(
           simulateDebtFree(
             states.map((l) => ({ ...l })),
-            extra,
+            suggested,
+            today,
           ),
         );
+        hasSuggested.current = true;
       } else {
-        setAccelerated(null);
+        const extra = parseFloat(extraRef.current) || 0;
+        if (extra > 0) {
+          setAccelerated(
+            simulateDebtFree(
+              states.map((l) => ({ ...l })),
+              extra,
+              today,
+            ),
+          );
+        } else {
+          setAccelerated(null);
+        }
       }
+    } finally {
+      setLoaded(true);
     }
-  }, [extraInput]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -331,21 +343,32 @@ export default function DebtFree() {
   };
 
   const handleExtraChange = (val) => {
-    setExtraInput(val.replace(/[^0-9]/g, ""));
+    const clean = val.replace(/[^0-9]/g, "");
+    extraRef.current = clean;
+    setExtraInput(clean);
+    applyExtra(clean);
   };
 
-  const applyExtra = () => {
-    const extra = parseFloat(extraInput) || 0;
+  const applyExtra = (raw = extraInput) => {
+    const extra = parseFloat(raw) || 0;
     if (extra > 0 && loanStates.length > 0) {
       setAccelerated(
         simulateDebtFree(
           loanStates.map((l) => ({ ...l })),
           extra,
+          asOf,
         ),
       );
     } else {
       setAccelerated(null);
     }
+  };
+
+  const pickExtra = (amount) => {
+    const v = String(amount);
+    extraRef.current = v;
+    setExtraInput(v);
+    applyExtra(v);
   };
 
   // Derived
@@ -358,7 +381,8 @@ export default function DebtFree() {
       : 0;
   const extraAmt = parseFloat(extraInput) || 0;
 
-  const daysToFree = baseDate ? Math.ceil((baseDate - TODAY) / 86400000) : null;
+  const daysToFree = baseDate ? Math.ceil((baseDate - asOf) / 86400000) : null;
+  const baseMonths = Math.round(baseline?.debtFreeMonth || 0);
 
   // Merge + sort closures for timeline
   const timelineItems =
@@ -366,502 +390,328 @@ export default function DebtFree() {
       ?.slice()
       .sort((a, b) => a.month - b.month) || [];
 
+  const quickExtras =
+    suggestedAmount && !QUICK_EXTRAS.includes(suggestedAmount)
+      ? [suggestedAmount, ...QUICK_EXTRAS]
+      : QUICK_EXTRAS;
+
   return (
-    <LinearGradient
-      colors={["#f0f9ff", "#f8fafc", "#e2e8f0"]}
-      style={styles.container}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={styles.flex}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
-      >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(insets.top, 20) + 10 },
-          ]}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Text style={styles.backBtn}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>🏁 Debt-Free Date</Text>
-            <Text style={styles.headerSub}>Your path to zero debt</Text>
+      <Screen onRefresh={onRefresh} refreshing={refreshing}>
+        <ScreenHeader
+          back
+          title="Debt-free planner"
+          subtitle="When you'll clear every loan, and how to get there sooner"
+        />
+
+        {!loaded ? (
+          <View style={styles.loading}>
+            <ActivityIndicator size="large" color={colors.primaryFill} />
           </View>
-
-          {noLoans ? (
-            <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>🎉</Text>
-              <Text style={styles.emptyText}>
-                You&apos;re already debt-free!
-              </Text>
-              <Text style={styles.emptySub}>No active loans found</Text>
-            </BlurView>
-          ) : (
-            <>
-              {/* Hero: Debt-Free Date */}
-              <BlurView intensity={20} tint="light" style={styles.heroCard}>
-                <View style={styles.heroInner}>
-                  <Text style={styles.heroLabel}>
-                    {accelerated
-                      ? "🚀  With Extra Payments"
-                      : "📅  At Current Pace"}
+        ) : noLoans ? (
+          <Card>
+            <EmptyState
+              icon="flag-outline"
+              title="You're already debt-free"
+              message="No active loans found. Add a loan to plan its payoff."
+            />
+          </Card>
+        ) : (
+          <>
+            {/* Hero: debt-free date at the current pace */}
+            <View style={styles.heroCard}>
+              <LinearGradient
+                colors={colors.heroGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.hero}
+              >
+                <Text style={styles.heroOverline}>Debt-free by · current pace</Text>
+                <Text
+                  style={styles.heroValue}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {baseDate ? fmo(baseDate) : "N/A"}
+                </Text>
+                {daysToFree != null ? (
+                  <Text style={styles.heroSub}>
+                    {baseMonths} months to go · {formatDuration(baseMonths)}
                   </Text>
-                  <Text style={styles.heroDate}>
-                    {(accelerated ? accDate : baseDate)
-                      ? fmo(accelerated ? accDate : baseDate)
-                      : "N/A"}
-                  </Text>
-                  <Text style={styles.heroDays}>
-                    {daysToFree != null
-                      ? `${Math.round(accelerated ? accelerated.debtFreeMonth : baseline?.debtFreeMonth || 0)} months · ${Math.round(((accelerated ? accelerated.debtFreeMonth : baseline?.debtFreeMonth || 0) / 12) * 10) / 10} years`
-                      : ""}
-                  </Text>
+                ) : null}
 
-                  {/* Comparison row */}
-                  {accelerated && monthsSaved > 0 && (
-                    <View style={styles.savedRow}>
-                      <View style={styles.savedBadge}>
-                        <Text style={styles.savedBadgeText}>
-                          🎉 {monthsSaved} months earlier than current pace!
-                        </Text>
-                      </View>
-                      <View style={styles.compRow}>
-                        <View style={styles.compItem}>
-                          <Text style={styles.compLabel}>Without extra</Text>
-                          <Text style={styles.compDate}>
-                            {baseDate ? fmo(baseDate) : "—"}
-                          </Text>
-                        </View>
-                        <Text style={styles.compArrow}>→</Text>
-                        <View style={styles.compItem}>
-                          <Text style={styles.compLabel}>
-                            With ₹{fc(extraAmt)}/mo
-                          </Text>
-                          <Text style={[styles.compDate, { color: "#10b981" }]}>
-                            {accDate ? fmo(accDate) : "—"}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              </BlurView>
-
-              {/* Summary tiles */}
-              <View style={styles.tilesRow}>
-                <BlurView intensity={20} tint="light" style={styles.tile}>
-                  <View style={styles.tileInner}>
-                    <Text style={styles.tileIcon}>💸</Text>
-                    <Text style={styles.tileLabel}>Total Remaining</Text>
-                    <Text style={[styles.tileValue, { color: "#e11d48" }]}>
+                <View style={styles.heroStats}>
+                  <View
+                    style={styles.heroStat}
+                    accessible
+                    accessibilityLabel={`Principal left: ${fc(totalRemaining)}`}
+                  >
+                    <Text style={styles.heroStatLabel}>Principal left</Text>
+                    <Text
+                      style={styles.heroStatValue}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
                       {fc(totalRemaining)}
                     </Text>
                   </View>
-                </BlurView>
-                <BlurView intensity={20} tint="light" style={styles.tile}>
-                  <View style={styles.tileInner}>
-                    <Text style={styles.tileIcon}>📅</Text>
-                    <Text style={styles.tileLabel}>Monthly EMIs</Text>
-                    <Text style={[styles.tileValue, { color: "#38bdf8" }]}>
+                  <View style={styles.heroStatDivider} />
+                  <View
+                    style={styles.heroStat}
+                    accessible
+                    accessibilityLabel={`Monthly EMIs: ${fc(totalEMI)} per month`}
+                  >
+                    <Text style={styles.heroStatLabel}>Monthly EMIs</Text>
+                    <Text
+                      style={styles.heroStatValue}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
                       {fc(totalEMI)}/mo
                     </Text>
                   </View>
-                </BlurView>
+                </View>
+              </LinearGradient>
+            </View>
+
+            {/* Extra payment simulator */}
+            <SectionHeader title="Pay extra each month" style={styles.sectionGap} />
+            <Card>
+              <Field
+                label="Extra amount per month"
+                prefix="₹"
+                value={extraInput}
+                onChangeText={handleExtraChange}
+                placeholder="e.g. 10000"
+                keyboardType="numeric"
+                hint={
+                  suggestedAmount && extraAmt > 0 && extraInput === String(suggestedAmount)
+                    ? "Suggested to clear your gold loan early. Adjust as you like."
+                    : "Extra goes to your highest-rate loan first."
+                }
+              />
+              <View style={styles.chips}>
+                {quickExtras.map((amt) => (
+                  <Chip
+                    key={amt}
+                    label={
+                      amt === suggestedAmount
+                        ? `Suggested ${formatINRCompact(amt)}`
+                        : `+${formatINRCompact(amt)}`
+                    }
+                    icon={amt === suggestedAmount ? "sparkles-outline" : undefined}
+                    selected={extraInput === String(amt)}
+                    onPress={() => pickExtra(amt)}
+                  />
+                ))}
               </View>
+              <Button
+                label="Update"
+                variant="secondary"
+                icon="refresh"
+                onPress={() => applyExtra()}
+                style={styles.updateBtn}
+              />
 
-              {/* Extra payment simulator */}
-              <BlurView
-                intensity={20}
-                tint="light"
-                style={[styles.simCard, extraAmt > 0 && styles.simCardActive]}
-              >
-                <View style={styles.simInner}>
-                  <Text style={styles.simTitle}>
-                    ⚡{" "}
-                    {extraAmt > 0
-                      ? "Shredding Mode Active!"
-                      : "Accelerate! Pay Extra Each Month"}
+              {accelerated ? (
+                <>
+                  <Divider style={styles.resultDivider} />
+                  <Text style={styles.resultTitle}>
+                    With {fc(extraAmt)}/mo extra
                   </Text>
-                  <Text style={styles.simSub}>
-                    {hasSuggested.current &&
-                    extraAmt > 0 &&
-                    !extraInput.includes("manual")
-                      ? "💡 Suggested an amount to clear your Gold loan early. Adjust as you like!"
-                      : "Enter an extra monthly amount to see how much sooner you'll be free"}
-                  </Text>
-                  <View style={styles.simInputRow}>
-                    <View style={styles.simInputWrap}>
-                      <Text style={styles.simPrefix}>₹</Text>
-                      <TextInput
-                        style={styles.simInput}
-                        value={extraInput}
-                        onChangeText={handleExtraChange}
-                        placeholder="e.g. 10000"
-                        placeholderTextColor="rgba(15,23,42,0.3)"
-                        keyboardType="numeric"
+                  <StatRow>
+                    <StatTile
+                      label="New date"
+                      value={accDate ? formatMonthYear(accDate) : "N/A"}
+                      caption={baseDate ? `was ${formatMonthYear(baseDate)}` : undefined}
+                      tone={monthsSaved > 0 ? "positive" : "default"}
+                    />
+                    <StatTile
+                      label="Months saved"
+                      value={String(monthsSaved)}
+                      caption={monthsSaved > 0 ? "earlier" : "same month"}
+                      tone={monthsSaved > 0 ? "positive" : "default"}
+                    />
+                    <StatTile
+                      label="Finish in"
+                      value={formatDuration(Math.round(accelerated.debtFreeMonth))}
+                      caption={`${Math.round(accelerated.debtFreeMonth)} months`}
+                    />
+                  </StatRow>
+                </>
+              ) : null}
+            </Card>
+
+            {/* Payoff order */}
+            {timelineItems.length > 0 ? (
+              <>
+                <SectionHeader title="Payoff order" style={styles.sectionGap} />
+                <Text style={styles.sectionNote}>
+                  {accelerated
+                    ? "With your extra payments applied"
+                    : "At your current payment pace"}
+                </Text>
+                <Card padded={false}>
+                  {timelineItems.map((item, i) => {
+                    const monthsAway =
+                      (item.date.getFullYear() - asOf.getFullYear()) * 12 +
+                      (item.date.getMonth() - asOf.getMonth());
+                    const status = item.isMaturityClosure
+                      ? "Fixed maturity payoff"
+                      : monthsAway <= 0
+                        ? "Cleared this month"
+                        : monthsAway === 1
+                          ? "Next month"
+                          : `${monthsAway} months from now`;
+                    const typeLabel = item.loanType === "bullet" ? "Gold / bullet" : "EMI";
+                    return (
+                      <ListRow
+                        key={item.id}
+                        divider={i > 0}
+                        leading={<OrderBadge index={i + 1} loanType={item.loanType} />}
+                        title={item.name || "Loan"}
+                        subtitle={`${typeLabel} · ${status}`}
+                        value={formatMonthYear(item.date)}
+                        valueColor={item.isMaturityClosure ? colors.warning : undefined}
+                        accessibilityLabel={`${i + 1}. ${item.name || "Loan"}, ${typeLabel}, closes ${fmo(item.date)}, ${status}`}
                       />
-                    </View>
-                    <TouchableOpacity
-                      style={styles.simBtn}
-                      onPress={applyExtra}
-                      activeOpacity={0.8}
-                    >
-                      <LinearGradient
-                        colors={["#10b981", "#059669"]}
-                        style={styles.simBtnGrad}
-                      >
-                        <Text style={styles.simBtnText}>Update</Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </BlurView>
+                    );
+                  })}
+                </Card>
+              </>
+            ) : null}
 
-              {/* Payoff timeline */}
-              {timelineItems.length > 0 && (
-                <BlurView
-                  intensity={20}
-                  tint="light"
-                  style={styles.timelineCard}
-                >
-                  <View style={styles.timelineInner}>
-                    <Text style={styles.timelineTitle}>Payoff Timeline</Text>
-                    <Text style={styles.timelineSub}>
-                      {accelerated
-                        ? "With your extra payments applied"
-                        : "At your current payment pace"}
-                    </Text>
-                    <View style={{ marginTop: 16 }}>
-                      {timelineItems.map((item, i) => (
-                        <TimelineItem
-                          key={item.id}
-                          name={item.name}
-                          loanType={item.loanType}
-                          date={item.date}
-                          month={item.month}
-                          isLast={i === timelineItems.length - 1}
-                          accentColor={
-                            TIMELINE_COLORS[i % TIMELINE_COLORS.length]
-                          }
-                          daysFromNow={Math.ceil(
-                            (item.date - TODAY) / 86400000,
-                          )}
-                          isMaturityClosure={item.isMaturityClosure}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                </BlurView>
-              )}
-
-              {/* Per-loan remaining table */}
-              <BlurView intensity={20} tint="light" style={styles.tableCard}>
-                <View style={styles.tableInner}>
-                  <Text style={styles.tableTitle}>Current Snapshot</Text>
-                  {loanStates.map((l, i) => (
-                    <View
-                      key={l.id}
-                      style={[
-                        styles.tableRow,
-                        i === loanStates.length - 1 && { borderBottomWidth: 0 },
-                      ]}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.tableLoanName} numberOfLines={1}>
-                          {l.name}
-                        </Text>
-                        <View
-                          style={[
-                            styles.typeChip,
-                            {
-                              backgroundColor:
-                                l.loanType === "bullet"
-                                  ? "rgba(245,158,11,0.12)"
-                                  : "rgba(56,189,248,0.12)",
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.typeChipText,
-                              {
-                                color:
-                                  l.loanType === "bullet"
-                                    ? "#f59e0b"
-                                    : "#38bdf8",
-                              },
-                            ]}
-                          >
-                            {l.loanType === "bullet"
-                              ? "GOLD/BULLET"
-                              : `EMI ${fc(l.emiAmount)}/mo`}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={{ alignItems: "flex-end" }}>
-                        <Text style={styles.tableAmt}>
-                          {fc(l.remainingPrincipal)}
-                        </Text>
-                        <Text style={styles.tableRate}>{l.interest}% p.a.</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </BlurView>
-            </>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+            {/* Per-loan snapshot */}
+            <SectionHeader title="Your loans" count={loanStates.length} style={styles.sectionGap} />
+            <Card padded={false}>
+              {loanStates.map((l, i) => {
+                const kind = l.loanType === "bullet" ? kindColors.bullet : kindColors.emi;
+                return (
+                  <ListRow
+                    key={l.id}
+                    divider={i > 0}
+                    leading={
+                      <IconBadge name={kind.icon} color={kind.text} backgroundColor={kind.soft} />
+                    }
+                    title={l.name || "Loan"}
+                    subtitle={
+                      l.loanType === "bullet"
+                        ? `Gold / bullet · ${l.interest}% p.a.`
+                        : `EMI ${fc(l.emiAmount)}/mo · ${l.interest}% p.a.`
+                    }
+                    value={fc(l.remainingPrincipal)}
+                    valueCaption="left"
+                  />
+                );
+              })}
+            </Card>
+          </>
+        )}
+      </Screen>
+    </KeyboardAvoidingView>
   );
 }
 
-// ── Timeline styles ───────────────────────────────────────────────────────────
-const tl = StyleSheet.create({
-  row: { flexDirection: "row", marginBottom: 0 },
-  lineCol: { width: 24, alignItems: "center" },
-  dot: { width: 14, height: 14, borderRadius: 7, marginTop: 4, zIndex: 1 },
-  line: {
-    flex: 1,
-    width: 2,
-    backgroundColor: "rgba(0,0,0,0.08)",
-    marginTop: 2,
-    marginBottom: 0,
-    minHeight: 36,
-  },
-  content: { flex: 1, paddingLeft: 12, paddingBottom: 20 },
-  contentTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 2,
-  },
-  loanName: { fontSize: 15, fontWeight: "700", color: "#0f172a", flex: 1 },
-  typePill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
-  typePillText: { fontSize: 9, fontWeight: "700" },
-  date: { fontSize: 16, fontWeight: "700", marginBottom: 2 },
-  sub: { fontSize: 12, color: "rgba(15,23,42,0.4)" },
-});
-
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 60 },
-
-  header: { marginBottom: 24 },
-  backBtn: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#38bdf8",
-    marginBottom: 12,
+  flex: { flex: 1, backgroundColor: colors.page },
+  loading: {
+    paddingVertical: space.xxxl * 2,
+    alignItems: "center",
   },
-  headerTitle: { fontSize: 30, fontWeight: "700", color: "#0f172a" },
-  headerSub: { fontSize: 13, color: "rgba(15,23,42,0.5)", marginTop: 2 },
-
-  // Hero card
   heroCard: {
-    borderRadius: 28,
+    borderRadius: radius.xl,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(16,185,129,0.3)",
-    marginBottom: 16,
+    ...shadow.hero,
   },
-  heroInner: { padding: 24, backgroundColor: "rgba(16,185,129,0.04)" },
-  heroLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "rgba(15,23,42,0.5)",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 8,
+  hero: {
+    paddingHorizontal: space.xl,
+    paddingTop: space.lg + 2,
+    paddingBottom: space.lg,
   },
-  heroDate: {
-    fontSize: 36,
-    fontWeight: "800",
-    color: "#0f172a",
-    marginBottom: 4,
+  heroOverline: {
+    ...type.overline,
+    color: colors.heroTextSecondary,
   },
-  heroDays: { fontSize: 14, color: "rgba(15,23,42,0.5)" },
-
-  savedRow: { marginTop: 16, gap: 12 },
-  savedBadge: {
-    backgroundColor: "rgba(16,185,129,0.12)",
-    borderRadius: 14,
-    padding: 12,
+  heroValue: {
+    ...type.display,
+    color: colors.heroText,
+    marginTop: space.sm,
   },
-  savedBadgeText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#10b981",
-    textAlign: "center",
+  heroSub: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.heroTextSecondary,
+    marginTop: space.xs,
   },
-  compRow: {
+  heroStats: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    alignItems: "stretch",
+    marginTop: space.lg,
+    paddingTop: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.heroDivider,
   },
-  compItem: { flex: 1 },
-  compLabel: {
-    fontSize: 11,
-    color: "rgba(15,23,42,0.45)",
-    marginBottom: 4,
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  compDate: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
-  compArrow: {
-    fontSize: 22,
-    color: "rgba(15,23,42,0.25)",
-    paddingHorizontal: 8,
-  },
-
-  // Tiles
-  tilesRow: { flexDirection: "row", gap: 12, marginBottom: 16 },
-  tile: {
+  heroStat: {
     flex: 1,
-    borderRadius: 22,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.07)",
+    minWidth: 0,
   },
-  tileInner: { padding: 18, alignItems: "center" },
-  tileIcon: { fontSize: 20, marginBottom: 4 },
-  tileLabel: {
-    fontSize: 11,
-    color: "rgba(15,23,42,0.45)",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
+  heroStatDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: colors.heroDivider,
+    marginHorizontal: space.md,
   },
-  tileValue: { fontSize: 18, fontWeight: "700", marginTop: 4 },
-
-  // Simulator
-  simCard: {
-    borderRadius: 28,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(16,185,129,0.2)",
-    marginBottom: 24,
-    backgroundColor: "rgba(255,255,255,0.4)",
+  heroStatLabel: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.heroTextMuted,
   },
-  simCardActive: {
-    borderColor: "#10b981",
-    backgroundColor: "rgba(16,185,129,0.05)",
+  heroStatValue: {
+    ...type.amount,
+    color: colors.heroText,
+    marginTop: 2,
   },
-  simInner: { padding: 20 },
-  simTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 4,
+  sectionGap: {
+    marginTop: space.xxl,
   },
-  simSub: {
-    fontSize: 13,
-    color: "rgba(15,23,42,0.5)",
-    marginBottom: 16,
-    lineHeight: 18,
+  sectionNote: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textSecondary,
+    marginTop: -space.sm,
+    marginBottom: space.md,
   },
-  simInputRow: { flexDirection: "row", gap: 10, alignItems: "center" },
-  simInputWrap: {
-    flex: 1,
+  chips: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.sm,
+    marginTop: -space.xs,
+  },
+  updateBtn: {
+    marginTop: space.lg,
+  },
+  resultDivider: {
+    marginVertical: space.lg,
+  },
+  resultTitle: {
+    ...type.label,
+    color: colors.textSecondary,
+    marginBottom: space.md,
+  },
+  orderBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
-    paddingHorizontal: 12,
+    justifyContent: "center",
   },
-  simPrefix: { fontSize: 16, color: "rgba(15,23,42,0.4)", marginRight: 4 },
-  simInput: { flex: 1, height: 50, fontSize: 16, color: "#0f172a" },
-  simBtn: { borderRadius: 16, overflow: "hidden" },
-  simBtnGrad: { paddingHorizontal: 18, paddingVertical: 14 },
-  simBtnText: { fontSize: 14, fontWeight: "700", color: "#fff" },
-  interestSavedRow: {
-    marginTop: 14,
-    backgroundColor: "rgba(16,185,129,0.08)",
-    borderRadius: 14,
-    padding: 14,
+  orderBadgeText: {
+    ...type.headline,
+    fontVariant: ["tabular-nums"],
   },
-  interestSavedText: { fontSize: 13, color: "#0f172a", lineHeight: 19 },
-
-  // Timeline
-  timelineCard: {
-    borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-    marginBottom: 16,
-  },
-  timelineInner: { padding: 22 },
-  timelineTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 2,
-  },
-  timelineSub: { fontSize: 12, color: "rgba(15,23,42,0.45)", marginBottom: 4 },
-
-  // Table
-  tableCard: {
-    borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-    marginBottom: 16,
-  },
-  tableInner: { padding: 20 },
-  tableTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 16,
-  },
-  tableRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.05)",
-    gap: 8,
-  },
-  tableLoanName: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 4,
-  },
-  typeChip: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  typeChipText: { fontSize: 10, fontWeight: "700" },
-  tableAmt: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
-  tableRate: { fontSize: 12, color: "rgba(15,23,42,0.45)", marginTop: 2 },
-
-  // Empty
-  emptyCard: {
-    borderRadius: 28,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.07)",
-    padding: 48,
-    alignItems: "center",
-    marginTop: 40,
-  },
-  emptyIcon: { fontSize: 40, marginBottom: 12 },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 6,
-  },
-  emptySub: { fontSize: 14, color: "rgba(15,23,42,0.45)", textAlign: "center" },
 });

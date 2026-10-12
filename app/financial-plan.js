@@ -1,36 +1,66 @@
+import { Ionicons } from '@expo/vector-icons';
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
+import {
+  Button,
+  Card,
+  Chip,
+  colors,
+  Divider,
+  EmptyState,
+  Field,
+  HeaderAction,
+  IconBadge,
+  kindColors,
+  Pill,
+  PressableScale,
+  ProgressBar,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from '../components/ui/kit';
 import { getLoans, getInsurances, getPayments, getFinancialPlanSettings, saveFinancialPlanSettings } from '../utils/storage';
 import { generateFinancialPlan } from '../utils/financialPlanner';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { formatINR } from '../utils/format';
 
 const PLAN_SETTINGS_KEY = '@financial_plan_settings';
 
 const STATUS_META = {
-  comfortable: { color: '#10b981', bg: 'rgba(16,185,129,0.12)', label: 'Comfortable', icon: '✅' },
-  tight:       { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  label: 'Tight',       icon: '💛' },
-  critical:    { color: '#e11d48', bg: 'rgba(225,29,72,0.12)',   label: 'Critical',    icon: '⚠️' },
+  comfortable: { text: colors.primary, soft: colors.primarySoft, label: 'Comfortable', icon: 'checkmark-circle-outline' },
+  tight:       { text: colors.warning, soft: colors.warningSoft, label: 'Tight',       icon: 'alert-circle-outline' },
+  critical:    { text: colors.danger,  soft: colors.dangerSoft,  label: 'Critical',    icon: 'warning-outline' },
 };
 
-const fc = (v) =>
-  `₹${parseFloat(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const DURATIONS = [6, 12, 18, 24, 36];
+
+const fc = (v) => formatINR(v);
+
+/** Planner notes may start with an emoji; the icon next to them already carries that meaning. */
+const cleanNote = (n) => String(n).replace(/^[^A-Za-z0-9₹]+/, '');
+
+// Emergency runway tone: 6+ months strong, under 2 vulnerable, otherwise stable.
+const runwayMeta = (runway) =>
+  runway >= 6
+    ? { label: 'Strong', text: colors.primary, soft: colors.primarySoft, fill: colors.primaryFill, icon: 'shield-checkmark-outline' }
+    : runway < 2
+      ? { label: 'Vulnerable', text: colors.danger, soft: colors.dangerSoft, fill: colors.dangerFill, icon: 'warning-outline' }
+      : { label: 'Stable', text: colors.warning, soft: colors.warningSoft, fill: colors.warningFill, icon: 'shield-half-outline' };
 
 // ── Setup Form ────────────────────────────────────────────────────────────────
-function SetupForm({ initial, insuranceMonthly, onSubmit }) {
+function SetupForm({ initial, insuranceMonthly, onSubmit, header }) {
   const [salary, setSalary]         = useState(initial?.salary     || '');
   const [rent, setRent]             = useState(initial?.rent       || '');
   const [expenses, setExpenses]     = useState(initial?.expenses   || '');
@@ -41,6 +71,7 @@ function SetupForm({ initial, insuranceMonthly, onSubmit }) {
   const [evMonth, setEvMonth]  = useState('');
   const [evSalary, setEvSalary] = useState('');
   const [evRent, setEvRent]   = useState('');
+  const [errors, setErrors] = useState({});
 
   const addEvent = () => {
     const mo = parseInt(evMonth);
@@ -56,126 +87,200 @@ function SetupForm({ initial, insuranceMonthly, onSubmit }) {
     setShowAddEvent(false);
   };
 
+  // Update a field and clear its inline error.
+  const edit = (setter, key) => (v) => {
+    setter(v);
+    if (errors[key]) setErrors((prev) => ({ ...prev, [key]: undefined }));
+  };
+
   const handleGenerate = () => {
     const parseNum = (v) => parseFloat(String(v || 0).replace(/,/g, ''));
     const s = parseNum(salary);
     const e = parseNum(expenses);
     const ms = parseNum(minSave);
     const mo = parseInt(months);
-    if (!s || s <= 0) { Alert.alert('Required', 'Enter salary.'); return; }
-    if (!e || e <= 0) { Alert.alert('Required', 'Enter expenses.'); return; }
-    if (!ms || ms <= 0) { Alert.alert('Required', 'Enter min savings.'); return; }
+    const next = {};
+    if (!s || s <= 0) next.salary = 'Enter your monthly salary';
+    if (!e || e <= 0) next.expenses = 'Enter your monthly living expenses';
+    if (!ms || ms <= 0) next.minSave = 'Enter how much you want to save each month';
+    if (Object.keys(next).length > 0) { setErrors(next); return; }
     onSubmit({ salary: s, rent: parseNum(rent) || 0, expenses: e, minSave: ms, months: mo, incomeEvents });
   };
 
+  const hasErrors = Object.values(errors).some(Boolean);
+
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <BlurView intensity={20} tint="light" style={styles.setupCard}>
-        <View style={styles.setupInner}>
-          <Text style={styles.setupIcon}>🧮</Text>
-          <Text style={styles.setupTitle}>Financial Assumptions</Text>
-          <Text style={styles.setupSubtitle}>Fill in your numbers to generate a debt-reduction roadmap.</Text>
-          <View style={styles.autoRow}>
-            <Text style={styles.autoLabel}>🛡️ Insurance (Auto-fetched)</Text>
-            <Text style={styles.autoValue}>{fc(insuranceMonthly)}/mo</Text>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+      <Screen
+        footer={
+          <View>
+            {hasErrors ? (
+              <Text style={styles.footerError} accessibilityLiveRegion="polite">
+                Check the highlighted fields
+              </Text>
+            ) : null}
+            <Button label="Generate plan" icon="trending-up" onPress={handleGenerate} />
           </View>
-          <InputField label="Monthly Salary" value={salary} onChangeText={setSalary} placeholder="e.g. 120000" icon="💼" />
-          <InputField label="Rental Income" value={rent} onChangeText={setRent} placeholder="e.g. 15000" icon="🏠" />
-          <InputField label="Living Expenses" value={expenses} onChangeText={setExpenses} placeholder="e.g. 40000" icon="🛒" />
-          <InputField label="Minimum Savings" value={minSave} onChangeText={setMinSave} placeholder="e.g. 15000" icon="🏦" />
+        }
+      >
+        {header}
 
-          <View style={styles.durationGroup}>
-            <Text style={styles.durationLabel}>⏳ Plan Duration</Text>
-            <View style={styles.durationRow}>
-              {[6, 12, 18, 24, 36].map((m) => (
-                <TouchableOpacity key={m} style={[styles.durationChip, months === String(m) && styles.durationChipActive]} onPress={() => setMonths(String(m))}>
-                  <Text style={[styles.durationChipText, months === String(m) && styles.durationChipTextActive]}>{m}mo</Text>
-                </TouchableOpacity>
-              ))}
+        <Card padded={false}>
+          <View style={styles.autoRow} accessible accessibilityLabel={`Insurance premiums, fetched from your policies: ${fc(insuranceMonthly)} per month`}>
+            <IconBadge
+              name={kindColors.insurance.icon}
+              color={kindColors.insurance.text}
+              backgroundColor={kindColors.insurance.soft}
+            />
+            <View style={styles.autoText}>
+              <Text style={styles.autoTitle}>Insurance premiums</Text>
+              <Text style={styles.autoSub}>Fetched from your policies</Text>
             </View>
+            <Text style={styles.autoValue} numberOfLines={1}>{fc(insuranceMonthly)}/mo</Text>
           </View>
+        </Card>
 
-          <TouchableOpacity style={styles.generateBtn} onPress={handleGenerate} activeOpacity={0.85}>
-            <LinearGradient colors={['#10b981', '#059669']} style={styles.generateBtnGrad}>
-              <Text style={styles.generateBtnText}>📈 Generate Plan</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </BlurView>
+        <SectionHeader title="Your monthly numbers" style={styles.sectionGap} />
+        <Card style={styles.formCard}>
+          <Field
+            label="Monthly salary"
+            prefix="₹"
+            value={String(salary)}
+            onChangeText={edit(setSalary, 'salary')}
+            placeholder="120000"
+            keyboardType="numeric"
+            error={errors.salary}
+          />
+          <Field
+            label="Rental income"
+            prefix="₹"
+            value={String(rent)}
+            onChangeText={setRent}
+            placeholder="15000"
+            keyboardType="numeric"
+            hint="Optional"
+          />
+          <Field
+            label="Living expenses"
+            prefix="₹"
+            value={String(expenses)}
+            onChangeText={edit(setExpenses, 'expenses')}
+            placeholder="40000"
+            keyboardType="numeric"
+            error={errors.expenses}
+          />
+          <Field
+            label="Minimum savings"
+            prefix="₹"
+            value={String(minSave)}
+            onChangeText={edit(setMinSave, 'minSave')}
+            placeholder="15000"
+            keyboardType="numeric"
+            error={errors.minSave}
+            hint="Set aside every month before any extra loan payments"
+          />
+
+          <Text style={styles.durationLabel}>Plan duration</Text>
+          <View style={styles.chips}>
+            {DURATIONS.map((m) => (
+              <Chip
+                key={m}
+                label={`${m} months`}
+                selected={months === String(m)}
+                onPress={() => setMonths(String(m))}
+              />
+            ))}
+          </View>
+        </Card>
+      </Screen>
     </KeyboardAvoidingView>
   );
 }
 
-function InputField({ label, value, onChangeText, placeholder, icon }) {
-  return (
-    <View style={styles.inputGroup}>
-      <Text style={styles.inputLabel}>{icon}  {label}</Text>
-      <View style={styles.inputWrap}>
-        <Text style={styles.inputPrefix}>₹</Text>
-        <TextInput style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="rgba(15,23,42,0.3)" keyboardType="numeric" />
-      </View>
-    </View>
-  );
-}
-
-// ── Month Card ────────────────────────────────────────────────────────────────
-const MonthCard = React.memo(function MonthCard({ data, index }) {
+// ── Month Row ─────────────────────────────────────────────────────────────────
+const MonthRow = React.memo(function MonthRow({ data, index, divider }) {
   const [expanded, setExpanded] = useState(index === 0);
   const meta = STATUS_META[data.status];
 
   return (
-    <BlurView intensity={20} tint="light" style={[styles.monthCard, { borderColor: meta.color + '40' }]}>
-      <TouchableOpacity style={styles.monthHeader} onPress={() => setExpanded(e => !e)} activeOpacity={0.8}>
-        <View style={[styles.monthIndexBadge, { backgroundColor: meta.color }]}><Text style={styles.monthIndexText}>{data.month}</Text></View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.monthLabel}>{data.monthLabel}</Text>
-          <View style={[styles.statusPill, { backgroundColor: meta.bg }]}><Text style={[styles.statusPillText, { color: meta.color }]}>{meta.icon} {meta.label}</Text></View>
+    <View style={divider ? styles.rowDivider : null}>
+      <PressableScale
+        style={styles.monthHeader}
+        onPress={() => setExpanded(e => !e)}
+        accessibilityState={{ expanded }}
+        accessibilityLabel={`Month ${data.month}, ${data.monthLabel}, ${meta.label}, ${fc(data.savings)} saved`}
+        accessibilityHint={expanded ? 'Hides the breakdown' : 'Shows the breakdown'}
+      >
+        <View style={[styles.monthBadge, { backgroundColor: meta.soft }]}>
+          <Text style={[styles.monthBadgeText, { color: meta.text }]}>{data.month}</Text>
         </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.monthSavings}>+{fc(data.savings)}</Text>
-          <Text style={styles.monthSavingsLabel}>Saved</Text>
+        <View style={styles.monthText}>
+          <Text style={styles.monthLabel} numberOfLines={1}>{data.monthLabel}</Text>
+          <View style={styles.statusLine}>
+            <Ionicons name={meta.icon} size={13} color={meta.text} />
+            <Text style={[styles.statusText, { color: meta.text }]}>{meta.label}</Text>
+          </View>
         </View>
-        <Text style={[styles.chevron, expanded && { transform: [{ rotate: '180deg' }] }]}>›</Text>
-      </TouchableOpacity>
+        <View style={styles.monthTrail}>
+          <Text style={styles.monthSavings} numberOfLines={1}>+{fc(data.savings)}</Text>
+          <Text style={styles.monthSavingsLabel}>saved</Text>
+        </View>
+        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
+      </PressableScale>
 
       {expanded && (
         <View style={styles.monthBody}>
-          <View style={styles.monthSection}>
-            <Text style={styles.monthSectionTitle}>Income & Costs</Text>
-            <MonthRow label="💼 Salary" value={fc(data.salaryMonthly)} />
-            {data.rentMonthly > 0 && <MonthRow label="🏠 Rent" value={`+ ${fc(data.rentMonthly)}`} />}
-            <MonthRow label="📊 Total Income" value={fc(data.income)} bold accent="#10b981" />
-            <View style={styles.divider} />
-            <MonthRow label="📅 EMI Total" value={`- ${fc(data.emiTotal)}`} />
-            <MonthRow label="🛡️ Insurance" value={`- ${fc(data.insuranceMonthly)}`} />
-            <MonthRow label="🛒 Living Expenses" value={`- ${fc(data.expenses)}`} />
-            <MonthRow label="💰 Available" value={fc(data.available)} bold accent={data.available >= 0 ? '#10b981' : '#e11d48'} />
-          </View>
-          <View style={styles.monthSection}>
-            <Text style={styles.monthSectionTitle}>Strategy</Text>
-            <MonthRow label="🏦 Saved This Month" value={fc(data.savings)} accent="#10b981" bold />
-            <MonthRow label="💳 Extra Loan Budget" value={fc(data.loanBudget)} accent={data.loanBudget > 0 ? '#38bdf8' : 'rgba(15,23,42,0.4)'} />
-          </View>
-          {data.notes.map((n, i) => <Text key={i} style={styles.noteText}>• {n}</Text>)}
+          <Text style={styles.bodyOverline}>Income and costs</Text>
+          <DetailRow label="Salary" value={fc(data.salaryMonthly)} />
+          {data.rentMonthly > 0 && <DetailRow label="Rent" value={`+ ${fc(data.rentMonthly)}`} />}
+          <DetailRow label="Total income" value={fc(data.income)} bold color={colors.primary} />
+          <Divider style={styles.bodyDivider} />
+          <DetailRow label="EMI total" value={`- ${fc(data.emiTotal)}`} />
+          <DetailRow label="Insurance" value={`- ${fc(data.insuranceMonthly)}`} />
+          <DetailRow label="Living expenses" value={`- ${fc(data.expenses)}`} />
+          <DetailRow
+            label="Available"
+            value={fc(data.available)}
+            bold
+            color={data.available >= 0 ? colors.primary : colors.danger}
+          />
+
+          <Text style={[styles.bodyOverline, styles.bodyOverlineGap]}>Strategy</Text>
+          <DetailRow label="Saved this month" value={fc(data.savings)} bold color={colors.primary} />
+          <DetailRow
+            label="Extra loan budget"
+            value={fc(data.loanBudget)}
+            color={data.loanBudget > 0 ? colors.info : colors.textMuted}
+          />
+
+          {data.notes.map((n, i) => (
+            <View key={i} style={styles.note}>
+              <Ionicons name="alert-circle-outline" size={15} color={colors.danger} />
+              <Text style={styles.noteText}>{cleanNote(n)}</Text>
+            </View>
+          ))}
         </View>
       )}
-    </BlurView>
+    </View>
   );
 });
 
-function MonthRow({ label, value, bold, accent }) {
+function DetailRow({ label, value, bold, color }) {
   return (
-    <View style={styles.mRow}>
-      <Text style={styles.mRowLabel}>{label}</Text>
-      <Text style={[styles.mRowValue, bold && { fontWeight: '700' }, accent && { color: accent }]}>{value}</Text>
+    <View style={styles.detailRow} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text
+        style={[styles.detailValue, bold && styles.detailValueBold, color && { color }]}
+        numberOfLines={1}
+      >
+        {value}
+      </Text>
     </View>
   );
 }
 
 // ── Main Controller ─────────────────────────────────────────────────────────────
 export default function FinancialPlan() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [loading, setLoading]       = useState(true);
   const [showSetup, setShowSetup]   = useState(false);
   const [settings, setSettings]     = useState(null);
@@ -190,7 +295,7 @@ export default function FinancialPlan() {
       const p = await getPayments();
       const s = await getFinancialPlanSettings();
       setLoans(l); setInsurances(i); setPayments(p);
-      if (s) { setSettings(s); setShowSetup(false); } 
+      if (s) { setSettings(s); setShowSetup(false); }
       else { setShowSetup(true); }
     } catch (e) {
       console.error('Error loading financial plan:', e);
@@ -229,7 +334,7 @@ export default function FinancialPlan() {
     const totalSavings = plan.reduce((s, m) => s + (m.savings || 0), 0);
     const totalExtra   = plan.reduce((s, m) => s + (m.loanBudget || 0), 0);
     const lastMonth    = plan[plan.length - 1];
-    
+
     // Resilience Score (Current state vs Final state)
     const initialCosts = (plan[0].emiTotal || 0) + (plan[0].insuranceMonthly || 0) + (plan[0].expenses || 0);
     const runway = (lastMonth?.emergencyFund || 0) / Math.max(1, initialCosts);
@@ -248,151 +353,219 @@ export default function FinancialPlan() {
     Alert.alert('Reset', 'Start fresh?', [{ text: 'Cancel' }, { text: 'Reset', onPress: () => { saveFinancialPlanSettings(null); setSettings(null); setShowSetup(true); } }]);
   };
 
-  if (loading) return <View style={styles.loadingWrap}><ActivityIndicator size="large" color="#10b981" /></View>;
+  const header = (
+    <ScreenHeader
+      back
+      title="Financial plan"
+      subtitle={showSetup ? 'Your income and costs, used to build the plan' : 'Month-by-month savings and extra loan payments'}
+      actions={
+        plan ? (
+          <HeaderAction
+            icon={showSetup ? 'list-outline' : 'options-outline'}
+            label={showSetup ? 'View plan' : 'Edit settings'}
+            onPress={() => setShowSetup(!showSetup)}
+          />
+        ) : null
+      }
+    />
+  );
+
+  if (loading) {
+    return (
+      <Screen>
+        {header}
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color={colors.primaryFill} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (showSetup) {
+    return (
+      <SetupForm
+        initial={settings}
+        insuranceMonthly={insuranceMonthly}
+        header={header}
+        onSubmit={(v) => { saveFinancialPlanSettings(v); setSettings(v); setShowSetup(false); }}
+      />
+    );
+  }
+
+  const runway = planStats ? runwayMeta(planStats.runway) : null;
 
   return (
-    <LinearGradient colors={['#f0fdf4', '#f8fafc', '#e2e8f0']} style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}><Text style={styles.backButton}>← Back</Text></TouchableOpacity>
-          <Text style={styles.headerTitle}>Financial Plan</Text>
-          {plan && <TouchableOpacity onPress={() => setShowSetup(!showSetup)} style={styles.editBtn}><Text style={styles.editBtnText}>{showSetup ? 'View Plan' : '⚙️ Settings'}</Text></TouchableOpacity>}
-        </View>
+    <Screen>
+      {header}
 
-        {showSetup ? (
-          <SetupForm initial={settings} insuranceMonthly={insuranceMonthly} onSubmit={(v) => { saveFinancialPlanSettings(v); setSettings(v); setShowSetup(false); }} />
-        ) : plan && planStats && (
-          <>
-            <View style={styles.summaryRow}>
-              <SummaryTile label="Resilience Score" value={planStats.runway.toFixed(1)} color={planStats.runway >= 6 ? '#10b981' : planStats.runway < 2 ? '#e11d48' : '#f59e0b'} icon="🛡️" suffix=" mo" />
-              <SummaryTile label="Principal Cleared" value={fc(planStats.clearedPrincipal)} color="#38bdf8" icon="📉" />
-            </View>
-            <View style={styles.summaryRow}>
-              <SummaryTile label="Interest Saved" value={fc(planStats.interestSaved)} color="#a78bfa" icon="✨" />
-              <SummaryTile label="Emergency Fund" value={fc(planStats.finalFund)} color="#10b981" icon="🏦" />
-            </View>
+      {plan && planStats ? (
+        <>
+          <Card>
+            <Text style={styles.overline}>Over the next {plan.length} months</Text>
+            <StatRow style={styles.summaryStats}>
+              <StatTile label="Principal cleared" value={fc(planStats.clearedPrincipal)} />
+              <StatTile label="Interest saved" value={fc(planStats.interestSaved)} tone="positive" />
+              <StatTile label="Emergency fund" value={fc(planStats.finalFund)} />
+            </StatRow>
+          </Card>
 
-            {/* Resilience Stress Test Section */}
-            <BlurView intensity={20} tint="light" style={styles.resilienceCard}>
-              <View style={styles.resilienceHeader}>
-                <Text style={styles.resilienceTitle}>🛡️ Financial Stress Test</Text>
-              </View>
-              <View style={styles.resilienceBody}>
-                <View style={styles.resilienceRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.resilienceLabel}>Emergency Runway</Text>
-                    <Text style={[styles.resilienceValue, { color: planStats.runway >= 6 ? '#10b981' : planStats.runway < 2 ? '#e11d48' : '#f59e0b' }]}>
-                      {planStats.runway.toFixed(1)} Months
-                    </Text>
-                  </View>
-                  <View style={styles.resilienceStatus}>
-                    <Text style={[styles.resilienceStatusText, { color: planStats.runway >= 6 ? '#10b981' : planStats.runway < 2 ? '#e11d48' : '#f59e0b' }]}>
-                      {planStats.runway >= 6 ? 'STRONG' : planStats.runway < 2 ? 'VULNERABLE' : 'STABLE'}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.resilienceInsight}>
-                  {planStats.runway >= 6 
-                    ? "You have a rock-solid buffer. You can survive 6+ months without income."
-                    : planStats.runway < 2 
-                    ? "Warning: Your buffer is low. A sudden job loss would be critical within 2 months."
-                    : "You're getting there. Aim for 6 months of runway for total financial freedom."}
+          {/* Resilience stress test */}
+          <SectionHeader title="Stress test" style={styles.sectionGap} />
+          <Card>
+            <View style={styles.runwayTop}>
+              <View style={styles.runwayText}>
+                <Text style={styles.runwayLabel}>Emergency runway</Text>
+                <Text style={[styles.runwayValue, { color: runway.text }]}>
+                  {planStats.runway.toFixed(1)} months
                 </Text>
               </View>
-            </BlurView>
-            
-            <Text style={styles.sectionTitle}>Monthly Roadmap</Text>
-            {plan.map((m, i) => <MonthCard key={i} data={m} index={i} />)}
-            
-            <TouchableOpacity onPress={handleReset} style={styles.resetBtn}><Text style={styles.resetBtnText}>🔄 Reset Plan</Text></TouchableOpacity>
-          </>
-        )}
-      </ScrollView>
-    </LinearGradient>
-  );
-}
+              <Pill label={runway.label} icon={runway.icon} color={runway.text} backgroundColor={runway.soft} />
+            </View>
+            <ProgressBar
+              segments={[{ value: Math.min(100, (planStats.runway / 6) * 100), color: runway.fill }]}
+              style={styles.runwayBar}
+              accessibilityLabel={`${planStats.runway.toFixed(1)} of 6 months runway`}
+            />
+            <Text style={styles.runwayGoal}>Goal: 6 months of fixed costs</Text>
+            <Text style={styles.runwayInsight}>
+              {planStats.runway >= 6
+                ? 'You have a solid buffer. You could cover 6+ months without income.'
+                : planStats.runway < 2
+                ? 'Your buffer is low. A sudden loss of income would become critical within 2 months.'
+                : "You're getting there. Aim for 6 months of runway."}
+            </Text>
+          </Card>
 
-function SummaryTile({ label, value, color, icon }) {
-  return (
-    <BlurView intensity={20} tint="light" style={styles.summaryTile}>
-      <View style={styles.summaryTileInner}>
-        <Text style={styles.summaryTileIcon}>{icon}</Text>
-        <Text style={styles.summaryTileLabel}>{label}</Text>
-        <Text style={[styles.summaryTileValue, { color }]}>{value}</Text>
-      </View>
-    </BlurView>
+          <SectionHeader title="Monthly plan" count={plan.length} style={styles.sectionGap} />
+          <Card padded={false} style={styles.listCard}>
+            {plan.map((m, i) => <MonthRow key={i} data={m} index={i} divider={i > 0} />)}
+          </Card>
+
+          <Button
+            label="Reset plan"
+            variant="danger"
+            icon="refresh"
+            onPress={handleReset}
+            style={styles.resetBtn}
+          />
+        </>
+      ) : (
+        <Card>
+          <EmptyState
+            icon="calculator-outline"
+            title="No plan to show yet"
+            message="Add your income and costs to build a month-by-month plan."
+            actionLabel="Set up plan"
+            onAction={() => setShowSetup(true)}
+          />
+        </Card>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 60 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  backButton: { fontSize: 16, color: '#10b981' },
-  headerTitle: { fontSize: 28, fontWeight: '700', color: '#0f172a' },
-  editBtn: { padding: 10, backgroundColor: 'rgba(167,139,250,0.1)', borderRadius: 12 },
-  editBtnText: { color: '#a78bfa', fontWeight: '700' },
-  loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  setupCard: { borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)' },
-  setupInner: { padding: 24 },
-  setupIcon: { fontSize: 36, marginBottom: 8 },
-  setupTitle: { fontSize: 22, fontWeight: '700', color: '#0f172a', marginBottom: 12 },
-  setupSubtitle: { fontSize: 13, color: 'rgba(15,23,42,0.5)', marginBottom: 20 },
-  autoRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 14, backgroundColor: 'rgba(16,185,129,0.06)', borderRadius: 14, marginBottom: 16 },
-  autoLabel: { fontSize: 13, color: '#0f172a' },
-  autoValue: { fontWeight: '700', color: '#10b981' },
-  inputGroup: { marginBottom: 16 },
-  inputLabel: { fontSize: 13, color: 'rgba(15,23,42,0.6)', marginBottom: 6 },
-  inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 14, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  inputPrefix: { color: 'rgba(15,23,42,0.4)', marginRight: 4 },
-  input: { flex: 1, height: 48, fontSize: 16 },
-  durationGroup: { marginBottom: 20 },
-  durationLabel: { fontSize: 13, color: 'rgba(15,23,42,0.6)', marginBottom: 8 },
-  durationRow: { flexDirection: 'row', gap: 8 },
-  durationChip: { padding: 10, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)' },
-  durationChipActive: { backgroundColor: 'rgba(16,185,129,0.1)', borderColor: '#10b981' },
-  durationChipText: { fontSize: 12, fontWeight: '600' },
-  durationChipTextActive: { color: '#10b981' },
-  generateBtn: { borderRadius: 16, overflow: 'hidden' },
-  generateBtnGrad: { padding: 16, alignItems: 'center' },
-  generateBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  summaryRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  summaryTile: { flex: 1, borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  summaryTileInner: { padding: 16, alignItems: 'center' },
-  summaryTileIcon: { fontSize: 20, marginBottom: 4 },
-  summaryTileLabel: { fontSize: 10, color: 'rgba(15,23,42,0.5)', textTransform: 'uppercase' },
-  summaryTileValue: { fontSize: 18, fontWeight: '700', marginTop: 2 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginVertical: 16 },
-  monthCard: { borderRadius: 24, overflow: 'hidden', borderWidth: 1.5, marginBottom: 12 },
-  monthHeader: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
-  monthIndexBadge: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
-  monthIndexText: { color: '#fff', fontWeight: '800' },
-  monthLabel: { fontSize: 16, fontWeight: '700' },
-  statusPill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginTop: 4 },
-  statusPillText: { fontSize: 10, fontWeight: '700' },
-  monthSavings: { fontSize: 16, fontWeight: '700', color: '#10b981' },
-  monthSavingsLabel: { fontSize: 9, color: 'rgba(15,23,42,0.45)' },
-  monthBody: { padding: 16, paddingTop: 0, gap: 12 },
-  monthSection: { padding: 12, backgroundColor: 'rgba(255,255,255,0.4)', borderRadius: 16 },
-  monthSectionTitle: { fontSize: 10, fontWeight: '700', color: 'rgba(15,23,42,0.4)', textTransform: 'uppercase', marginBottom: 8 },
-  mRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  mRowLabel: { fontSize: 12, color: 'rgba(15,23,42,0.6)' },
-  mRowValue: { fontSize: 12, fontWeight: '600' },
-  divider: { height: 1, backgroundColor: 'rgba(0,0,0,0.05)', marginVertical: 6 },
-  noteText: { fontSize: 12, color: 'rgba(15,23,42,0.5)', fontStyle: 'italic' },
-  resetBtn: { marginTop: 20, alignItems: 'center' },
-  resetBtnText: { color: 'rgba(15,23,42,0.3)', fontWeight: '600' },
-  chevron: { fontSize: 18, color: 'rgba(15,23,42,0.2)', marginLeft: 4 },
-  
-  // Resilience Card
-  resilienceCard: { borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)', marginBottom: 20, backgroundColor: 'rgba(255,255,255,0.4)' },
-  resilienceHeader: { padding: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.05)' },
-  resilienceTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
-  resilienceBody: { padding: 16 },
-  resilienceRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  resilienceLabel: { fontSize: 12, color: 'rgba(15,23,42,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 },
-  resilienceValue: { fontSize: 24, fontWeight: '800', marginTop: 2 },
-  resilienceStatus: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.03)' },
-  resilienceStatusText: { fontSize: 12, fontWeight: '800' },
-  resilienceInsight: { fontSize: 13, color: 'rgba(15,23,42,0.6)', lineHeight: 18, fontStyle: 'italic' },
+  flex: { flex: 1, backgroundColor: colors.page },
+  loadingWrap: { paddingVertical: space.xxxl * 2, alignItems: 'center' },
+  sectionGap: { marginTop: space.xxl },
+  overline: { ...type.overline, color: colors.textMuted },
+  footerError: {
+    ...type.caption,
+    color: colors.danger,
+    textAlign: 'center',
+    marginBottom: space.sm,
+  },
+
+  // Setup
+  autoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    padding: space.lg,
+  },
+  autoText: { flex: 1, minWidth: 0 },
+  autoTitle: { ...type.body, fontWeight: '700', color: colors.text },
+  autoSub: { ...type.caption, fontWeight: '500', color: colors.textMuted, marginTop: 2 },
+  autoValue: { ...type.amountSmall, color: colors.text },
+  formCard: { paddingBottom: space.lg },
+  durationLabel: {
+    ...type.label,
+    color: colors.textSecondary,
+    marginBottom: space.sm,
+  },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+
+  // Summary
+  summaryStats: { marginTop: space.md },
+
+  // Stress test
+  runwayTop: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  runwayText: { flex: 1, minWidth: 0 },
+  runwayLabel: { ...type.label, color: colors.textSecondary },
+  runwayValue: { ...type.title, fontVariant: ['tabular-nums'], marginTop: 2 },
+  runwayBar: { marginTop: space.md },
+  runwayGoal: { ...type.caption, fontWeight: '500', color: colors.textMuted, marginTop: space.xs + 2 },
+  runwayInsight: { ...type.label, fontWeight: '500', color: colors.textSecondary, marginTop: space.md },
+
+  // Monthly plan
+  listCard: { overflow: 'hidden' },
+  rowDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderStrong,
+  },
+  monthHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    minHeight: 64,
+  },
+  monthBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthBadgeText: { ...type.headline, fontVariant: ['tabular-nums'] },
+  monthText: { flex: 1, minWidth: 0 },
+  monthLabel: { ...type.body, fontWeight: '700', color: colors.text },
+  statusLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  statusText: { ...type.caption },
+  monthTrail: { alignItems: 'flex-end', maxWidth: '40%' },
+  monthSavings: { ...type.amountSmall, color: colors.primary },
+  monthSavingsLabel: { ...type.caption, fontWeight: '500', color: colors.textMuted, marginTop: 1 },
+  monthBody: {
+    marginHorizontal: space.lg,
+    marginBottom: space.lg,
+    padding: space.md,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceMuted,
+  },
+  bodyOverline: { ...type.overline, color: colors.textMuted, marginBottom: space.xs },
+  bodyOverlineGap: { marginTop: space.md },
+  bodyDivider: { marginVertical: space.xs },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: 3,
+  },
+  detailLabel: { ...type.label, fontWeight: '500', color: colors.textSecondary, flex: 1 },
+  detailValue: { ...type.label, color: colors.text, fontVariant: ['tabular-nums'] },
+  detailValueBold: { fontWeight: '800' },
+  note: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    marginTop: space.md,
+    padding: space.sm + 2,
+    borderRadius: 10,
+    backgroundColor: colors.dangerSoft,
+  },
+  noteText: { ...type.caption, color: colors.danger, flex: 1 },
+
+  resetBtn: { marginTop: space.xxl },
 });

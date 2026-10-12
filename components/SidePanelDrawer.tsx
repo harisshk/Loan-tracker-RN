@@ -1,22 +1,52 @@
-import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  ScrollView,
-  Dimensions,
-  TouchableWithoutFeedback,
-  Platform,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, usePathname } from 'expo-router';
+import Constants from 'expo-constants';
+import { usePathname, useRouter } from 'expo-router';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useEffect, useMemo } from 'react';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  SlideInLeft,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { colors, HIT, radius, space, type } from '../constants/dashboardTheme';
+import { PressableScale } from './dashboard/primitives';
 
-const { width } = Dimensions.get('window');
-const DRAWER_WIDTH = Math.min(width * 0.82, 320);
+type IconName = keyof typeof Ionicons.glyphMap;
+
+interface DrawerItem {
+  label: string;
+  icon: IconName;
+  activeIcon?: IconName;
+  route: string;
+  color?: string;
+}
+
+// Tab routes live in the (tabs) group, so their URLs have no group prefix.
+const NAV_ITEMS: DrawerItem[] = [
+  { label: 'Home', icon: 'home-outline', activeIcon: 'home', route: '/' },
+  { label: 'Loans', icon: 'wallet-outline', activeIcon: 'wallet', route: '/loans' },
+  { label: 'Insurance', icon: 'shield-checkmark-outline', activeIcon: 'shield-checkmark', route: '/insurances' },
+  { label: 'Spends', icon: 'card-outline', activeIcon: 'card', route: '/spend-tracker' },
+  { label: 'EMI analytics', icon: 'analytics-outline', activeIcon: 'analytics', route: '/analytics' },
+  { label: 'Payment calendar', icon: 'calendar-outline', activeIcon: 'calendar', route: '/calendar' },
+  { label: 'AI Advisor', icon: 'sparkles-outline', activeIcon: 'sparkles', route: '/ai-advisor' },
+  { label: 'More & settings', icon: 'grid-outline', activeIcon: 'grid', route: '/settings' },
+];
+
+const TOOL_ITEMS: DrawerItem[] = [
+  { label: 'Repayment roadmap', icon: 'map-outline', route: '/roadmap', color: colors.pinkFill },
+  { label: 'Debt-free calculator', icon: 'flag-outline', route: '/debt-free', color: colors.infoFill },
+  { label: 'Financial plan', icon: 'trending-up-outline', route: '/financial-plan', color: colors.primaryFill },
+  { label: 'Compare loans', icon: 'git-compare-outline', route: '/compare-loans', color: colors.violetFill },
+  { label: 'Maturity alerts', icon: 'timer-outline', route: '/maturity-alerts', color: colors.warningFill },
+  { label: 'Backup & restore', icon: 'cloud-upload-outline', route: '/sync', color: colors.heroTextSecondary },
+];
+
+const appVersion = Constants.expoConfig?.version;
 
 interface SidePanelDrawerProps {
   isOpen: boolean;
@@ -27,142 +57,157 @@ export default function SidePanelDrawer({ isOpen, onClose }: SidePanelDrawerProp
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const drawerWidth = Math.min(width * 0.82, 320);
+
+  // Swipe left on the drawer to close it; it follows the finger.
+  const dragX = useSharedValue(0);
+  useEffect(() => {
+    if (isOpen) dragX.set(0);
+  }, [isOpen, dragX]);
+  const closeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX(-10)
+        .failOffsetY([-16, 16])
+        .onUpdate((e) => {
+          dragX.set(Math.min(0, e.translationX));
+        })
+        .onEnd((e) => {
+          if (e.translationX < -drawerWidth * 0.3 || e.velocityX < -600) {
+            dragX.set(
+              withTiming(-drawerWidth, { duration: 160 }, () => {
+                scheduleOnRN(onClose);
+              }),
+            );
+          } else {
+            dragX.set(withTiming(0, { duration: 160 }));
+          }
+        }),
+    [drawerWidth, onClose, dragX],
+  );
+  const dragStyle = useAnimatedStyle(() => ({ transform: [{ translateX: dragX.get() }] }));
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: 1 + dragX.get() / drawerWidth }));
 
   const navigateTo = (route: string) => {
     onClose();
+    if (route === pathname) return;
     setTimeout(() => {
       router.push(route as any);
     }, 100);
   };
 
-  const navItems = [
-    { label: 'Loans', icon: 'wallet-outline', activeIcon: 'wallet', route: '/loans', badge: 'All' },
-    { label: 'Insurances', icon: 'shield-checkmark-outline', activeIcon: 'shield-checkmark', route: '/insurances' },
-    { label: 'Settings', icon: 'settings-outline', activeIcon: 'settings', route: '/(tabs)/settings' },
-    { label: 'Spend Tracker', icon: 'card-outline', activeIcon: 'card', route: '/spend-tracker' },
-    { label: 'EMI Analytics', icon: 'analytics-outline', activeIcon: 'analytics', route: '/analytics' },
-    { label: 'Payment Calendar', icon: 'calendar-outline', activeIcon: 'calendar', route: '/calendar' },
-    { label: 'AI Advisor', icon: 'sparkles-outline', activeIcon: 'sparkles', route: '/ai-advisor' },
-  ];
-
-  const toolItems = [
-    { label: 'Repayment Roadmap', icon: 'map-outline', route: '/roadmap', color: '#ec4899' },
-    { label: 'Debt-Free Calculator', icon: 'flag-outline', route: '/debt-free', color: '#38bdf8' },
-    { label: 'Financial Plan', icon: 'trending-up', route: '/financial-plan', color: '#10b981' },
-    { label: 'Loan Comparison', icon: 'git-compare-outline', route: '/compare-loans', color: '#a78bfa' },
-    { label: 'Maturity Alerts', icon: 'timer-outline', route: '/maturity-alerts', color: '#f59e0b' },
-    { label: 'Backup & Restore', icon: 'cloud-upload-outline', route: '/sync', color: '#6366f1' },
-  ];
-
   if (!isOpen) return null;
 
   return (
     <Modal visible={isOpen} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        {/* Backdrop Tap Handler */}
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
+      <GestureHandlerRootView style={styles.overlay}>
+        <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
+          <Pressable
+            style={styles.backdrop}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close menu"
+          />
+        </Animated.View>
 
-        {/* Drawer Body */}
-        <LinearGradient colors={['#0f172a', '#1e293b']} style={[styles.drawer, { paddingTop: Math.max(insets.top, 16) }]}>
-          {/* Header */}
+        <GestureDetector gesture={closeGesture}>
+          <Animated.View style={[styles.dragLayer, dragStyle]}>
+
+        <Animated.View
+          entering={SlideInLeft.duration(240)}
+          style={[styles.drawer, { width: drawerWidth, paddingTop: Math.max(insets.top, space.lg) }]}
+          accessibilityViewIsModal
+        >
+          {/* Brand */}
           <View style={styles.header}>
-            <View style={styles.brandRow}>
-              <View style={styles.logoBadge}>
-                <Ionicons name="layers" size={20} color="#fff" />
-              </View>
-              <View>
-                <Text style={styles.appName}>Velo Flow</Text>
-                <Text style={styles.appSub}>Loan Glass • Elite Edition</Text>
-              </View>
+            <View style={styles.logo} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+              <Ionicons name="layers" size={20} color={colors.textOnAccent} />
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
-              <Ionicons name="close" size={20} color="#94a3b8" />
-            </TouchableOpacity>
+            <View style={styles.brandText}>
+              <Text style={styles.appName} accessibilityRole="header">
+                Velo Flow
+              </Text>
+              <Text style={styles.appSub}>Loans · Insurance · Spends</Text>
+            </View>
+            <PressableScale onPress={onClose} style={styles.closeBtn} accessibilityLabel="Close menu">
+              <Ionicons name="close" size={20} color={colors.heroTextSecondary} />
+            </PressableScale>
           </View>
 
-          <View style={styles.divider} />
-
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-            {/* Primary Navigation */}
-            <Text style={styles.sectionHeader}>NAVIGATION</Text>
-            {navItems.map((item) => {
-              const isActive = pathname === item.route || (item.route === '/loans' && pathname === '/loans');
-              return (
-                <TouchableOpacity
-                  key={item.route}
-                  style={[styles.navBtn, isActive && styles.navBtnActive]}
-                  onPress={() => navigateTo(item.route)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons
-                    name={(isActive ? item.activeIcon : item.icon) as any}
-                    size={20}
-                    color={isActive ? '#10b981' : '#94a3b8'}
-                    style={{ marginRight: 12 }}
-                  />
-                  <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>{item.label}</Text>
-                  {item.badge && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{item.badge}</Text>
-                    </View>
-                  )}
-                  {isActive && <View style={styles.activeDot} />}
-                </TouchableOpacity>
-              );
-            })}
+            <Text style={styles.sectionHeader} accessibilityRole="header">
+              Navigate
+            </Text>
+            {NAV_ITEMS.map((item) => (
+              <DrawerRow key={item.route} item={item} active={pathname === item.route} onPress={() => navigateTo(item.route)} />
+            ))}
 
             <View style={styles.sectionDivider} />
 
-            {/* Quick Actions / Shortcuts */}
-            <Text style={styles.sectionHeader}>QUICK ACTIONS</Text>
+            <Text style={styles.sectionHeader} accessibilityRole="header">
+              Quick add
+            </Text>
             <View style={styles.quickAddRow}>
-              <TouchableOpacity
+              <PressableScale
                 style={styles.quickAddBtn}
                 onPress={() => navigateTo('/add-loan')}
-                activeOpacity={0.8}
+                accessibilityLabel="Add a new loan"
               >
-                <Ionicons name="add-circle" size={18} color="#10b981" />
-                <Text style={styles.quickAddText}>New Loan</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+                <Ionicons name="add" size={18} color={colors.heroAccent} />
+                <Text style={styles.quickAddText}>New loan</Text>
+              </PressableScale>
+              <PressableScale
                 style={styles.quickAddBtn}
                 onPress={() => navigateTo('/add-insurance')}
-                activeOpacity={0.8}
+                accessibilityLabel="Add a new insurance policy"
               >
-                <Ionicons name="add-circle" size={18} color="#ec4899" />
-                <Text style={styles.quickAddText}>New Insurance</Text>
-              </TouchableOpacity>
+                <Ionicons name="add" size={18} color={colors.heroAccent} />
+                <Text style={styles.quickAddText}>New insurance</Text>
+              </PressableScale>
             </View>
 
             <View style={styles.sectionDivider} />
 
-            {/* Smart Financial Tools */}
-            <Text style={styles.sectionHeader}>SMART TOOLS</Text>
-            {toolItems.map((item) => (
-              <TouchableOpacity
-                key={item.route}
-                style={styles.toolBtn}
-                onPress={() => navigateTo(item.route)}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.toolIconWrap, { backgroundColor: item.color + '20' }]}>
-                  <Ionicons name={item.icon as any} size={16} color={item.color} />
-                </View>
-                <Text style={styles.toolLabel}>{item.label}</Text>
-                <Ionicons name="chevron-forward" size={14} color="#64748b" />
-              </TouchableOpacity>
+            <Text style={styles.sectionHeader} accessibilityRole="header">
+              Tools
+            </Text>
+            {TOOL_ITEMS.map((item) => (
+              <DrawerRow key={item.route} item={item} active={pathname === item.route} onPress={() => navigateTo(item.route)} />
             ))}
           </ScrollView>
 
-          {/* Footer */}
-          <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            <Text style={styles.footerText}>Velo Flow • Smart Finance & Debt Manager</Text>
-          </View>
-        </LinearGradient>
-      </View>
+          {appVersion ? (
+            <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, space.lg) }]}>
+              <Text style={styles.footerText}>Version {appVersion}</Text>
+            </View>
+          ) : null}
+        </Animated.View>
+          </Animated.View>
+        </GestureDetector>
+      </GestureHandlerRootView>
     </Modal>
+  );
+}
+
+function DrawerRow({ item, active, onPress }: { item: DrawerItem; active: boolean; onPress: () => void }) {
+  const iconColor = active ? colors.heroAccent : item.color ?? colors.heroTextSecondary;
+  return (
+    <PressableScale
+      style={[styles.row, active && styles.rowActive]}
+      onPress={onPress}
+      accessibilityLabel={item.label}
+      accessibilityHint={active ? 'Current screen' : undefined}
+      accessibilityState={{ selected: active }}
+    >
+      <View style={[styles.rowIcon, active && styles.rowIconActive]}>
+        <Ionicons name={active && item.activeIcon ? item.activeIcon : item.icon} size={18} color={iconColor} />
+      </View>
+      <Text style={[styles.rowLabel, active && styles.rowLabelActive]} numberOfLines={1}>
+        {item.label}
+      </Text>
+      {active ? <View style={styles.activeDot} /> : null}
+    </PressableScale>
   );
 }
 
@@ -172,173 +217,142 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   backdrop: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    ...StyleSheet.absoluteFill,
+    backgroundColor: colors.overlay,
+  },
+  dragLayer: {
+    height: '100%',
   },
   drawer: {
-    width: DRAWER_WIDTH,
     height: '100%',
-    paddingHorizontal: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 4, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 20,
+    paddingHorizontal: space.md,
+    backgroundColor: colors.heroGradient[0],
+    borderTopRightRadius: radius.lg,
+    borderBottomRightRadius: radius.lg,
+    boxShadow: '4px 0px 24px rgba(2, 6, 23, 0.4)',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
+    gap: space.md,
+    paddingHorizontal: space.xs,
+    paddingBottom: space.lg,
+    marginBottom: space.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.heroDivider,
   },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  logoBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#6366f1',
+  logo: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  brandText: {
+    flex: 1,
+    minWidth: 0,
   },
   appName: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#ffffff',
-    letterSpacing: 0.5,
+    ...type.headline,
+    color: colors.heroText,
   },
   appSub: {
-    fontSize: 11,
-    color: '#94a3b8',
-    fontWeight: '600',
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.heroTextMuted,
+    marginTop: 1,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    width: HIT,
+    height: HIT,
+    borderRadius: HIT / 2,
+    backgroundColor: colors.heroChip,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    marginBottom: 12,
-  },
-  sectionDivider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    marginVertical: 14,
-  },
   scrollContent: {
-    paddingBottom: 20,
+    paddingTop: space.sm,
+    paddingBottom: space.xl,
   },
   sectionHeader: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 1.2,
-    marginBottom: 10,
-    marginLeft: 4,
+    ...type.overline,
+    color: colors.heroTextMuted,
+    marginBottom: space.sm,
+    marginLeft: space.sm,
   },
-  navBtn: {
+  sectionDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.heroDivider,
+    marginVertical: space.lg,
+  },
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    marginBottom: 4,
+    gap: space.md,
+    minHeight: HIT + 4,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.md,
+    marginBottom: 2,
   },
-  navBtnActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+  rowActive: {
+    backgroundColor: colors.heroChip,
   },
-  navLabel: {
+  rowIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: colors.heroChip,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowIconActive: {
+    backgroundColor: 'rgba(52, 211, 153, 0.16)',
+  },
+  rowLabel: {
+    ...type.body,
     flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#cbd5e1',
+    color: colors.heroTextSecondary,
   },
-  navLabelActive: {
-    color: '#10b981',
+  rowLabelActive: {
+    color: colors.heroText,
     fontWeight: '700',
-  },
-  badge: {
-    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginRight: 6,
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#818cf8',
   },
   activeDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#10b981',
+    backgroundColor: colors.heroAccent,
   },
   quickAddRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: space.sm,
   },
   quickAddBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 12,
-    paddingVertical: 10,
+    gap: space.xs,
+    minHeight: HIT,
+    borderRadius: radius.md,
+    backgroundColor: colors.heroChip,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.heroChipBorder,
   },
   quickAddText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#f8fafc',
-  },
-  toolBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 9,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    marginBottom: 4,
-  },
-  toolIconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  toolLabel: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#cbd5e1',
+    ...type.label,
+    color: colors.heroText,
   },
   footer: {
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    paddingTop: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.heroDivider,
     alignItems: 'center',
   },
   footerText: {
-    fontSize: 11,
-    color: '#64748b',
-    fontWeight: '600',
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.heroTextMuted,
   },
 });

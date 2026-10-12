@@ -3,8 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   TextInput,
   Alert,
   Platform,
@@ -13,14 +11,37 @@ import {
   Switch,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { saveTransaction, getTransactions, updateTransaction, getBudgetLimit } from '../utils/transactions';
 import { getLoans, addPayment } from '../utils/storage';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CATEGORIES, getCategoryIcon } from '../constants/categories';
+import {
+  Button,
+  Card,
+  Chip,
+  colors,
+  Field,
+  HIT,
+  PressableScale,
+  radius,
+  Screen,
+  ScreenHeader,
+  Segmented,
+  space,
+  type as typeScale,
+} from '../components/ui/kit';
+
+const TYPE_OPTIONS = [
+  { key: 'debit', label: 'Expense' },
+  { key: 'credit', label: 'Income' },
+];
+
+const MODE_OPTIONS = [
+  { key: 'UPI', icon: 'phone-portrait-outline' },
+  { key: 'Credit Card', icon: 'card-outline' },
+  { key: 'Cash', icon: 'cash-outline' },
+];
 
 export default function AddTransaction() {
   const router = useRouter();
@@ -43,6 +64,9 @@ export default function AddTransaction() {
   const [loans, setLoans] = useState([]);
   const [selectedLoanId, setSelectedLoanId] = useState('');
   const [calculateBudget, setCalculateBudget] = useState(true);
+  const [amountError, setAmountError] = useState('');
+  const [loanError, setLoanError] = useState('');
+  const [saving, setSaving] = useState(false);
   // Guard so the form is only pre-filled once. useLocalSearchParams() returns a
   // fresh object every render, so without this the effect re-ran on every
   // keystroke and reset the fields back to their original values.
@@ -126,13 +150,6 @@ export default function AddTransaction() {
     initData();
   }, [params]);
 
-  // Clipboard Scanner (only if not editing)
-  useEffect(() => {
-    if (!transactionId) {
-      checkClipboard();
-    }
-  }, [transactionId]);
-
   const checkClipboard = async () => {
     try {
       const content = await Clipboard.getString();
@@ -165,14 +182,14 @@ export default function AddTransaction() {
           );
           return;
         }
-      } catch (e) {
+      } catch {
         // Not a JSON object, proceed to regex text parsing
       }
 
       // 2. Check for SMS transaction patterns (e.g., spent Rs 500, received INR 1000)
       const amountRegex = /(?:INR|Rs|Rs\.|₹)\s*([\d,]+(?:\.\d{1,2})?)/i;
       const amountMatch = content.match(amountRegex);
-      
+
       if (amountMatch) {
         const detectedAmount = amountMatch[1].replace(/,/g, '');
         let detectedType = 'debit';
@@ -220,15 +237,22 @@ export default function AddTransaction() {
     }
   };
 
+  // Clipboard Scanner (only if not editing)
+  useEffect(() => {
+    if (!transactionId) {
+      checkClipboard();
+    }
+  }, [transactionId]);
+
   const handleSave = async () => {
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) {
-      Alert.alert('Error', 'Please enter a valid amount.');
+      setAmountError('Enter an amount greater than zero.');
       return;
     }
 
     if (category === 'EMI' && loans.length > 0 && !selectedLoanId) {
-      Alert.alert('Error', 'Please select a loan/debt for this EMI payment.');
+      setLoanError('Choose the loan this EMI was paid towards.');
       return;
     }
 
@@ -237,11 +261,12 @@ export default function AddTransaction() {
         try {
           const txs = await getTransactions();
           const budgetLimit = await getBudgetLimit();
-          
-          const now = new Date();
+
+          // Compare against the month the expense belongs to (it may be backdated).
+          const now = date;
           const currentMonth = now.getMonth();
           const currentYear = now.getFullYear();
-          
+
           const existingDebits = txs.filter((t) => {
             const d = new Date(t.date);
             return (t.type || '').toLowerCase() !== 'credit' &&
@@ -249,16 +274,16 @@ export default function AddTransaction() {
               t.calculate_budget !== false &&
               d.getMonth() === currentMonth && d.getFullYear() === currentYear;
           }).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
-          
+
           const newTotal = existingDebits + amt;
           const pct = (newTotal / budgetLimit) * 100;
-          
+
           if (pct >= 90) {
-            const warningTitle = pct >= 100 ? "🚨 Budget Exceeded" : "⚠️ Budget Warning";
-            const warningMessage = pct >= 100 
+            const warningTitle = pct >= 100 ? 'Budget exceeded' : 'Budget warning';
+            const warningMessage = pct >= 100
               ? `This transaction brings your monthly spending to ₹${newTotal.toLocaleString('en-IN')}, which exceeds your monthly budget limit of ₹${budgetLimit.toLocaleString('en-IN')}!`
               : `This transaction brings your monthly spending to ₹${newTotal.toLocaleString('en-IN')} (${Math.round(pct)}% of your monthly budget limit).`;
-            
+
             const shouldProceed = await new Promise((resolve) => {
               Alert.alert(
                 warningTitle,
@@ -269,7 +294,7 @@ export default function AddTransaction() {
                 ]
               );
             });
-            
+
             if (!shouldProceed) {
               return;
             }
@@ -311,7 +336,8 @@ export default function AddTransaction() {
             loanName: selectedLoan.loanName,
             amount: amt.toString(),
             date: date.toISOString().split('T')[0],
-            note: description || `EMI Payment via Spend Tracker`
+            note: description || `EMI Payment via Spend Tracker`,
+            kind: 'emi',
           });
         }
       }
@@ -323,283 +349,265 @@ export default function AddTransaction() {
       } else {
         router.replace('/spend-tracker');
       }
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Failed to save transaction');
     }
   };
 
-  const insets = useSafeAreaInsets();
+  const onSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await handleSave();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onChangeType = (next) => {
+    if (next === 'credit') {
+      setType('credit');
+      if (category === 'EMI') {
+        setCategory('Other');
+      }
+    } else {
+      setType('debit');
+    }
+  };
+
+  const isEdit = !!params.id;
+  const isCredit = type === 'credit';
+  const dateLabel = date.toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 
   return (
-    <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
+      <Screen
+        footer={
+          <Button
+            label={isEdit ? 'Save changes' : 'Save'}
+            icon="checkmark"
+            onPress={onSave}
+            loading={saving}
+          />
+        }
       >
-        <ScrollView 
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(insets.top, 20) + 10 }
-          ]}
-          keyboardShouldPersistTaps="handled"
-        >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backText}>← Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>{params.id ? 'Edit Transaction' : 'New Transaction'}</Text>
-        </View>
+        <ScreenHeader
+          back
+          title={isEdit ? 'Edit transaction' : 'New transaction'}
+          subtitle={isEdit ? undefined : 'Log a spend or money you received'}
+        />
 
-        {/* Amount Input Card */}
-        <BlurView intensity={30} tint="light" style={styles.card}>
-          <Text style={styles.label}>TRANSACTION AMOUNT</Text>
-          <View style={styles.amountInputRow}>
-            <Text style={styles.currencySymbol}>₹</Text>
+        <Segmented options={TYPE_OPTIONS} value={type} onChange={onChangeType} />
+
+        {/* Amount */}
+        <Card style={[styles.amountCard, !!amountError && styles.amountCardError]}>
+          <Text style={styles.label}>{isCredit ? 'Amount received' : 'Amount spent'}</Text>
+          <View style={styles.amountRow}>
+            <Text style={[styles.currency, isCredit && { color: colors.primary }]}>₹</Text>
             <TextInput
-              style={styles.amountInput}
-              placeholder="0.00"
-              placeholderTextColor="#94a3b8"
+              style={[styles.amountInput, isCredit && { color: colors.primary }]}
+              placeholder="0"
+              placeholderTextColor={colors.textMuted}
               keyboardType="decimal-pad"
               value={amount}
-              onChangeText={setAmount}
+              onChangeText={(v) => {
+                setAmount(v);
+                if (amountError) setAmountError('');
+              }}
+              accessibilityLabel={isCredit ? 'Amount received in rupees' : 'Amount spent in rupees'}
             />
           </View>
-        </BlurView>
+          {amountError ? (
+            <Text style={styles.error} accessibilityLiveRegion="polite">
+              {amountError}
+            </Text>
+          ) : null}
+        </Card>
 
-        {/* Details Form Card */}
-        <BlurView intensity={30} tint="light" style={[styles.card, { marginTop: 20 }]}>
-          {/* Type Toggle */}
-          <Text style={styles.label}>TRANSACTION TYPE</Text>
-          <View style={styles.typeContainer}>
-            <TouchableOpacity
-              style={[styles.typeBtn, type === 'debit' && styles.typeBtnActiveDeb]}
-              onPress={() => setType('debit')}
-            >
-              <Ionicons name="arrow-up" size={16} color={type === 'debit' ? '#fff' : '#ef4444'} />
-              <Text style={[styles.typeBtnText, type === 'debit' && styles.typeBtnTextActive]}>Debit (Spent)</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.typeBtn, type === 'credit' && styles.typeBtnActiveCred]}
-              onPress={() => {
-                setType('credit');
-                if (category === 'EMI') {
-                  setCategory('Other');
-                }
-              }}
-            >
-              <Ionicons name="arrow-down" size={16} color={type === 'credit' ? '#fff' : '#10b981'} />
-              <Text style={[styles.typeBtnText, type === 'credit' && styles.typeBtnTextActive]}>Credit (Received)</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Payment Method Selector */}
-          {type === 'debit' && (
-            <>
-              <Text style={[styles.label, { marginTop: 20 }]}>PAYMENT METHOD</Text>
-              <View style={styles.typeContainer}>
-                <TouchableOpacity
-                  style={[styles.typeBtn, mode === 'UPI' && styles.typeBtnActiveUPI]}
-                  onPress={() => setMode('UPI')}
-                >
-                  <Ionicons name="phone-portrait-outline" size={16} color={mode === 'UPI' ? '#fff' : '#6366f1'} />
-                  <Text style={[styles.typeBtnText, mode === 'UPI' && styles.typeBtnTextActive]}>UPI</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.typeBtn, mode === 'Credit Card' && styles.typeBtnActiveCard]}
-                  onPress={() => setMode('Credit Card')}
-                >
-                  <Ionicons name="card-outline" size={16} color={mode === 'Credit Card' ? '#fff' : '#ec4899'} />
-                  <Text style={[styles.typeBtnText, mode === 'Credit Card' && styles.typeBtnTextActive]}>Credit Card</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.typeBtn, mode === 'Cash' && styles.typeBtnActiveCash]}
-                  onPress={() => setMode('Cash')}
-                >
-                  <Ionicons name="cash-outline" size={16} color={mode === 'Cash' ? '#fff' : '#fb923c'} />
-                  <Text style={[styles.typeBtnText, mode === 'Cash' && styles.typeBtnTextActive]}>Cash</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-
-          {/* Description */}
-          <Text style={[styles.label, { marginTop: 20 }]}>MERCHANT / DESCRIPTION</Text>
-          <TextInput
-            style={[styles.input, { minHeight: 100, textAlignVertical: 'top' }]}
-            placeholder="e.g. Amazon, Salary, Starbucks"
-            placeholderTextColor="#94a3b8"
+        <View style={styles.section}>
+          <Field
+            label="Description"
             value={description}
             onChangeText={setDescription}
+            placeholder="e.g. Amazon, Salary, Starbucks"
             multiline
-            numberOfLines={4}
+            hint="Leave blank to use the category name."
           />
+        </View>
 
-          {/* Calculate for Budget Switch */}
-          <View style={styles.toggleRow}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={styles.toggleLabel}>CALCULATE FOR BUDGET</Text>
-              <Text style={styles.toggleDesc}>
-                Include this transaction in monthly budget limits and statistics.
-              </Text>
-            </View>
-            <Switch
-              trackColor={{ false: '#cbd5e1', true: '#10b981' }}
-              thumbColor={calculateBudget ? '#ffffff' : '#f4f4f5'}
-              ios_backgroundColor="#cbd5e1"
-              onValueChange={setCalculateBudget}
-              value={calculateBudget}
+        {/* Category */}
+        <Text style={styles.sectionLabel}>Category</Text>
+        <View style={styles.chipGrid}>
+          {CATEGORIES.map((cat) => (
+            <Chip
+              key={cat}
+              label={cat}
+              icon={getCategoryIcon(cat).name}
+              selected={category === cat}
+              onPress={() => {
+                setCategory(cat);
+                setCategoryLocked(true);
+                if (loanError) setLoanError('');
+              }}
             />
-          </View>
+          ))}
+        </View>
 
-          {/* Category Selector */}
-          <Text style={[styles.label, { marginTop: 20 }]}>CATEGORY</Text>
-          <View style={styles.categoryGrid}>
-            {CATEGORIES.map((cat) => {
-              const iconInfo = getCategoryIcon(cat);
-              const isSelected = category === cat;
-              return (
-                <TouchableOpacity
-                  key={cat}
-                  style={[
-                    styles.categoryBtn,
-                    isSelected && { backgroundColor: iconInfo.color, borderColor: iconInfo.color },
-                  ]}
-                  onPress={() => {
-                    setCategory(cat);
-                    setCategoryLocked(true);
-                  }}
-                >
-                  <Ionicons
-                    name={iconInfo.name}
-                    size={14}
-                    color={isSelected ? '#fff' : iconInfo.color}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={[styles.categoryText, isSelected && styles.categoryTextActive]}>
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Select Loan/Debt (only when category is EMI) */}
-          {category === 'EMI' && loans.length > 0 && (
-            <>
-              <Text style={[styles.label, { marginTop: 20 }]}>SELECT LOAN / DEBT *</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-                <View style={styles.loanSelector}>
+        {/* Loan picker (only when category is EMI) */}
+        {category === 'EMI' ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Loan</Text>
+            {loans.length > 0 ? (
+              <>
+                <View style={styles.chipGrid}>
                   {loans.map((loan) => (
-                    <TouchableOpacity
+                    <Chip
                       key={loan.id}
-                      style={[
-                        styles.loanOption,
-                        selectedLoanId === loan.id && styles.loanOptionSelected,
-                      ]}
-                      onPress={() => setSelectedLoanId(loan.id)}
-                    >
-                      <Text
-                        style={[
-                          styles.loanOptionText,
-                          selectedLoanId === loan.id && styles.loanOptionTextSelected,
-                        ]}
-                      >
-                        {loan.loanName}
-                      </Text>
-                    </TouchableOpacity>
+                      label={loan.loanName}
+                      icon="wallet-outline"
+                      selected={selectedLoanId === loan.id}
+                      onPress={() => {
+                        setSelectedLoanId(loan.id);
+                        if (loanError) setLoanError('');
+                      }}
+                    />
                   ))}
                 </View>
-              </ScrollView>
-            </>
-          )}
+                {loanError ? (
+                  <Text style={styles.error} accessibilityLiveRegion="polite">
+                    {loanError}
+                  </Text>
+                ) : (
+                  <Text style={styles.hint}>
+                    {transactionId
+                      ? 'The EMI stays linked to this loan.'
+                      : 'Saving also records this EMI in the loan’s payment history.'}
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Text style={styles.hint}>No active loans to link this EMI to.</Text>
+            )}
+          </View>
+        ) : null}
 
-          {/* Date Selector */}
-          <Text style={[styles.label, { marginTop: 20 }]}>DATE</Text>
-          <TouchableOpacity style={styles.dateBtn} onPress={() => setShowDatePicker(true)}>
-            <Ionicons name="calendar-outline" size={18} color="#6366f1" />
-            <Text style={styles.dateBtnText}>
-              {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </Text>
-          </TouchableOpacity>
+        {/* Payment method (spends only) */}
+        {!isCredit ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Paid with</Text>
+            <View style={styles.chipGrid}>
+              {MODE_OPTIONS.map((m) => (
+                <Chip
+                  key={m.key}
+                  label={m.key}
+                  icon={m.icon}
+                  selected={mode === m.key}
+                  onPress={() => setMode(m.key)}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Date + budget */}
+        <Card padded={false} style={styles.detailsCard}>
+          <PressableScale
+            onPress={() => setShowDatePicker((v) => !v)}
+            style={styles.detailRow}
+            accessibilityLabel={`Date: ${dateLabel}`}
+            accessibilityHint="Changes the transaction date"
+            accessibilityState={{ expanded: showDatePicker }}
+          >
+            <View style={styles.detailIcon}>
+              <Ionicons name="calendar-outline" size={18} color={colors.indigo} />
+            </View>
+            <View style={styles.detailText}>
+              <Text style={styles.detailTitle}>Date</Text>
+              <Text style={styles.detailSub}>{dateLabel}</Text>
+            </View>
+            <Ionicons name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
+          </PressableScale>
           {showDatePicker && (
-            <DateTimePicker
-              value={date}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              onChange={(_, selected) => {
-                setShowDatePicker(Platform.OS === 'ios');
-                if (selected) setDate(selected);
-              }}
-              maximumDate={new Date()}
-            />
+            <View style={styles.pickerWrap}>
+              <DateTimePicker
+                value={date}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                onChange={(_, selected) => {
+                  setShowDatePicker(Platform.OS === 'ios');
+                  if (selected) setDate(selected);
+                }}
+                maximumDate={new Date()}
+              />
+            </View>
           )}
-        </BlurView>
-
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-          <Text style={styles.saveBtnText}>{params.id ? 'Save Changes' : 'Save Transaction'}</Text>
-        </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+          <View style={[styles.detailRow, styles.detailDivider]}>
+            <View style={styles.detailIcon}>
+              <Ionicons name="pie-chart-outline" size={18} color={colors.indigo} />
+            </View>
+            <View style={styles.detailText}>
+              <Text style={styles.detailTitle}>Count in budget</Text>
+              <Text style={styles.detailSub}>Include in monthly budget limits and stats.</Text>
+            </View>
+            <Switch
+              trackColor={{ false: colors.surfaceSunken, true: colors.primaryFill }}
+              thumbColor={colors.surface}
+              ios_backgroundColor={colors.surfaceSunken}
+              onValueChange={setCalculateBudget}
+              value={calculateBudget}
+              accessibilityLabel="Count in budget"
+            />
+          </View>
+        </Card>
+      </Screen>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60 },
-  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
-  backBtn: { marginRight: 16 },
-  backText: { color: '#64748b', fontSize: 16, fontWeight: '600' },
-  title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
-  card: { borderRadius: 24, padding: 20, borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)', overflow: 'hidden' },
-  label: { fontSize: 11, fontWeight: '700', color: '#64748b', letterSpacing: 1, marginBottom: 10 },
-  amountInputRow: { flexDirection: 'row', alignItems: 'center' },
-  currencySymbol: { fontSize: 40, fontWeight: '800', color: '#0f172a', marginRight: 8 },
-  amountInput: { flex: 1, fontSize: 40, fontWeight: '800', color: '#0f172a', padding: 0 },
-  typeContainer: { flexDirection: 'row', gap: 10 },
-  typeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.6)', borderParent: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  typeBtnActiveDeb: { backgroundColor: '#e11d48' },
-  typeBtnActiveCred: { backgroundColor: '#10b981' },
-  typeBtnActiveUPI: { backgroundColor: '#6366f1' },
-  typeBtnActiveCard: { backgroundColor: '#ec4899' },
-  typeBtnActiveCash: { backgroundColor: '#fb923c' },
-  typeBtnText: { fontSize: 13, fontWeight: '700', color: '#334155', marginLeft: 6 },
-  typeBtnTextActive: { color: '#fff' },
-  input: { backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 14, padding: 14, fontSize: 15, color: '#0f172a', borderParent: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  categoryBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)' },
-  categoryBtnActive: { backgroundColor: '#0f172a' },
-  categoryText: { fontSize: 13, fontWeight: '600', color: '#475569' },
-  categoryTextActive: { color: '#fff' },
-  saveBtn: { backgroundColor: '#10b981', borderRadius: 16, padding: 16, alignItems: 'center', marginTop: 30, shadowColor: '#10b981', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 10 },
-  saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-  dateBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 14, padding: 14, gap: 10 },
-  dateBtnText: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
-  loanSelector: { flexDirection: 'row', gap: 8 },
-  loanOption: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)' },
-  loanOptionSelected: { backgroundColor: '#10b981', borderColor: '#10b981' },
-  loanOptionText: { fontSize: 13, fontWeight: '600', color: 'rgba(15,23,42,0.6)' },
-  loanOptionTextSelected: { color: '#ffffff' },
-  toggleRow: {
+  flex: { flex: 1, backgroundColor: colors.page },
+  section: { marginTop: space.xl },
+  amountCard: { marginTop: space.lg, marginBottom: space.sm },
+  amountCardError: { borderWidth: 1, borderColor: colors.dangerFill },
+  label: { ...typeScale.label, color: colors.textSecondary },
+  amountRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.xs },
+  currency: { ...typeScale.display, color: colors.textMuted },
+  amountInput: {
+    flex: 1,
+    ...typeScale.display,
+    color: colors.text,
+    paddingVertical: space.xs,
+    minHeight: HIT,
+  },
+  error: { ...typeScale.caption, color: colors.danger, marginTop: space.sm },
+  hint: { ...typeScale.caption, fontWeight: '500', color: colors.textSecondary, marginTop: space.sm },
+  sectionLabel: { ...typeScale.label, color: colors.textSecondary, marginBottom: space.sm },
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  detailsCard: { marginTop: space.xxl, overflow: 'hidden' },
+  detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 20,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.05)',
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    minHeight: 64,
   },
-  toggleLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748b',
-    letterSpacing: 1,
-    marginBottom: 4,
+  detailDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderStrong },
+  detailIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.sm,
+    backgroundColor: colors.indigoSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  toggleDesc: {
-    fontSize: 12,
-    color: '#64748b',
-    lineHeight: 16,
-  },
+  detailText: { flex: 1, minWidth: 0 },
+  detailTitle: { ...typeScale.body, fontWeight: '700', color: colors.text },
+  detailSub: { ...typeScale.caption, fontWeight: '500', color: colors.textMuted, marginTop: 2 },
+  pickerWrap: { paddingHorizontal: space.sm, paddingBottom: space.sm },
 });

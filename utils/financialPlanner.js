@@ -1,4 +1,9 @@
-import { calculateEMIBreakdown } from './emiCalculator';
+import {
+  calculateEMIBreakdown,
+  getBulletMaturityDate,
+  getInstalmentDate,
+  getMonthsElapsed,
+} from './emiCalculator';
 
 /**
  * Advanced Financial Resilience & Planning Engine - V3
@@ -52,17 +57,14 @@ export function generateFinancialPlan({
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // The plan starts next month, so EMIs still due later this month are
+  // already counted in the starting balances.
+  const endOfThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
   const loanStates = loans
     .filter((l) => l.status !== 'closed')
     .map((l) => {
-      let monthsElapsed = 0;
-      if (l.startDate) {
-        monthsElapsed = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
-        if (today.getDate() >= start.getDate()) {
-          monthsElapsed += 1;
-        }
-        monthsElapsed = Math.max(0, monthsElapsed);
-      }
+      const monthsElapsed = l.startDate ? getMonthsElapsed(l.startDate, endOfThisMonth) : 0;
       
       const principal = parseFloat(String(l.principal).replace(/,/g, '')) || 0;
       const interest = parseFloat(l.interest) || 0;
@@ -71,7 +73,17 @@ export function generateFinancialPlan({
       const loanType = l.loanType || 'emi';
       
       const extraPayments = payments.filter(p => p.loanId === l.id);
-      const currentStatus = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emi, loanType, extraPayments);
+      const currentStatus = calculateEMIBreakdown(principal, interest, tenure, monthsElapsed, emi, loanType, extraPayments, l.startDate || null);
+      // Bullet loans fall due in their maturity month (plan month 1 if already overdue)
+      const monthsFromNow = (d) => (d.getFullYear() - today.getFullYear()) * 12 + (d.getMonth() - today.getMonth());
+      let maturityMonth = null;
+      if (loanType === 'bullet' && l.startDate) {
+        maturityMonth = monthsFromNow(getBulletMaturityDate(l.startDate, tenure));
+      }
+      // Plan month of the next EMI (later than month 1 only for loans that haven't started)
+      const firstEmiMonth = loanType === 'emi' && l.startDate && monthsElapsed < tenure
+        ? Math.max(1, monthsFromNow(getInstalmentDate(l.startDate, monthsElapsed + 1)))
+        : 1;
 
       return {
         id: l.id,
@@ -81,6 +93,8 @@ export function generateFinancialPlan({
         interest,
         emiAmount: emi,
         tenureRemaining: Math.max(0, tenure - monthsElapsed),
+        maturityMonth,
+        firstEmiMonth,
         closed: currentStatus.remainingAmount <= 5 || (loanType === 'emi' && monthsElapsed >= tenure),
         totalInterestSaved: 0,
       };
@@ -104,6 +118,7 @@ export function generateFinancialPlan({
     const monthLabel = planDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
     let activeLoanStates = loanStates.filter((l) => !l.closed);
+    const payingEmi = (l) => l.loanType === 'emi' && monthNum >= l.firstEmiMonth;
 
     // Step A: Income at this point in time
     const activeEvent = sortedEvents.filter(e => parseInt(e.fromMonth) <= monthNum).slice(-1)[0];
@@ -112,8 +127,10 @@ export function generateFinancialPlan({
     const iIncome = effectiveSalary + effectiveRent;
 
     // Step B: Compulsory Costs
-    const emiTotal = activeLoanStates.reduce((s, l) => s + (l.loanType === 'emi' ? l.emiAmount : 0), 0);
-    const bulletDue = activeLoanStates.filter(l => l.loanType === 'bullet' && l.tenureRemaining <= 0);
+    const emiTotal = activeLoanStates.reduce((s, l) => s + (payingEmi(l) ? l.emiAmount : 0), 0);
+    const bulletDue = activeLoanStates.filter(l =>
+      l.loanType === 'bullet' &&
+      (l.maturityMonth != null ? l.maturityMonth <= monthNum : l.tenureRemaining <= 0));
     const balloonPenalty = bulletDue.reduce((s, l) => s + l.remainingPrincipal, 0);
 
     const compulsoryCosts = emiTotal + balloonPenalty + fixedOverhead;
@@ -128,7 +145,7 @@ export function generateFinancialPlan({
     currentEmergencyFund += savingsThisMonth;
 
     // Step D: Normal Loan Aging
-    activeLoanStates.filter(l => l.loanType === 'emi').forEach((l) => {
+    activeLoanStates.filter(payingEmi).forEach((l) => {
       const monthlyRate = l.interest / 12 / 100;
       const intPortion = l.remainingPrincipal * monthlyRate;
       const prinPortion = Math.max(0, l.emiAmount - intPortion);

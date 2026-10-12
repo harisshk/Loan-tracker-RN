@@ -1,30 +1,73 @@
+import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
-    calculateEMI,
-    parseLocalDate,
-    toLocalISOString,
+  Button,
+  Card,
+  Chip,
+  colors,
+  Divider,
+  Field,
+  hapticImpact,
+  HIT,
+  kindColors,
+  PressableScale,
+  radius,
+  Screen,
+  ScreenHeader,
+  Segmented,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from "../components/ui/kit";
+import {
+  getBulletMaturityDate,
+  getInstalmentDate,
+  parseLocalDate,
+  toLocalISOString,
 } from "../utils/emiCalculator";
+import { formatINR } from "../utils/format";
 import { saveLoan } from "../utils/storage";
+
+const LOAN_TYPES = [
+  { key: "emi", label: "EMI loan" },
+  { key: "bullet", label: "Bullet / gold loan" },
+];
+
+const TENURE_PRESETS = {
+  emi: [12, 24, 36, 60, 120],
+  bullet: [6, 12, 24, 36],
+};
+
+const toNum = (val) => parseFloat(String(val || "").replace(/,/g, ""));
+
+/** Standard reducing-balance EMI, the same formula the schedule uses. */
+const formulaEMI = (p, annualRate, months) => {
+  const r = annualRate / 12 / 100;
+  if (r === 0) return p / months;
+  const f = Math.pow(1 + r, months);
+  return (p * r * f) / (f - 1);
+};
+
+const formatLongDate = (date) =>
+  date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 
 export default function AddLoan() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [formData, setFormData] = useState({
     loanName: "",
     principal: "",
@@ -37,33 +80,18 @@ export default function AddLoan() {
 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [calculatedEMI, setCalculatedEMI] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (
-      formData.principal &&
-      formData.interest &&
-      formData.tenure &&
-      formData.loanType === "emi"
-    ) {
-      const p = parseFloat(String(formData.principal).replace(/,/g, ""));
-      const i = parseFloat(formData.interest);
-      const t = parseInt(formData.tenure);
-      if (p > 0 && i >= 0 && t > 0) {
-        const emi = calculateEMI(p, i, t);
-        setCalculatedEMI(emi);
-      } else {
-        setCalculatedEMI(null);
-      }
-    } else {
-      setCalculatedEMI(null);
-    }
-  }, [
-    formData.principal,
-    formData.interest,
-    formData.tenure,
-    formData.loanType,
-  ]);
+  const isBullet = formData.loanType === "bullet";
+
+  // Suggested EMI from principal, rate and tenure (EMI loans only).
+  const p = toNum(formData.principal);
+  const i = parseFloat(formData.interest);
+  const t = parseInt(formData.tenure);
+  const termsValid = p > 0 && i >= 0 && t > 0;
+  const calculatedEMI =
+    !isBullet && termsValid ? String(Math.round(formulaEMI(p, i, t))) : null;
 
   const handleInputChange = (name, value) => {
     // Sanitize numeric inputs by removing commas (e.g. 1,00,000 -> 100000)
@@ -72,11 +100,12 @@ export default function AddLoan() {
       sanitizedValue = value.replace(/,/g, "");
     }
     setFormData((prev) => ({ ...prev, [name]: sanitizedValue }));
+    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: undefined }));
   };
 
-  const useCalculatedEMI = () => {
+  const applyCalculatedEMI = () => {
     if (calculatedEMI) {
-      setFormData((prev) => ({ ...prev, emiAmount: calculatedEMI }));
+      handleInputChange("emiAmount", calculatedEMI);
     }
   };
 
@@ -89,319 +118,398 @@ export default function AddLoan() {
     }
   };
 
-  const formatDisplayDate = (dateString) => {
-    const date = parseLocalDate(dateString);
-    return date.toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  };
-
   const validateForm = () => {
-    const parseSafe = (val) => parseFloat(String(val || "").replace(/,/g, ""));
-
+    const next = {};
     if (!formData.loanName.trim()) {
-      Alert.alert("Error", "Please enter loan name");
-      return false;
+      next.loanName = "Enter a name for this loan";
     }
-    if (!formData.principal || parseSafe(formData.principal) <= 0) {
-      Alert.alert("Error", "Please enter valid principal amount");
-      return false;
+    if (!formData.principal || toNum(formData.principal) <= 0) {
+      next.principal = "Enter a principal amount above zero";
     }
-    if (!formData.interest || parseSafe(formData.interest) < 0) {
-      Alert.alert("Error", "Please enter valid interest rate");
-      return false;
+    if (!formData.interest || toNum(formData.interest) < 0) {
+      next.interest = "Enter a valid interest rate";
     }
     if (
       formData.loanType === "emi" &&
-      (!formData.emiAmount || parseSafe(formData.emiAmount) <= 0)
+      (!formData.emiAmount || toNum(formData.emiAmount) <= 0)
     ) {
-      Alert.alert("Error", "Please enter valid EMI amount");
-      return false;
+      next.emiAmount = "Enter your monthly EMI amount";
     }
     if (
       !formData.tenure ||
       parseInt(String(formData.tenure).replace(/,/g, "")) <= 0
     ) {
-      Alert.alert("Error", "Please enter valid tenure");
-      return false;
+      next.tenure = "Enter the tenure in months";
     }
-    return true;
+    setErrors(next);
+    return Object.keys(next).length === 0;
   };
 
   const handleSave = async () => {
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      hapticImpact();
+      return;
+    }
+    setSaving(true);
     try {
       await saveLoan(formData);
       Alert.alert("Success", "Loan added successfully", [
         { text: "OK", onPress: () => router.back() },
       ]);
-    } catch (error) {
+    } catch (_error) {
       Alert.alert("Error", "Failed to save loan. Please try again.");
+    } finally {
+      setSaving(false);
     }
   };
 
+  // Live preview, derived from what has been entered so far.
+  const emiForPreview = toNum(formData.emiAmount) || 0;
+  const preview = !termsValid
+    ? null
+    : isBullet
+      ? {
+          stats: [
+            { label: "Monthly interest", value: formatINR((p * (i / 100)) / 12) },
+            { label: "Total interest", value: formatINR(p * (i / 100) * (t / 12)) },
+            {
+              label: "Due at maturity",
+              value: formatINR(p + p * (i / 100) * (t / 12)),
+            },
+          ],
+          dateLabel: "Matures on",
+          date: getBulletMaturityDate(formData.startDate, t),
+        }
+      : {
+          stats: [
+            {
+              label: "Monthly EMI",
+              value: emiForPreview > 0 ? formatINR(emiForPreview) : "—",
+            },
+            {
+              label: "Total interest",
+              value:
+                emiForPreview > 0
+                  ? formatINR(Math.max(0, emiForPreview * t - p))
+                  : "—",
+            },
+            {
+              label: "Total payable",
+              value: emiForPreview > 0 ? formatINR(emiForPreview * t) : "—",
+            },
+          ],
+          dateLabel: "Last EMI on",
+          date: getInstalmentDate(formData.startDate, t),
+        };
+
+  const hasErrors = Object.values(errors).some(Boolean);
+  const kind = kindColors[formData.loanType] || kindColors.emi;
+
   return (
-    <LinearGradient
-      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
-      style={styles.container}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.flex}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardView}
+      <Screen
+        footer={
+          <View>
+            {hasErrors ? (
+              <Text style={styles.footerError} accessibilityLiveRegion="polite">
+                Check the highlighted fields
+              </Text>
+            ) : null}
+            <Button
+              label="Save loan"
+              icon="checkmark"
+              onPress={handleSave}
+              loading={saving}
+            />
+          </View>
+        }
       >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: Math.max(insets.top, 20) + 10 },
-          ]}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Text style={styles.backButton}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Add New Loan</Text>
+        <ScreenHeader
+          back
+          title="Add loan"
+          subtitle="Track an EMI or a bullet / gold loan"
+        />
+
+        <Segmented
+          options={LOAN_TYPES}
+          value={formData.loanType}
+          onChange={(key) => {
+            handleInputChange("loanType", key);
+            setErrors({});
+          }}
+        />
+        <View style={styles.typeHint}>
+          <Ionicons name={kind.icon} size={14} color={kind.text} />
+          <Text style={styles.typeHintText}>
+            {isBullet
+              ? "Interest accrues monthly; principal and interest are repaid in one lump sum at maturity."
+              : "Repaid in fixed monthly instalments (reducing balance)."}
+          </Text>
+        </View>
+
+        <Card style={styles.formCard}>
+          <Field
+            label="Loan name"
+            value={formData.loanName}
+            onChangeText={(v) => handleInputChange("loanName", v)}
+            placeholder={isBullet ? "e.g. Gold loan" : "e.g. Home loan"}
+            error={errors.loanName}
+          />
+          <Field
+            label="Principal amount"
+            prefix="₹"
+            value={formData.principal}
+            onChangeText={(v) => handleInputChange("principal", v)}
+            placeholder="500000"
+            keyboardType="numeric"
+            error={errors.principal}
+          />
+          <Field
+            label="Interest rate"
+            suffix="% p.a."
+            value={formData.interest}
+            onChangeText={(v) => handleInputChange("interest", v)}
+            placeholder="8.5"
+            keyboardType="decimal-pad"
+            error={errors.interest}
+          />
+          <Field
+            label="Tenure"
+            suffix="months"
+            value={formData.tenure}
+            onChangeText={(v) => handleInputChange("tenure", v)}
+            placeholder="60"
+            keyboardType="numeric"
+            error={errors.tenure}
+          />
+          <View style={styles.chips}>
+            {TENURE_PRESETS[formData.loanType].map((m) => (
+              <Chip
+                key={m}
+                label={m % 12 === 0 ? `${m / 12} yr` : `${m} mo`}
+                selected={String(m) === String(formData.tenure)}
+                onPress={() => handleInputChange("tenure", String(m))}
+              />
+            ))}
           </View>
 
-          <BlurView intensity={20} tint="light" style={styles.formCard}>
-            <View
-              style={{
-                flexDirection: "row",
-                gap: 10,
-                padding: 24,
-                paddingBottom: 0,
-              }}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.typeButton,
-                  formData.loanType === "emi" && styles.typeButtonActive,
-                ]}
-                onPress={() => handleInputChange("loanType", "emi")}
-              >
-                <Text
-                  style={[
-                    styles.typeButtonText,
-                    formData.loanType === "emi" && styles.typeButtonTextActive,
-                  ]}
+          {!isBullet ? (
+            <>
+              <Field
+                label="Monthly EMI"
+                prefix="₹"
+                value={formData.emiAmount}
+                onChangeText={(v) => handleInputChange("emiAmount", v)}
+                placeholder="15000"
+                keyboardType="numeric"
+                error={errors.emiAmount}
+                hint="Use the amount on your bank statement"
+              />
+              {calculatedEMI ? (
+                <PressableScale
+                  onPress={applyCalculatedEMI}
+                  style={styles.calcRow}
+                  accessibilityLabel={`Use calculated EMI ${formatINR(calculatedEMI)}`}
                 >
-                  Regular EMI
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.typeButton,
-                  formData.loanType === "bullet" && styles.typeButtonActive,
-                ]}
-                onPress={() => handleInputChange("loanType", "bullet")}
-              >
-                <Text
-                  style={[
-                    styles.typeButtonText,
-                    formData.loanType === "bullet" &&
-                      styles.typeButtonTextActive,
-                  ]}
-                >
-                  Bullet / Gold
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.formContent}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Loan Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., Home Loan"
-                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
-                  value={formData.loanName}
-                  onChangeText={(v) => handleInputChange("loanName", v)}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Principal Amount (₹)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 500000"
-                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
-                  keyboardType="numeric"
-                  value={formData.principal}
-                  onChangeText={(v) => handleInputChange("principal", v)}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Interest Rate (%)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 8.5"
-                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
-                  keyboardType="decimal-pad"
-                  value={formData.interest}
-                  onChangeText={(v) => handleInputChange("interest", v)}
-                />
-              </View>
-
-              {formData.loanType === "emi" && (
-                <View style={styles.inputGroup}>
-                  <View style={styles.labelRow}>
-                    <Text style={styles.label}>EMI Amount (₹)</Text>
-                    {calculatedEMI && (
-                      <TouchableOpacity
-                        onPress={useCalculatedEMI}
-                        style={styles.calculatedBadge}
-                      >
-                        <Text style={styles.calculatedText}>
-                          Calculated: ₹
-                          {parseFloat(calculatedEMI).toLocaleString("en-IN")}
-                        </Text>
-                        <Text style={styles.useBadgeText}>Use →</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g., 15000"
-                    placeholderTextColor="rgba(15, 23, 42, 0.3)"
-                    keyboardType="numeric"
-                    value={formData.emiAmount}
-                    onChangeText={(v) => handleInputChange("emiAmount", v)}
-                  />
-                </View>
-              )}
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Start Date</Text>
-                <TouchableOpacity
-                  style={styles.dateButton}
-                  onPress={() => setShowDatePicker(true)}
-                >
-                  <Text style={styles.dateButtonText}>
-                    📅 {formatDisplayDate(formData.startDate)}
+                  <Ionicons name="calculator-outline" size={18} color={colors.indigo} />
+                  <Text style={styles.calcText} numberOfLines={1}>
+                    Calculated EMI{" "}
+                    <Text style={styles.calcAmount}>{formatINR(calculatedEMI)}</Text>
                   </Text>
-                </TouchableOpacity>
-                {showDatePicker && (
-                  <DateTimePicker
-                    value={selectedDate}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "spinner" : "default"}
-                    onChange={onDateChange}
-                  />
-                )}
-              </View>
+                  <Text style={styles.calcAction}>
+                    {String(formData.emiAmount) === calculatedEMI ? "Applied" : "Use"}
+                  </Text>
+                </PressableScale>
+              ) : null}
+            </>
+          ) : null}
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Tenure (months)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 60"
-                  placeholderTextColor="rgba(15, 23, 42, 0.3)"
-                  keyboardType="numeric"
-                  value={formData.tenure}
-                  onChangeText={(v) => handleInputChange("tenure", v)}
+          <DateRow
+            label={isBullet ? "Loan date" : "First EMI date"}
+            value={formatLongDate(parseLocalDate(formData.startDate))}
+            open={showDatePicker}
+            onPress={() => setShowDatePicker((v) => !v)}
+          />
+          {showDatePicker ? (
+            <View>
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display={Platform.OS === "ios" ? "spinner" : "default"}
+                onChange={onDateChange}
+              />
+              {Platform.OS === "ios" ? (
+                <Button
+                  label="Done"
+                  variant="ghost"
+                  onPress={() => setShowDatePicker(false)}
                 />
-              </View>
+              ) : null}
             </View>
-          </BlurView>
+          ) : null}
+        </Card>
 
-          <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            <BlurView intensity={25} tint="light" style={styles.saveBlur}>
-              <Text style={styles.saveButtonText}>Save Loan</Text>
-            </BlurView>
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+        {preview ? (
+          <Card style={styles.previewCard}>
+            <Text style={styles.overline}>Preview</Text>
+            <StatRow style={styles.previewStats}>
+              {preview.stats.map((s) => (
+                <StatTile key={s.label} label={s.label} value={s.value} />
+              ))}
+            </StatRow>
+            <Divider style={styles.previewDivider} />
+            <View style={styles.previewDate}>
+              <Ionicons name="flag-outline" size={16} color={colors.textMuted} />
+              <Text style={styles.previewDateLabel}>{preview.dateLabel}</Text>
+              <Text style={styles.previewDateValue}>{formatLongDate(preview.date)}</Text>
+            </View>
+          </Card>
+        ) : null}
+      </Screen>
+    </KeyboardAvoidingView>
+  );
+}
+
+/** Field-styled row that opens the date picker. */
+function DateRow({ label, value, open, onPress }) {
+  return (
+    <View style={styles.dateField}>
+      <Text style={styles.dateLabel}>{label}</Text>
+      <PressableScale
+        onPress={onPress}
+        style={[styles.dateInput, open && styles.dateInputOpen]}
+        accessibilityLabel={`${label}: ${value}`}
+        accessibilityHint="Opens the date picker"
+        accessibilityState={{ expanded: open }}
+      >
+        <Ionicons name="calendar-outline" size={18} color={colors.textMuted} />
+        <Text style={styles.dateValue}>{value}</Text>
+        <Ionicons
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={colors.textMuted}
+        />
+      </PressableScale>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  keyboardView: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 40 },
-  header: {
+  flex: { flex: 1, backgroundColor: colors.page },
+  typeHint: {
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 30,
-    gap: 15,
+    alignItems: "flex-start",
+    gap: space.sm,
+    marginTop: space.md,
+    paddingHorizontal: space.xs,
   },
-  backButton: { fontSize: 16, fontWeight: "600", color: "#10b981" },
-  headerTitle: { fontSize: 24, fontWeight: "700", color: "#0f172a" },
-  formCard: {
-    borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.5)",
-  },
-  formContent: { padding: 24 },
-  typeButton: {
+  typeHintText: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textSecondary,
     flex: 1,
-    paddingVertical: 12,
-    alignItems: "center",
-    borderRadius: 12,
-    backgroundColor: "rgba(15, 23, 42, 0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.05)",
   },
-  typeButtonActive: { backgroundColor: "#10b981", borderColor: "#10b981" },
-  typeButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "rgba(15, 23, 42, 0.6)",
+  formCard: {
+    marginTop: space.xl,
+    paddingBottom: space.xs,
   },
-  typeButtonTextActive: { color: "#fff" },
-  inputGroup: { marginBottom: 20 },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "rgba(15, 23, 42, 0.5)",
-    marginBottom: 8,
-  },
-  labelRow: {
+  chips: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
+    flexWrap: "wrap",
+    gap: space.sm,
+    marginTop: -space.sm,
+    marginBottom: space.lg,
   },
-  input: {
-    backgroundColor: "rgba(15, 23, 42, 0.03)",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    height: 50,
-    fontSize: 16,
-    color: "#0f172a",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.05)",
-  },
-  dateButton: {
-    backgroundColor: "rgba(15, 23, 42, 0.03)",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    height: 50,
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.05)",
-  },
-  dateButtonText: { fontSize: 16, color: "#0f172a" },
-  calculatedBadge: {
+  calcRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    gap: 4,
+    gap: space.sm,
+    minHeight: HIT,
+    marginTop: -space.sm,
+    marginBottom: space.lg,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.indigoSoft,
   },
-  calculatedText: { fontSize: 11, color: "#10b981", fontWeight: "500" },
-  useBadgeText: { fontSize: 11, color: "#10b981", fontWeight: "bold" },
-  saveButton: { marginTop: 30, borderRadius: 16, overflow: "hidden" },
-  saveBlur: {
-    backgroundColor: "#10b981",
-    paddingVertical: 16,
+  calcText: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  calcAmount: {
+    ...type.label,
+    fontWeight: "700",
+    color: colors.text,
+    fontVariant: ["tabular-nums"],
+  },
+  calcAction: {
+    ...type.label,
+    color: colors.indigo,
+  },
+  dateField: {
+    marginBottom: space.lg,
+  },
+  dateLabel: {
+    ...type.label,
+    color: colors.textSecondary,
+    marginBottom: space.xs + 2,
+  },
+  dateInput: {
+    flexDirection: "row",
     alignItems: "center",
+    gap: space.sm,
+    minHeight: 50,
+    paddingHorizontal: space.md + 2,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
   },
-  saveButtonText: { fontSize: 18, fontWeight: "700", color: "#fff" },
+  dateInputOpen: {
+    borderColor: colors.indigo,
+  },
+  dateValue: {
+    ...type.body,
+    color: colors.text,
+    flex: 1,
+  },
+  previewCard: {
+    marginTop: space.xxl,
+  },
+  overline: {
+    ...type.overline,
+    color: colors.textMuted,
+  },
+  previewStats: {
+    marginTop: space.md,
+  },
+  previewDivider: {
+    marginVertical: space.md,
+  },
+  previewDate: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+  },
+  previewDateLabel: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  previewDateValue: {
+    ...type.label,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  footerError: {
+    ...type.caption,
+    color: colors.danger,
+    textAlign: "center",
+    marginBottom: space.sm,
+  },
 });

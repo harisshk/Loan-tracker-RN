@@ -79,7 +79,7 @@ const getAllTransactionsRaw = async () => {
   return [];
 };
 
-export const getTransactions = async (monthStr) => {
+export const getTransactions = async (monthStr, { strict = false } = {}) => {
   try {
     const { url, key } = await getSupabaseConfig();
     if (!url || !key) {
@@ -191,6 +191,7 @@ export const getTransactions = async (monthStr) => {
     return formatted;
   } catch (e) {
     console.error('Error fetching transactions from Supabase:', e);
+    if (strict) throw e;
     return [];
   }
 };

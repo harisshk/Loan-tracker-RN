@@ -1,8 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,11 +14,24 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  Button,
+  Chip,
+  colors,
+  HeaderAction,
+  HIT,
+  PressableScale,
+  radius,
+  ScreenHeader,
+  Segmented,
+  shadow,
+  space,
+  type,
+} from "../../components/ui/kit";
 import { getLoans } from "../../utils/storage";
 import { getTransactions } from "../../utils/transactions";
 
@@ -64,18 +76,35 @@ const MODELS = [
 ];
 
 const LOAN_SUGGESTIONS = [
-  "💰 Which loan costs me the most interest?",
-  "📊 Should I prepay any loan?",
-  "🗓️ When will I be debt-free?",
-  "📈 How to reduce my EMI burden?",
+  "Which loan costs me the most interest?",
+  "Should I prepay any loan?",
+  "When will I be debt-free?",
+  "How to reduce my EMI burden?",
 ];
 
 const SPEND_SUGGESTIONS = [
-  "📊 How much did I spend this month?",
-  "💸 What is my 3-month spending breakdown?",
-  "🛍️ What is my highest spending category?",
-  "💳 Give me a budget and spending health checkup",
+  "How much did I spend this month?",
+  "What is my 3-month spending breakdown?",
+  "What is my highest spending category?",
+  "Give me a budget and spending health checkup",
 ];
+
+type ChatMessage = { role: string; text: string; isError?: boolean };
+
+const WELCOME_MESSAGE: ChatMessage = {
+  role: "assistant",
+  text: "Hi! I'm your **AI Financial Advisor**. I can help you analyze your **Loans** or your **Spends**.\n\nPick a topic above, then ask a question or tap a suggestion below.",
+};
+
+// The "Gemini API Key" phrase is used to find and remove this notice once a key exists.
+const API_KEY_NOTICE: ChatMessage = {
+  role: "assistant",
+  text: "**Add your Gemini API Key to start.** Head to **Settings** and paste your key. \n\nThis keeps your personal AI powered and secure!",
+  isError: true,
+};
+
+const isApiKeyNotice = (m: ChatMessage) =>
+  !!m.isError && m.text.includes("Gemini API Key");
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fetchWithRetry = async (
@@ -282,6 +311,7 @@ INSTRUCTIONS:
 
 export default function AIAdvisor() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   useEffect(() => {
@@ -305,14 +335,7 @@ export default function AIAdvisor() {
 
   const scrollRef = useRef<ScrollView>(null);
   const [contextType, setContextType] = useState<"loans" | "spends">("loans");
-  const [messages, setMessages] = useState<
-    { role: string; text: string; isError?: boolean }[]
-  >([
-    {
-      role: "assistant",
-      text: "👋 Hi! I'm your **AI Financial Advisor**. I can help you analyze your **Loans** or your **Spends**.\n\nUse the toggle at the top to select your context, and let's get started!",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loans, setLoans] = useState<any[]>([]);
@@ -339,26 +362,12 @@ export default function AIAdvisor() {
 
         if (effectiveKey) {
           setActiveKey(effectiveKey);
-          setMessages((prev) =>
-            prev.filter(
-              (m) => !m.isError || !m.text.includes("Gemini API Key"),
-            ),
-          );
+          setMessages((prev) => prev.filter((m) => !isApiKeyNotice(m)));
         } else {
           setActiveKey("");
           setMessages((prev) => {
-            if (
-              prev.some((m) => m.isError && m.text.includes("Gemini API Key"))
-            )
-              return prev;
-            return [
-              ...prev,
-              {
-                role: "assistant",
-                text: "👋 **Welcome!** To start chatting, please head to **Settings** and add your Gemini API Key. \n\nThis keeps your personal AI powered and secure!",
-                isError: true,
-              },
-            ];
+            if (prev.some(isApiKeyNotice)) return prev;
+            return [...prev, API_KEY_NOTICE];
           });
         }
       };
@@ -373,13 +382,13 @@ export default function AIAdvisor() {
     try {
       const data = await getLoans();
       setLoans(data || []);
-    } catch (e) {}
+    } catch {}
   };
   const loadTransactions = async () => {
     try {
       const data = await getTransactions();
       setTransactions(data || []);
-    } catch (e) {}
+    } catch {}
   };
 
   const loadUsage = async () => {
@@ -396,7 +405,7 @@ export default function AIAdvisor() {
       const fresh = { count: 0, date: today };
       setUsage(fresh);
       await AsyncStorage.setItem(USAGE_KEY, JSON.stringify(fresh));
-    } catch (e) {}
+    } catch {}
   };
 
   const incrementUsage = async () => {
@@ -409,23 +418,38 @@ export default function AIAdvisor() {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   }, [messages, loading]);
 
+  const currentModel = MODELS.find((m) => m.id === selectedModel) || MODELS[0];
+
   const showLimits = () => {
-    const currentModel =
-      MODELS.find((m) => m.id === selectedModel) || MODELS[0];
     const remaining = currentModel.rpd - usage.count;
     Alert.alert(
-      "📊 AI Usage Today",
+      "AI usage today",
       `Model: ${currentModel.name}\nUsed: ${usage.count}\nRemaining: ${Math.max(0, remaining)}\nDaily Limit: ${currentModel.rpd}\n\nLimit resets at midnight.`,
       [{ text: "Got it" }],
     );
+  };
+
+  const clearChat = () => {
+    Alert.alert("Start a new chat?", "This clears the current conversation.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear chat",
+        style: "destructive",
+        onPress: () => {
+          setMessages(
+            activeKey ? [WELCOME_MESSAGE] : [WELCOME_MESSAGE, API_KEY_NOTICE],
+          );
+          setLastUserQuery("");
+          setInput("");
+        },
+      },
+    ]);
   };
 
   const sendMessage = async (text?: string, isRetry = false) => {
     const userText = (text || input).trim();
     if (!userText || loading) return;
 
-    const currentModel =
-      MODELS.find((m) => m.id === selectedModel) || MODELS[0];
     if (usage.count >= currentModel.rpd) {
       Alert.alert(
         "Quota Exceeded",
@@ -502,7 +526,7 @@ export default function AIAdvisor() {
 
         if (highDemandRegex.test(rawMsg)) {
           const match = rawMsg.match(retryRegex);
-          rawMsg = `🚀 AI is currently very busy. Please try again in ${match ? match[1] : "a few seconds"}.`;
+          rawMsg = `AI is currently very busy. Please try again in ${match ? match[1] : "a few seconds"}.`;
         }
         throw new Error(rawMsg);
       }
@@ -516,7 +540,7 @@ export default function AIAdvisor() {
     } catch (err: any) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: `⚠️ ${err.message}`, isError: true },
+        { role: "assistant", text: err.message, isError: true },
       ]);
     } finally {
       setLoading(false);
@@ -525,430 +549,516 @@ export default function AIAdvisor() {
 
   const suggestions =
     contextType === "loans" ? LOAN_SUGGESTIONS : SPEND_SUGGESTIONS;
+  const hasConversation = messages.some((m) => m.role === "user");
+  const canSend = input.trim().length > 0 && !loading;
+  const remaining = Math.max(0, currentModel.rpd - usage.count);
 
   return (
-    <LinearGradient
-      colors={["#0f172a", "#1e293b", "#0f2d20"]}
-      style={styles.container}
-    >
+    <View style={styles.container}>
+      <StatusBar style="dark" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.flex}
         keyboardVerticalOffset={0}
       >
-        {/* Header Block */}
-        <BlurView
-          intensity={20}
-          tint="dark"
-          style={[styles.header, { paddingTop: insets.top + 10 }]}
-        >
-          <View style={{ flex: 1, alignItems: "center" }}>
-            <Text style={styles.headerTitle}>🤖 AI Advisor</Text>
-            {(() => {
-              const currentModel =
-                MODELS.find((m) => m.id === selectedModel) || MODELS[0];
-              return (
-                <Text style={styles.quotaText}>
-                  {usage.count} / {currentModel.rpd}{" "}
-                  <Text style={{ fontSize: 10, opacity: 0.6 }}>RPD</Text>
-                </Text>
-              );
-            })()}
+        {/* Fixed top: header, topic switcher, model picker */}
+        <View style={[styles.top, { paddingTop: insets.top + space.sm }]}>
+          <View style={styles.column}>
+            <ScreenHeader
+              back
+              title="AI Advisor"
+              subtitle="Answers use your loans and spends"
+              actions={
+                <>
+                  <HeaderAction
+                    icon="stats-chart-outline"
+                    label="Usage today"
+                    onPress={showLimits}
+                  />
+                  {hasConversation && !loading ? (
+                    <HeaderAction
+                      icon="create-outline"
+                      label="New chat"
+                      onPress={clearChat}
+                    />
+                  ) : null}
+                </>
+              }
+            />
+            <Segmented
+              options={[
+                { key: "loans", label: "Loans" },
+                { key: "spends", label: "Spends" },
+              ]}
+              value={contextType}
+              onChange={setContextType}
+            />
           </View>
-          <TouchableOpacity onPress={showLimits} style={styles.headerAction}>
-            <Ionicons name="stats-chart" size={18} color="#10b981" />
-          </TouchableOpacity>
-        </BlurView>
-
-        {/* Model Bar Selector */}
-        <View style={styles.modelBar}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.modelScroll}
+            style={styles.modelScroll}
+            contentContainerStyle={styles.modelRow}
           >
             {MODELS.map((m) => (
-              <TouchableOpacity
+              <Chip
                 key={m.id}
+                label={m.name}
+                selected={selectedModel === m.id}
                 onPress={() => setSelectedModel(m.id)}
-                style={[
-                  styles.modelChip,
-                  selectedModel === m.id && styles.modelChipActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modelChipText,
-                    selectedModel === m.id && styles.modelChipTextActive,
-                  ]}
-                >
-                  {m.name}
-                </Text>
-              </TouchableOpacity>
+              />
             ))}
           </ScrollView>
-        </View>
-
-        {/* Segmented Context Selector */}
-        <View style={styles.selectorContainer}>
-          <BlurView intensity={25} tint="dark" style={styles.selectorBlur}>
-            <TouchableOpacity
-              style={[
-                styles.selectorBtn,
-                contextType === "loans" && styles.selectorBtnActive,
-              ]}
-              onPress={() => setContextType("loans")}
+          <View style={styles.column}>
+            <PressableScale
+              onPress={showLimits}
+              style={styles.usageRow}
+              accessibilityLabel={`${usage.count} of ${currentModel.rpd} questions used today on ${currentModel.name}. ${remaining} left.`}
+              accessibilityHint="Shows today's usage limits"
             >
               <Ionicons
-                name="wallet-outline"
-                size={16}
-                color={
-                  contextType === "loans" ? "#fff" : "rgba(255,255,255,0.5)"
-                }
+                name="pulse-outline"
+                size={14}
+                color={colors.textSecondary}
               />
-              <Text
-                style={[
-                  styles.selectorText,
-                  contextType === "loans" && styles.selectorTextActive,
-                ]}
-              >
-                Analyze Loans
+              <Text style={styles.usageText} numberOfLines={1}>
+                {usage.count} of {currentModel.rpd} used today
+                <Text style={styles.usageMuted}>{`  ·  ${currentModel.desc}`}</Text>
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.selectorBtn,
-                contextType === "spends" && styles.selectorBtnActive,
-              ]}
-              onPress={() => setContextType("spends")}
-            >
-              <Ionicons
-                name="card-outline"
-                size={16}
-                color={
-                  contextType === "spends" ? "#fff" : "rgba(255,255,255,0.5)"
-                }
-              />
-              <Text
-                style={[
-                  styles.selectorText,
-                  contextType === "spends" && styles.selectorTextActive,
-                ]}
-              >
-                Analyze Spends
-              </Text>
-            </TouchableOpacity>
-          </BlurView>
+            </PressableScale>
+          </View>
         </View>
 
+        {/* Conversation */}
         <ScrollView
           ref={scrollRef}
-          style={styles.chatArea}
-          contentContainerStyle={styles.chatContent}
+          style={styles.flex}
+          contentContainerStyle={[styles.column, styles.chatContent]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
         >
-          {messages.map((msg: any, idx) => (
-            <View key={idx} style={{ gap: 6 }}>
+          {messages.map((msg, idx) => {
+            const isUser = msg.role === "user";
+            const isNotice = isApiKeyNotice(msg);
+            const copied = copiedIdx === idx;
+            return (
               <View
-                style={[
-                  styles.bubble,
-                  msg.role === "user" ? styles.userBubble : styles.aiBubble,
-                ]}
+                key={idx}
+                style={[styles.message, isUser ? styles.messageUser : null]}
               >
-                <View style={styles.bubbleHeader}>
-                  <Text
-                    style={[
-                      styles.aiLabel,
-                      msg.role === "user" && styles.userLabel,
-                    ]}
-                  >
-                    {msg.role === "user"
-                      ? "YOU"
-                      : msg.isError
-                        ? "ERROR"
-                        : "ADVISOR"}
-                  </Text>
-                  <TouchableOpacity
-                    style={[
-                      styles.copyBtn,
-                      msg.role === "user" && styles.userCopyBtn,
-                    ]}
-                    onPress={() => handleCopy(msg.text, idx)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name={
-                        copiedIdx === idx ? "checkmark-circle" : "copy-outline"
-                      }
-                      size={13}
-                      color={
-                        copiedIdx === idx
-                          ? "#10b981"
-                          : msg.role === "user"
-                            ? "rgba(255,255,255,0.85)"
-                            : "rgba(255,255,255,0.5)"
-                      }
-                    />
-                    <Text
-                      style={[
-                        styles.copyBtnText,
-                        msg.role === "user" && {
-                          color: "rgba(255,255,255,0.9)",
-                        },
-                        copiedIdx === idx && { color: "#10b981" },
-                      ]}
-                    >
-                      {copiedIdx === idx ? "Copied" : "Copy"}
+                {isUser ? (
+                  <View style={styles.userBubble}>
+                    <Text selectable style={styles.userText}>
+                      {msg.text}
                     </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {msg.role === "user" ? (
-                  <Text selectable style={{ color: "#fff", fontSize: 16 }}>
-                    {msg.text}
-                  </Text>
+                  </View>
                 ) : (
-                  <Markdown style={markdownStyles}>{msg.text || ""}</Markdown>
+                  <View
+                    style={[
+                      styles.aiBubble,
+                      msg.isError &&
+                        (isNotice ? styles.aiBubbleNotice : styles.aiBubbleError),
+                    ]}
+                  >
+                    <View style={styles.aiLabelRow}>
+                      <Ionicons
+                        name={
+                          isNotice
+                            ? "key-outline"
+                            : msg.isError
+                              ? "alert-circle-outline"
+                              : "sparkles"
+                        }
+                        size={14}
+                        color={
+                          isNotice
+                            ? colors.warning
+                            : msg.isError
+                              ? colors.danger
+                              : colors.primary
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.aiLabel,
+                          msg.isError && {
+                            color: isNotice ? colors.warning : colors.danger,
+                          },
+                        ]}
+                      >
+                        {isNotice
+                          ? "Setup needed"
+                          : msg.isError
+                            ? "Couldn't get an answer"
+                            : "Advisor"}
+                      </Text>
+                    </View>
+                    <Markdown style={markdownStyles}>{msg.text || ""}</Markdown>
+                  </View>
                 )}
-              </View>
-              {msg.isError && (
-                <TouchableOpacity
-                  style={styles.retryBtn}
-                  onPress={() => sendMessage(lastUserQuery, true)}
-                >
-                  <Text style={styles.retryBtnText}>🔄 Retry question</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          ))}
-          {loading && (
-            <ActivityIndicator
-              color="#10b981"
-              style={{ alignSelf: "flex-start", margin: 20 }}
-            />
-          )}
 
-          {messages.length < 3 && !loading && (
-            <View style={styles.suggestGrid}>
-              {suggestions.map((s, i) => (
-                <TouchableOpacity
-                  key={i}
-                  style={styles.suggestChip}
-                  onPress={() => sendMessage(s)}
+                <View
+                  style={[styles.messageActions, isUser && styles.messageActionsUser]}
                 >
-                  <Text style={styles.suggestText}>{s}</Text>
-                </TouchableOpacity>
-              ))}
+                  {isNotice ? (
+                    <Button
+                      label="Open settings"
+                      icon="settings-outline"
+                      variant="secondary"
+                      onPress={() => router.push("/settings" as any)}
+                      style={styles.inlineButton}
+                    />
+                  ) : msg.isError && lastUserQuery ? (
+                    <Button
+                      label="Retry question"
+                      icon="refresh"
+                      variant="secondary"
+                      onPress={() => sendMessage(lastUserQuery, true)}
+                      disabled={loading}
+                      style={styles.inlineButton}
+                    />
+                  ) : null}
+                  {!isNotice ? (
+                    <PressableScale
+                      onPress={() => handleCopy(msg.text, idx)}
+                      style={styles.copyBtn}
+                      hitSlop={8}
+                      haptic={false}
+                      accessibilityLabel={copied ? "Copied" : "Copy message"}
+                    >
+                      <Ionicons
+                        name={copied ? "checkmark" : "copy-outline"}
+                        size={14}
+                        color={copied ? colors.primary : colors.textSecondary}
+                      />
+                      <Text
+                        style={[styles.copyText, copied && { color: colors.primary }]}
+                      >
+                        {copied ? "Copied" : "Copy"}
+                      </Text>
+                    </PressableScale>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })}
+
+          {loading ? (
+            <View
+              style={[styles.aiBubble, styles.thinking]}
+              accessibilityLiveRegion="polite"
+              accessibilityLabel="Advisor is thinking"
+            >
+              <ActivityIndicator size="small" color={colors.primaryFill} />
+              <Text style={styles.thinkingText}>Thinking…</Text>
             </View>
-          )}
+          ) : null}
+
+          {messages.length < 3 && !loading ? (
+            <View style={styles.suggestions}>
+              <Text style={styles.suggestTitle}>Try asking</Text>
+              <View style={styles.suggestWrap}>
+                {suggestions.map((s) => (
+                  <Chip key={s} label={s} onPress={() => sendMessage(s)} />
+                ))}
+              </View>
+            </View>
+          ) : null}
         </ScrollView>
 
-        <BlurView
-          intensity={40}
-          tint="dark"
+        {/* Composer */}
+        <View
           style={[
-            styles.inputBar,
-            Platform.OS === "ios" && {
-              paddingBottom: keyboardVisible ? 12 : insets.bottom + 65,
+            styles.composer,
+            {
+              paddingBottom:
+                Platform.OS === "ios"
+                  ? keyboardVisible
+                    ? space.md
+                    : insets.bottom + 65
+                  : space.md,
             },
           ]}
         >
-          <TextInput
-            style={styles.input}
-            placeholder={
-              contextType === "loans"
-                ? "Ask about your loans..."
-                : "Ask about your spends/budgets..."
-            }
-            placeholderTextColor="rgba(255,255,255,0.3)"
-            value={input}
-            onChangeText={setInput}
-            multiline
-          />
-          <TouchableOpacity
-            style={styles.sendBt}
-            onPress={() => sendMessage()}
-            disabled={loading}
-          >
-            <Text style={styles.sendBtText}>↑</Text>
-          </TouchableOpacity>
-        </BlurView>
+          <View style={[styles.column, styles.composerRow]}>
+            <View style={styles.inputWrap}>
+              <TextInput
+                style={styles.input}
+                placeholder={
+                  contextType === "loans"
+                    ? "Ask about your loans…"
+                    : "Ask about your spends or budget…"
+                }
+                placeholderTextColor={colors.textMuted}
+                value={input}
+                onChangeText={setInput}
+                multiline
+                accessibilityLabel="Message"
+              />
+            </View>
+            <PressableScale
+              onPress={() => sendMessage()}
+              disabled={!canSend}
+              style={[styles.sendBtn, !canSend && styles.sendBtnIdle]}
+              accessibilityLabel="Send message"
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color={colors.textMuted} />
+              ) : (
+                <Ionicons
+                  name="arrow-up"
+                  size={22}
+                  color={canSend ? colors.textOnAccent : colors.textMuted}
+                />
+              )}
+            </PressableScale>
+          </View>
+        </View>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const markdownStyles: any = {
-  body: { color: "rgba(255,255,255,0.95)", fontSize: 15, lineHeight: 22 },
+  body: { ...type.body, fontWeight: "400", lineHeight: 22, color: colors.text },
+  paragraph: { marginTop: 0, marginBottom: space.sm },
   heading1: {
-    color: "#10b981",
-    fontSize: 22,
-    fontWeight: "800",
-    marginVertical: 8,
+    ...type.headline,
+    fontSize: 18,
+    color: colors.text,
+    marginTop: space.xs,
+    marginBottom: space.sm,
   },
   heading2: {
-    color: "#10b981",
-    fontSize: 18,
-    fontWeight: "700",
-    marginVertical: 8,
+    ...type.headline,
+    color: colors.text,
+    marginTop: space.xs,
+    marginBottom: space.sm,
   },
-  strong: { fontWeight: "800", color: "#fff" },
-  bullet_list_icon: { color: "#10b981" },
+  heading3: {
+    ...type.body,
+    fontWeight: "700",
+    color: colors.text,
+    marginTop: space.xs,
+    marginBottom: space.xs,
+  },
+  strong: { fontWeight: "700", color: colors.text },
+  em: { fontStyle: "italic" },
+  link: { color: colors.indigo },
+  bullet_list_icon: { color: colors.primary, fontWeight: "800" },
+  ordered_list_icon: { color: colors.primary, fontWeight: "700" },
+  list_item: { marginBottom: space.xs },
+  code_inline: {
+    backgroundColor: colors.surfaceSunken,
+    color: colors.text,
+    borderRadius: 6,
+    paddingHorizontal: 4,
+  },
+  code_block: {
+    backgroundColor: colors.surfaceSunken,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    padding: space.md,
+  },
+  fence: {
+    backgroundColor: colors.surfaceSunken,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    padding: space.md,
+  },
+  blockquote: {
+    backgroundColor: colors.surfaceMuted,
+    borderLeftColor: colors.primaryFill,
+    borderLeftWidth: 3,
+    paddingHorizontal: space.md,
+  },
+  hr: { backgroundColor: colors.borderStrong, height: StyleSheet.hairlineWidth },
+  table: { borderColor: colors.borderStrong, borderRadius: radius.sm },
+  th: { padding: space.sm, fontWeight: "700" },
+  td: { padding: space.sm },
+  tr: { borderColor: colors.borderStrong },
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.page },
   flex: { flex: 1 },
-  header: {
+  column: {
+    width: "100%",
+    maxWidth: 680,
+    alignSelf: "center",
+    paddingHorizontal: space.lg,
+  },
+  top: {
+    paddingBottom: space.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.borderStrong,
+  },
+  modelScroll: {
+    flexGrow: 0,
+    marginTop: space.md,
+  },
+  modelRow: {
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+  },
+  usageRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 12,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.1)",
-  },
-  headerAction: { width: 50, alignItems: "center" },
-  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
-  quotaText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#10b981",
-    marginTop: 2,
-    letterSpacing: 1,
-  },
-  modelBar: { backgroundColor: "rgba(0,0,0,0.2)", paddingVertical: 10 },
-  modelScroll: { paddingHorizontal: 15, gap: 8 },
-  modelChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
-  modelChipActive: { backgroundColor: "#10b981", borderColor: "#10b981" },
-  modelChipText: {
-    color: "rgba(255,255,255,0.6)",
-    fontSize: 12,
-    fontWeight: "bold",
-  },
-  modelChipTextActive: { color: "#fff" },
-  selectorContainer: { paddingHorizontal: 15, marginVertical: 10 },
-  selectorBlur: {
-    flexDirection: "row",
-    borderRadius: 14,
-    overflow: "hidden",
-    padding: 4,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-  },
-  selectorBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  selectorBtnActive: { backgroundColor: "#10b981" },
-  selectorText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.6)",
-  },
-  selectorTextActive: { color: "#fff" },
-  chatArea: { flex: 1 },
-  chatContent: { padding: 15, gap: 15 },
-  bubble: { maxWidth: "88%", padding: 14, borderRadius: 18 },
-  aiBubble: {
+    gap: space.xs + 2,
+    minHeight: HIT,
     alignSelf: "flex-start",
-    backgroundColor: "rgba(255,255,255,0.08)",
   },
-  userBubble: { alignSelf: "flex-end", backgroundColor: "#10b981" },
-  bubbleHeader: {
+  usageText: {
+    ...type.caption,
+    fontWeight: "600",
+    color: colors.textSecondary,
+    fontVariant: ["tabular-nums"],
+    flexShrink: 1,
+  },
+  usageMuted: {
+    fontWeight: "500",
+  },
+  chatContent: {
+    paddingTop: space.lg,
+    paddingBottom: space.xl,
+    gap: space.lg,
+  },
+  message: {
+    alignItems: "flex-start",
+    gap: space.xs,
+  },
+  messageUser: {
+    alignItems: "flex-end",
+  },
+  userBubble: {
+    maxWidth: "85%",
+    backgroundColor: colors.text,
+    borderRadius: radius.lg,
+    borderBottomRightRadius: space.xs + 2,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  userText: {
+    ...type.body,
+    fontWeight: "500",
+    lineHeight: 22,
+    color: colors.textOnAccent,
+  },
+  aiBubble: {
+    maxWidth: "94%",
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderBottomLeftRadius: space.xs + 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.xs,
+    ...shadow.card,
+  },
+  aiBubbleError: {
+    borderColor: colors.dangerFill,
+  },
+  aiBubbleNotice: {
+    borderColor: colors.warningFill,
+  },
+  aiLabelRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 6,
-    gap: 10,
+    gap: space.xs + 2,
+    marginBottom: space.xs + 2,
   },
   aiLabel: {
-    fontSize: 10,
-    fontWeight: "bold",
-    color: "#10b981",
-    letterSpacing: 0.5,
+    ...type.caption,
+    color: colors.primary,
   },
-  userLabel: { color: "rgba(255,255,255,0.9)" },
+  messageActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    flexWrap: "wrap",
+  },
+  messageActionsUser: {
+    justifyContent: "flex-end",
+  },
+  inlineButton: {
+    minHeight: HIT,
+    paddingHorizontal: space.lg,
+  },
   copyBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 8,
+    gap: space.xs,
+    minHeight: 28,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.pill,
   },
-  userCopyBtn: { backgroundColor: "rgba(0,0,0,0.15)" },
-  copyBtnText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.6)",
+  copyText: {
+    ...type.caption,
+    color: colors.textSecondary,
   },
-  retryBtn: {
+  thinking: {
     alignSelf: "flex-start",
-    marginLeft: 10,
-    backgroundColor: "rgba(225, 29, 72, 0.15)",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(225, 29, 72, 0.3)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    paddingVertical: space.md,
   },
-  retryBtnText: { color: "#fb7185", fontSize: 13, fontWeight: "bold" },
-  suggestGrid: {
+  thinkingText: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.textMuted,
+  },
+  suggestions: {
+    marginTop: space.sm,
+    gap: space.md,
+  },
+  suggestTitle: {
+    ...type.overline,
+    color: colors.textSecondary,
+  },
+  suggestWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
-    marginTop: 20,
+    gap: space.sm,
   },
-  suggestChip: {
-    padding: 12,
-    borderRadius: 15,
-    backgroundColor: "rgba(16,185,129,0.1)",
-    borderWidth: 1,
-    borderColor: "rgba(16,185,129,0.2)",
+  composer: {
+    paddingTop: space.md,
+    backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderStrong,
   },
-  suggestText: { color: "#10b981", fontSize: 14, fontWeight: "500" },
-  inputBar: {
+  composerRow: {
     flexDirection: "row",
-    padding: 15,
-    paddingBottom: Platform.OS === "ios" ? 25 : 15,
-    gap: 12,
     alignItems: "flex-end",
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.1)",
+    gap: space.sm,
+  },
+  inputWrap: {
+    flex: 1,
+    minHeight: HIT,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    paddingHorizontal: space.md + 2,
+    justifyContent: "center",
   },
   input: {
-    flex: 1,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderRadius: 22,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    color: "#fff",
-    fontSize: 16,
+    ...type.body,
+    color: colors.text,
     maxHeight: 120,
+    paddingTop: 11,
+    paddingBottom: 11,
   },
-  sendBt: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#10b981",
-    justifyContent: "center",
+  sendBtn: {
+    width: HIT,
+    height: HIT,
+    borderRadius: HIT / 2,
+    backgroundColor: colors.primary,
     alignItems: "center",
+    justifyContent: "center",
   },
-  sendBtText: { color: "#fff", fontSize: 24, fontWeight: "bold" },
+  sendBtnIdle: {
+    backgroundColor: colors.surfaceSunken,
+  },
 });

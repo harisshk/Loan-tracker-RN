@@ -1,5 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { calculateEMIBreakdown, getBulletMaturityDate } from "./emiCalculator";
+import {
+  calculateEMIBreakdown,
+  getBulletMaturityDate,
+  getMonthsElapsed,
+  getNextInstalment,
+  getNextPremiumDate,
+  getInstalmentDate,
+  parseLocalDate,
+  PAYMENT_KINDS,
+} from "./emiCalculator";
 import {
     cancelAllLoanNotifications,
     scheduleEMIReminder,
@@ -24,13 +33,13 @@ const getCleanUrl = (url) => {
 };
 
 // Helper to refresh all notifications
-const refreshAllNotifications = async (loans, insurances = []) => {
+export const refreshAllNotifications = async (loans, insurances = []) => {
   try {
     await cancelAllLoanNotifications();
 
     if (loans) {
       for (const loan of loans) {
-        if (loan.startDate && loan.emiAmount && loan.loanType !== "bullet") {
+        if (loan.status !== "closed" && loan.startDate && (loan.emiAmount || loan.loanType === "bullet")) {
           await scheduleEMIReminder(loan);
         }
       }
@@ -49,7 +58,7 @@ const refreshAllNotifications = async (loans, insurances = []) => {
 };
 
 // User-scoped getters
-export const getInsurances = async () => {
+export const getInsurances = async ({ strict = false } = {}) => {
   try {
     const { url, key } = await getSupabaseConfig();
     if (!url || !key) {
@@ -96,6 +105,7 @@ export const getInsurances = async () => {
     }));
   } catch (e) {
     console.error("Error reading insurances from Supabase:", e);
+    if (strict) throw e;
     return [];
   }
 };
@@ -305,7 +315,7 @@ export const updateInsurance = async (id, updates) => {
 };
 
 // Loan operations
-export const getLoans = async () => {
+export const getLoans = async ({ strict = false } = {}) => {
   try {
     const { url, key } = await getSupabaseConfig();
     if (!url || !key) {
@@ -361,6 +371,7 @@ export const getLoans = async () => {
     }));
   } catch (e) {
     console.error("Error reading loans from Supabase:", e);
+    if (strict) throw e;
     return [];
   }
 };
@@ -627,7 +638,32 @@ export const deleteLoan = async (loanId) => {
 };
 
 // Payment operations
-export const getPayments = async () => {
+// Payment kind ("prepayment" | "emi" | "settlement") lives in a `kind` column when the
+// Supabase table has one; otherwise it is remembered on this device.
+const PAYMENT_KIND_MISSING_KEY = "@supabase_missing_payment_kind";
+const LOCAL_PAYMENT_KINDS_KEY = "@local_payment_kinds";
+let isPaymentKindColumnSupported = true;
+AsyncStorage.getItem(PAYMENT_KIND_MISSING_KEY)
+  .then((v) => {
+    if (v === "true") isPaymentKindColumnSupported = false;
+  })
+  .catch(() => {});
+
+const getLocalPaymentKinds = async () => {
+  try {
+    return JSON.parse((await AsyncStorage.getItem(LOCAL_PAYMENT_KINDS_KEY)) || "{}");
+  } catch {
+    return {};
+  }
+};
+
+const rememberPaymentKind = async (id, kind) => {
+  const kinds = await getLocalPaymentKinds();
+  kinds[String(id)] = kind;
+  await AsyncStorage.setItem(LOCAL_PAYMENT_KINDS_KEY, JSON.stringify(kinds)).catch(() => {});
+};
+
+export const getPayments = async ({ strict = false } = {}) => {
   try {
     const { url, key } = await getSupabaseConfig();
     if (!url || !key) {
@@ -657,11 +693,13 @@ export const getPayments = async () => {
     }
 
     const data = await response.json();
+    const localKinds = await getLocalPaymentKinds();
     return data.map((payment) => ({
       id: payment.id,
       loanId: payment.loanid || payment.loan_id || payment.loanId,
       amount: parseFloat(payment.amount || 0),
       paidAt: payment.paidat || payment.paid_at || payment.paidAt,
+      kind: payment.kind || localKinds[String(payment.id)] || null,
       createdAt:
         payment.createdat ||
         payment.created_at ||
@@ -671,6 +709,7 @@ export const getPayments = async () => {
     }));
   } catch (e) {
     console.error("Error reading payments from Supabase:", e);
+    if (strict) throw e;
     return [];
   }
 };
@@ -685,6 +724,7 @@ export const addPayment = async (payment) => {
     const cleanUrl = getCleanUrl(url);
     const userEmail =
       (await AsyncStorage.getItem("@gmail_user_email")) || "anonymous";
+    const kind = PAYMENT_KINDS.includes(payment.kind) ? payment.kind : null;
     const newPayment = {
       id: payment.id || Date.now().toString(),
       loanid: payment.loanId || payment.loan_id || payment.loanid,
@@ -700,16 +740,33 @@ export const addPayment = async (payment) => {
       newPayment.user_email = userEmail;
     }
 
-    const response = await fetch(`${cleanUrl}/rest/v1/payments`, {
-      method: "POST",
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify(newPayment),
-    });
+    const post = (body) =>
+      fetch(`${cleanUrl}/rest/v1/payments`, {
+        method: "POST",
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify(body),
+      });
+
+    let response = await post(
+      kind && isPaymentKindColumnSupported ? { ...newPayment, kind } : newPayment,
+    );
+
+    // Table without a `kind` column: save without it and remember the kind locally.
+    if (!response.ok && kind && isPaymentKindColumnSupported) {
+      const errText = await response.text().catch(() => "");
+      if (response.status === 400 && /kind|column/i.test(errText)) {
+        isPaymentKindColumnSupported = false;
+        await AsyncStorage.setItem(PAYMENT_KIND_MISSING_KEY, "true").catch(() => {});
+        response = await post(newPayment);
+      } else {
+        throw new Error(`Failed to add payment on Supabase: ${response.status} - ${errText}`);
+      }
+    }
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
@@ -720,6 +777,9 @@ export const addPayment = async (payment) => {
 
     const data = await response.json();
     const savedPayment = data && data[0] ? data[0] : newPayment;
+    if (kind && !savedPayment.kind) {
+      await rememberPaymentKind(savedPayment.id, kind);
+    }
     return {
       id: savedPayment.id,
       loanId:
@@ -727,6 +787,7 @@ export const addPayment = async (payment) => {
       amount: parseFloat(savedPayment.amount || 0),
       paidAt:
         savedPayment.paidat || savedPayment.paid_at || savedPayment.paidAt,
+      kind: savedPayment.kind || kind,
       createdAt:
         savedPayment.createdat ||
         savedPayment.created_at ||
@@ -780,22 +841,8 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     // Filter payments for this specific loan
     const extraPayments = payments.filter((p) => p.loanId === loan.id);
 
-    // Calculate months elapsed since start date
-    let monthsElapsed = 0;
-
-    if (loan.startDate) {
-      const startDate = new Date(loan.startDate);
-      const currentTime = new Date();
-
-      // Calculate months elapsed since start date (auto-count current month if today >= due date)
-      monthsElapsed =
-        (currentTime.getFullYear() - startDate.getFullYear()) * 12 +
-        (currentTime.getMonth() - startDate.getMonth());
-      if (currentTime.getDate() >= startDate.getDate()) {
-        monthsElapsed += 1;
-      }
-      monthsElapsed = Math.max(0, monthsElapsed);
-    }
+    // EMIs whose due date has arrived (shared rule, clamped to month end)
+    const monthsElapsed = loan.startDate ? getMonthsElapsed(loan.startDate, today) : 0;
 
     totalPrincipalBorrowed += principal;
 
@@ -807,6 +854,7 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
       emiAmount,
       loanType,
       extraPayments,
+      loan.startDate,
     );
 
     // Accumulate totals
@@ -820,40 +868,16 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
     totalPrincipalPaid += breakdown.principalPaid;
     totalInterestPaid += breakdown.interestPaid;
 
-    const standardInterest =
-      loanType === "bullet"
-        ? principal * (interest / 100) * (tenure / 12)
-        : emiAmount * tenure - principal;
-    const loanInterestSaved = Math.max(
-      0,
-      standardInterest - breakdown.totalInterest,
-    );
-    totalInterestSaved += loanInterestSaved;
+    // Interest avoided through prepayments (0 when there are none)
+    totalInterestSaved += breakdown.interestSaved || 0;
 
     // Calculate upcoming dues for active loans
     if (loan.status !== "closed" && breakdown.remainingAmount > 0) {
       if (loanType === "emi") {
-        const startDate = new Date(loan.startDate);
-        const monthOffset = Math.max(
-          0,
-          (today.getFullYear() - startDate.getFullYear()) * 12 +
-            (today.getMonth() - startDate.getMonth()),
-        );
-        let nextDue = new Date(
-          startDate.getFullYear(),
-          startDate.getMonth() + monthOffset,
-          startDate.getDate(),
-        );
-        if (nextDue < today) {
-          nextDue.setMonth(nextDue.getMonth() + 1);
-        }
+        const next = getNextInstalment(loan.startDate, tenure, today);
+        const nextDue = next ? next.date : null;
 
-        const monthsFromStart =
-          (nextDue.getFullYear() - startDate.getFullYear()) * 12 +
-          (nextDue.getMonth() - startDate.getMonth()) +
-          1;
-
-        if (monthsFromStart <= tenure) {
+        if (next) {
           upcomingEMI += emiAmount;
 
           if (
@@ -893,15 +917,12 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
         }
 
         // ── Auto-paid: EMI whose due date has already passed this month ──────
-        const emiDueThisMonth = new Date(
-          currentYear,
-          currentMonth,
-          startDate.getDate(),
-        );
+        const startDate = parseLocalDate(loan.startDate);
         const monthsFromStartThisMonth =
           (currentYear - startDate.getFullYear()) * 12 +
           (currentMonth - startDate.getMonth()) +
           1;
+        const emiDueThisMonth = getInstalmentDate(loan.startDate, monthsFromStartThisMonth);
         if (
           emiDueThisMonth <= today &&
           monthsFromStartThisMonth >= 1 &&
@@ -969,23 +990,11 @@ export const calculateLoanStats = (loans, payments = [], insurances = []) => {
 
   insurances.forEach((ins) => {
     const principal = parseFloat(ins.premiumAmount) || 0;
-    const startDate = new Date(ins.startDate);
     const freq = ins.frequency;
-    let stepMonths = 12;
-    if (freq === "yearly") stepMonths = 12;
-    else if (freq === "half-yearly") stepMonths = 6;
-    else if (freq === "quarterly") stepMonths = 3;
-    else if (freq === "monthly") stepMonths = 1;
 
-    // Find next premium
-    let nextDue = new Date(
-      startDate.getFullYear(),
-      startDate.getMonth(),
-      startDate.getDate(),
-    );
-    while (nextDue < today) {
-      nextDue.setMonth(nextDue.getMonth() + stepMonths);
-    }
+    // Find next premium (start + n × step months, clamped to month end)
+    const nextDue = getNextPremiumDate(ins.startDate, freq, today);
+    if (!nextDue) return;
 
     const daysDiff = Math.ceil(
       (nextDue.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),

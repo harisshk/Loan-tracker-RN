@@ -1,66 +1,90 @@
-import { BlurView } from "expo-blur";
+import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system/legacy";
-import { LinearGradient } from "expo-linear-gradient";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
 import {
-    Alert,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
+  Button,
+  Card,
+  colors,
+  EmptyState,
+  HIT,
+  Pill,
+  PressableScale,
+  ProgressBar,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from "../components/ui/kit";
 import {
-    getBulletMaturityDate,
-    parseLocalDate,
-    toLocalISOString,
+  countsTowardBalance,
+  getBulletMaturityDate,
+  getInstalmentDate,
+  getMonthsElapsed,
+  getPaymentDate,
+  parseLocalDate,
+  toLocalISOString,
 } from "../utils/emiCalculator";
-import { getLoans } from "../utils/storage";
+import { formatDateShort, formatINR, formatPercent } from "../utils/format";
+import { getLoans, getPayments } from "../utils/storage";
+
+/** Group rows by calendar year once the schedule is longer than a year. */
+const GROUP_THRESHOLD = 12;
 
 export default function AmortizationSchedule() {
-  const router = useRouter();
   const params = useLocalSearchParams();
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loan, setLoan] = useState(null);
+  const [payments, setPayments] = useState([]);
+  // Years the user expanded / collapsed (flips the default for that year).
+  const [toggledYears, setToggledYears] = useState({});
 
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const allLoans = await getLoans();
-      const found = allLoans.find((l) => l.id === params.id);
-      if (found) {
-        setLoan(found);
-      } else {
-        // Fallback to params
-        setLoan({
-          loanName: params.loanName || "Loan Schedule",
-          loanType: params.loanType || "emi",
-          principal: parseFloat(params.principal) || 0,
-          interest: parseFloat(params.interest) || 0,
-          emiAmount: parseFloat(params.emiAmount) || 0,
-          tenure: parseInt(params.tenure) || 0,
-          startDate: params.startDate || toLocalISOString(new Date()),
-        });
-      }
-    } catch (e) {
-      console.error("Error loading loan schedule:", e);
-    } finally {
-      setLoading(false);
-    }
-  }, [
-    params.id,
-    params.loanName,
-    params.loanType,
-    params.principal,
-    params.interest,
-    params.emiAmount,
-    params.tenure,
-    params.startDate,
-  ]);
+  const loadData = useCallback(
+    () =>
+      getLoans()
+        .then((allLoans) =>
+          getPayments().then((allPayments) => {
+            const found = allLoans.find((l) => l.id === params.id);
+            if (found) {
+              setLoan(found);
+            } else {
+              // Fallback to params
+              setLoan({
+                loanName: params.loanName || "Loan Schedule",
+                loanType: params.loanType || "emi",
+                principal: parseFloat(params.principal) || 0,
+                interest: parseFloat(params.interest) || 0,
+                emiAmount: parseFloat(params.emiAmount) || 0,
+                tenure: parseInt(params.tenure) || 0,
+                startDate: params.startDate || toLocalISOString(new Date()),
+              });
+            }
+            setPayments(allPayments.filter((p) => p.loanId === params.id));
+          }),
+        )
+        .catch((e) => {
+          console.error("Error loading loan schedule:", e);
+        })
+        .finally(() => {
+          setLoading(false);
+        }),
+    [
+      params.id,
+      params.loanName,
+      params.loanType,
+      params.principal,
+      params.interest,
+      params.emiAmount,
+      params.tenure,
+      params.startDate,
+    ],
+  );
 
   useEffect(() => {
     loadData();
@@ -86,28 +110,42 @@ export default function AmortizationSchedule() {
     });
   };
 
-  if (loading || !loan) {
+  if (loading) {
     return (
-      <LinearGradient
-        colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
-        style={styles.container}
-      ></LinearGradient>
+      <Screen>
+        <ScreenHeader back title="Schedule" subtitle={params.loanName} />
+        <View style={styles.loading}>
+          <ActivityIndicator color={colors.primaryFill} />
+          <Text style={styles.loadingText}>Building schedule…</Text>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (!loan) {
+    return (
+      <Screen>
+        <ScreenHeader back title="Schedule" subtitle={params.loanName} />
+        <EmptyState
+          icon="cloud-offline-outline"
+          title="Couldn’t load this schedule"
+          message="Check your connection and try again."
+        />
+        <Button
+          label="Try again"
+          variant="secondary"
+          icon="refresh"
+          onPress={loadData}
+          style={styles.retry}
+        />
+      </Screen>
     );
   }
 
   const isBullet = (loan.loanType || params.loanType) === "bullet";
 
-  // Calculate months elapsed
-  const startDate = parseLocalDate(loan.startDate);
-  const today = new Date();
-
-  let monthsElapsed =
-    (today.getFullYear() - startDate.getFullYear()) * 12 +
-    (today.getMonth() - startDate.getMonth());
-  if (today.getDate() >= startDate.getDate()) {
-    monthsElapsed += 1;
-  }
-  monthsElapsed = Math.max(0, monthsElapsed);
+  // EMIs whose due date (clamped to month end for 29th-31st starts) has arrived
+  const monthsElapsed = getMonthsElapsed(loan.startDate, new Date());
 
   const bulletRenewalDate = isBullet
     ? getBulletMaturityDate(loan.startDate, loan.tenure)
@@ -133,11 +171,7 @@ export default function AmortizationSchedule() {
         // In banking & gold loans, monthly period ends on day - 1
         const paymentDate = isLast
           ? bulletRenewalDate
-          : new Date(
-              startDate.getFullYear(),
-              startDate.getMonth() + month,
-              startDate.getDate() - 1,
-            );
+          : getBulletMaturityDate(loan.startDate, month);
 
         const principalForMonth = isLast ? loan.principal : 0;
         const interestForMonth = monthlyInterest;
@@ -158,32 +192,67 @@ export default function AmortizationSchedule() {
       return schedule;
     }
 
-    // Regular reducing balance EMI
+    // Regular reducing balance EMI (same rules as calculateEMIBreakdown)
+    const principal = parseFloat(loan.principal) || 0;
+    const tenure = parseInt(loan.tenure) || 0;
     const monthlyRate = loan.interest / 12 / 100;
-    let remainingPrincipal = loan.principal;
+    const emi =
+      parseFloat(loan.emiAmount) ||
+      (monthlyRate === 0
+        ? principal / tenure
+        : (principal * monthlyRate * Math.pow(1 + monthlyRate, tenure)) /
+          (Math.pow(1 + monthlyRate, tenure) - 1));
+    let remainingPrincipal = principal;
 
-    for (let month = 1; month <= loan.tenure; month++) {
+    // Counted prepayments apply right after the last EMI due on or before their
+    // date (future-dated ones at the current point), cascading into later EMIs.
+    const prepayments = payments
+      .filter((p) => countsTowardBalance(p, "emi", emi))
+      .map((p) => {
+        const afterEmi = getMonthsElapsed(
+          loan.startDate,
+          parseLocalDate(getPaymentDate(p)),
+        );
+        return {
+          amount: parseFloat(String(p.amount).replace(/,/g, "")) || 0,
+          afterEmi: Number.isFinite(afterEmi)
+            ? Math.min(afterEmi, monthsElapsed)
+            : monthsElapsed,
+        };
+      });
+    const applyPrepaymentsAfter = (m) => {
+      prepayments.forEach((p) => {
+        if (p.afterEmi !== m || remainingPrincipal <= 0.01) return;
+        remainingPrincipal -= Math.min(remainingPrincipal, p.amount);
+      });
+    };
+
+    applyPrepaymentsAfter(0);
+    for (
+      let month = 1;
+      month <= tenure && remainingPrincipal > 0.01;
+      month++
+    ) {
       const interestForMonth = remainingPrincipal * monthlyRate;
-      const principalForMonth = loan.emiAmount - interestForMonth;
-
-      const paymentDate = new Date(
-        startDate.getFullYear(),
-        startDate.getMonth() + month - 1,
-        startDate.getDate(),
+      const principalForMonth = Math.max(
+        0,
+        Math.min(remainingPrincipal, emi - interestForMonth),
       );
+
+      remainingPrincipal -= principalForMonth;
+      if (month <= monthsElapsed) applyPrepaymentsAfter(month);
 
       schedule.push({
         month,
-        date: paymentDate,
-        emi: loan.emiAmount,
+        date: getInstalmentDate(loan.startDate, month),
+        // Final EMI is smaller when prepayments close the loan early
+        emi: Math.min(emi, interestForMonth + principalForMonth),
         interest: interestForMonth,
         principal: principalForMonth,
-        remainingPrincipal: Math.max(0, remainingPrincipal - principalForMonth),
+        remainingPrincipal: Math.max(0, remainingPrincipal),
         isPaid: month <= monthsElapsed,
-        isLast: month === loan.tenure,
+        isLast: month === tenure || remainingPrincipal <= 0.01,
       });
-
-      remainingPrincipal -= principalForMonth;
     }
 
     return schedule;
@@ -357,454 +426,411 @@ export default function AmortizationSchedule() {
     }
   };
 
-  return (
-    <LinearGradient
-      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#10b981"
-          />
+  // ── Presentation ──────────────────────────────────────────────────────────
+  const paymentsMade = Math.min(monthsElapsed, loan.tenure);
+  const tenureMonths = parseInt(loan.tenure) || 0;
+  const progressPct = tenureMonths > 0 ? (paymentsMade / tenureMonths) * 100 : 0;
+  const totalInterest = schedule.reduce((sum, row) => sum + row.interest, 0);
+  const currentIndex = schedule.findIndex((row) => !row.isPaid);
+  const lastRow = schedule[schedule.length - 1];
+  const monthlyEmi = parseFloat(loan.emiAmount) || (schedule[0] ? schedule[0].emi : 0);
+
+  const grouped = schedule.length > GROUP_THRESHOLD;
+  const groups = grouped
+    ? schedule.reduce((acc, row, index) => {
+        const year = row.date.getFullYear();
+        const last = acc[acc.length - 1];
+        if (last && last.year === year) {
+          last.items.push({ row, index });
+        } else {
+          acc.push({ year, items: [{ row, index }] });
         }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={styles.backButton}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {isBullet ? "Interest Schedule" : "Payment Schedule"}
-          </Text>
-          <Text style={styles.headerSubtitle}>
-            {loan.loanName} {isBullet ? "· 🥇 Bullet Loan" : ""}
+        return acc;
+      }, [])
+    : [{ year: null, items: schedule.map((row, index) => ({ row, index })) }];
+
+  const statusFor = (row, index) => {
+    if (isBullet && row.isLast) return row.isPaid ? "Matured" : "Maturity due";
+    if (row.isPaid) return isBullet ? "Accrued" : "Paid";
+    if (index === currentIndex) return "Next";
+    return null;
+  };
+
+  return (
+    <Screen onRefresh={onRefresh} refreshing={refreshing}>
+      <ScreenHeader
+        back
+        title={isBullet ? "Interest schedule" : "Payment schedule"}
+        subtitle={`${loan.loanName}${isBullet ? " · Bullet / gold loan" : ""}`}
+      />
+
+      {/* Summary */}
+      <Card>
+        {isBullet ? (
+          <StatRow>
+            <StatTile label="Monthly interest" value={formatINR(bulletMonthlyInterest)} />
+            <StatTile label="Due at maturity" value={formatINR(bulletMaturityAmount)} />
+            <StatTile label="Months elapsed" value={`${paymentsMade} / ${loan.tenure}`} />
+          </StatRow>
+        ) : (
+          <StatRow>
+            <StatTile label="Monthly EMI" value={formatINR(monthlyEmi)} />
+            <StatTile label="Total interest" value={formatINR(totalInterest)} />
+            <StatTile label="Payments made" value={`${paymentsMade} / ${loan.tenure}`} />
+          </StatRow>
+        )}
+        <ProgressBar
+          segments={[{ value: progressPct, color: colors.primaryFill }]}
+          height={6}
+          style={styles.progress}
+          accessibilityLabel={`${formatPercent(progressPct, 0)} of tenure complete`}
+        />
+        <View style={styles.progressMeta}>
+          <Text style={styles.progressText}>{formatPercent(progressPct, 0)} of tenure</Text>
+          <Text style={styles.progressText}>
+            {isBullet
+              ? `Renewal ${formatDate(bulletRenewalDate)}`
+              : lastRow
+                ? `Last EMI ${formatDate(lastRow.date)}`
+                : ""}
           </Text>
         </View>
+      </Card>
 
-        {/* Summary Card */}
-        <BlurView intensity={20} tint="light" style={styles.summaryCard}>
-          <View style={styles.cardContent}>
-            {isBullet ? (
-              <>
-                <View style={styles.summaryRow}>
-                  <View style={styles.summaryItem}>
-                    <Text style={styles.summaryLabel}>Monthly Interest</Text>
-                    <Text style={[styles.summaryValue, { color: "#fb923c" }]}>
-                      {formatCurrency(bulletMonthlyInterest)}
-                    </Text>
-                  </View>
-                  <View style={styles.summaryItem}>
-                    <Text style={styles.summaryLabel}>
-                      Lump Sum at Maturity
-                    </Text>
-                    <Text style={[styles.summaryValue, { color: "#e11d48" }]}>
-                      {formatCurrency(bulletMaturityAmount)}
-                    </Text>
-                  </View>
-                </View>
-                <View
-                  style={[
-                    styles.summaryRow,
-                    {
-                      marginTop: 14,
-                      paddingTop: 14,
-                      borderTopWidth: 1,
-                      borderTopColor: "rgba(0,0,0,0.05)",
-                    },
-                  ]}
-                >
-                  <View style={styles.summaryItem}>
-                    <Text style={styles.summaryLabel}>Tenure Progress</Text>
-                    <Text style={[styles.summaryValue, { color: "#10b981" }]}>
-                      {Math.min(monthsElapsed, loan.tenure)} / {loan.tenure} Mo
-                    </Text>
-                  </View>
-                  <View style={styles.summaryItem}>
-                    <Text style={styles.summaryLabel}>Renewal Date</Text>
-                    <Text
-                      style={[
-                        styles.summaryValue,
-                        { color: "#f59e0b", fontSize: 16, marginTop: 3 },
-                      ]}
-                    >
-                      {formatDate(bulletRenewalDate)}
-                    </Text>
-                  </View>
-                </View>
-              </>
-            ) : (
-              <View style={styles.summaryRow}>
-                <View style={styles.summaryItem}>
-                  <Text style={styles.summaryLabel}>Monthly EMI</Text>
-                  <Text style={styles.summaryValue}>
-                    {formatCurrency(loan.emiAmount)}
-                  </Text>
-                </View>
-                <View style={styles.summaryItem}>
-                  <Text style={styles.summaryLabel}>Payments Made</Text>
-                  <Text style={[styles.summaryValue, { color: "#10b981" }]}>
-                    {monthsElapsed} / {loan.tenure}
-                  </Text>
-                </View>
-              </View>
-            )}
+      {/* Export */}
+      <View style={styles.actions}>
+        <Button
+          label="Export CSV"
+          icon="download-outline"
+          variant="secondary"
+          onPress={handleExportCSV}
+          style={styles.actionBtn}
+        />
+        <Button
+          label="Print / PDF"
+          icon="print-outline"
+          variant="secondary"
+          onPress={handleExportHTML}
+          style={styles.actionBtn}
+        />
+      </View>
+
+      {/* Schedule */}
+      <SectionHeader
+        title={isBullet ? "Interest & maturity" : "Amortization"}
+        count={schedule.length}
+        style={styles.sectionGap}
+      />
+      {schedule.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon="calendar-outline"
+            title="No schedule to show"
+            message="Set a tenure on this loan to see its month-by-month breakdown."
+          />
+        </Card>
+      ) : (
+        <>
+          <View style={styles.legend}>
+            <LegendItem icon="checkmark-circle" color={colors.primaryFill} label={isBullet ? "Accrued" : "Paid"} />
+            <LegendItem icon="ellipse" color={colors.indigo} label="Next due" />
+            {isBullet ? <LegendItem icon="flag" color={colors.warningFill} label="Maturity" /> : null}
           </View>
-        </BlurView>
-
-        <TouchableOpacity style={styles.exportButton} onPress={handleExportCSV}>
-          <BlurView intensity={25} tint="light" style={styles.exportBlur}>
-            <Text style={styles.exportButtonText}>
-              📥 Export to CSV / Excel
-            </Text>
-          </BlurView>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.printButton} onPress={handleExportHTML}>
-          <BlurView intensity={25} tint="light" style={styles.printBlur}>
-            <Text style={styles.printButtonText}>
-              🖨️ Export to Printable Document (HTML/PDF)
-            </Text>
-          </BlurView>
-        </TouchableOpacity>
-
-        <Text style={styles.sectionTitle}>
-          {isBullet
-            ? "Monthly Interest & Maturity Breakdown"
-            : "Amortization Details"}
-        </Text>
-
-        {/* Schedule Table Rows */}
-        {schedule.map((row, index) => (
-          <BlurView
-            key={row.month}
-            intensity={row.isPaid ? 20 : 10}
-            tint="light"
-            style={[
-              styles.scheduleCard,
-              row.isPaid && styles.paidCard,
-              row.isLast && isBullet && styles.bulletMaturityCard,
-              index === schedule.length - 1 && styles.lastRow,
-            ]}
-          >
-            <View style={styles.cardHeader}>
-              <View style={styles.cardHeaderLeft}>
-                <View
-                  style={[
-                    styles.monthBadge,
-                    {
-                      backgroundColor:
-                        row.isLast && isBullet
-                          ? "#f59e0b"
-                          : row.isPaid
-                            ? "#10b981"
-                            : "#64748b",
-                    },
-                  ]}
-                >
-                  <Text style={styles.monthBadgeText}>{row.month}</Text>
-                </View>
-                <View>
-                  <Text style={styles.installmentDate}>
-                    {formatDate(row.date)}{" "}
-                    {row.isLast && isBullet ? "🎯 Renewal" : ""}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.installmentStatus,
-                      {
-                        color:
-                          row.isLast && isBullet
-                            ? row.isPaid
-                              ? "#10b981"
-                              : "#f59e0b"
-                            : row.isPaid
-                              ? "#10b981"
-                              : "#64748b",
-                        fontWeight: row.isLast && isBullet ? "700" : "600",
-                      },
-                    ]}
+          {groups.map((group) => {
+            const allPaid = group.items.every(({ row }) => row.isPaid);
+            const hasCurrent = group.items.some(({ index }) => index === currentIndex);
+            const key = group.year ?? "all";
+            const expanded = !grouped || (!allPaid !== !!toggledYears[key]);
+            const groupInterest = group.items.reduce((sum, { row }) => sum + row.interest, 0);
+            return (
+              <Card key={key} padded={false} style={styles.groupCard}>
+                {grouped ? (
+                  <PressableScale
+                    onPress={() => setToggledYears((prev) => ({ ...prev, [key]: !prev[key] }))}
+                    style={styles.groupHeader}
+                    accessibilityState={{ expanded }}
+                    accessibilityLabel={`${group.year}, ${group.items.length} ${isBullet ? "months" : "payments"}, ${formatINR(groupInterest)} interest${allPaid ? ", all paid" : ""}`}
+                    accessibilityHint={expanded ? "Collapses this year" : "Expands this year"}
                   >
-                    {row.isLast && isBullet
-                      ? row.isPaid
-                        ? "✓ Matured / Settled"
-                        : "🎯 Renewal / Maturity Due"
-                      : row.isPaid
-                        ? "✓ Accrued / Paid"
-                        : "⏳ Upcoming"}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.cardHeaderRight}>
-                <Text style={styles.emiLabel}>
-                  {isBullet
-                    ? row.isLast
-                      ? "LUMP SUM DUE"
-                      : "MONTHLY INTEREST"
-                    : "EMI AMOUNT"}
-                </Text>
-                <Text
-                  style={[
-                    styles.emiValue,
-                    row.isLast && isBullet && { color: "#e11d48" },
-                  ]}
-                >
-                  {formatCurrency(row.emi)}
-                </Text>
-              </View>
-            </View>
+                    <View style={styles.groupText}>
+                      <Text style={styles.groupYear} accessibilityRole="header">
+                        {group.year}
+                      </Text>
+                      <Text style={styles.groupMeta}>
+                        {group.items.length} {isBullet ? "months" : "payments"} · {formatINR(groupInterest)} interest
+                      </Text>
+                    </View>
+                    {allPaid ? (
+                      <Pill label={isBullet ? "Accrued" : "Paid"} icon="checkmark" color={colors.primary} backgroundColor={colors.primarySoft} />
+                    ) : hasCurrent ? (
+                      <Pill label="In progress" color={colors.indigo} backgroundColor={colors.indigoSoft} />
+                    ) : null}
+                    <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={colors.textMuted} />
+                  </PressableScale>
+                ) : null}
 
-            <View style={styles.cardDetailsGrid}>
-              <View style={styles.detailCol}>
-                <Text style={styles.detailColLabel}>
-                  {isBullet ? "Principal Due" : "Principal"}
-                </Text>
-                <Text style={[styles.detailColVal, styles.principalText]}>
-                  {formatCurrency(row.principal)}
-                </Text>
-              </View>
-              <View style={styles.detailCol}>
-                <Text style={styles.detailColLabel}>
-                  {isBullet ? "Monthly Interest" : "Interest"}
-                </Text>
-                <Text style={[styles.detailColVal, styles.interestText]}>
-                  {formatCurrency(row.interest)}
-                </Text>
-              </View>
-              <View style={styles.detailCol}>
-                <Text style={styles.detailColLabel}>
-                  {isBullet ? "Principal Balance" : "Balance"}
-                </Text>
-                <Text style={[styles.detailColVal, styles.balanceText]}>
-                  {formatCurrency(row.remainingPrincipal)}
-                </Text>
-              </View>
-            </View>
-          </BlurView>
-        ))}
-      </ScrollView>
-    </LinearGradient>
+                {expanded ? (
+                  <>
+                    <View style={[styles.colHeader, grouped && styles.rowDivider]}>
+                      <Text style={[styles.colLabel, styles.colWhen]}>Due</Text>
+                      <Text style={[styles.colLabel, styles.colAmount]}>Principal</Text>
+                      <Text style={[styles.colLabel, styles.colAmount]}>Interest</Text>
+                      <Text style={[styles.colLabel, styles.colAmount]}>Balance</Text>
+                    </View>
+                    {group.items.map(({ row, index }) => (
+                      <ScheduleRow
+                        key={row.month}
+                        row={row}
+                        date={grouped ? formatDateShort(row.date) : formatDate(row.date)}
+                        fullDate={formatDate(row.date)}
+                        status={statusFor(row, index)}
+                        isCurrent={index === currentIndex}
+                        isMaturity={isBullet && row.isLast}
+                        emiLabel={isBullet ? (row.isLast ? "Lump sum due" : "Monthly interest") : "EMI"}
+                      />
+                    ))}
+                  </>
+                ) : null}
+              </Card>
+            );
+          })}
+        </>
+      )}
+    </Screen>
+  );
+}
+
+function LegendItem({ icon, color, label }) {
+  return (
+    <View style={styles.legendItem}>
+      <Ionicons name={icon} size={icon === "ellipse" ? 9 : 13} color={color} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
+function ScheduleRow({ row, date, fullDate, status, isCurrent, isMaturity, emiLabel }) {
+  const muted = row.isPaid && !isMaturity;
+  const amountStyle = [styles.amount, muted && styles.amountMuted];
+  return (
+    <View
+      style={[
+        styles.row,
+        styles.rowDivider,
+        muted && styles.rowPaid,
+        isCurrent && styles.rowCurrent,
+        isMaturity && styles.rowMaturity,
+      ]}
+      accessible
+      accessibilityLabel={`Month ${row.month}, ${fullDate}${status ? `, ${status}` : ""}. ${emiLabel} ${formatINR(row.emi)}. Principal ${formatINR(row.principal)}, interest ${formatINR(row.interest)}, balance ${formatINR(row.remainingPrincipal)}`}
+    >
+      <View style={styles.colWhen}>
+        <Text style={[styles.rowDate, muted && styles.amountMuted]} numberOfLines={1}>
+          {date}
+        </Text>
+        <View style={styles.rowMetaLine}>
+          {isMaturity ? (
+            <Ionicons name="flag" size={11} color={colors.warningFill} />
+          ) : row.isPaid ? (
+            <Ionicons name="checkmark-circle" size={12} color={colors.primaryFill} />
+          ) : isCurrent ? (
+            <Ionicons name="ellipse" size={8} color={colors.indigo} />
+          ) : null}
+          <Text
+            style={[
+              styles.rowMeta,
+              isCurrent && styles.rowMetaCurrent,
+              isMaturity && styles.rowMetaMaturity,
+            ]}
+            numberOfLines={1}
+          >
+            #{row.month}
+            {status ? ` · ${status}` : ""}
+          </Text>
+        </View>
+      </View>
+      <Text style={[amountStyle, styles.colAmount]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+        {formatINR(row.principal)}
+      </Text>
+      <Text style={[amountStyle, styles.colAmount]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+        {formatINR(row.interest)}
+      </Text>
+      <Text
+        style={[amountStyle, styles.colAmount, styles.balance]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+      >
+        {formatINR(row.remainingPrincipal)}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingTop: 60,
-    paddingBottom: 40,
-  },
-  header: {
-    marginBottom: 24,
-  },
-  backButton: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#10b981",
-    marginBottom: 12,
-  },
-  headerTitle: {
-    fontSize: 34,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 16,
-    color: "rgba(15, 23, 42, 0.6)",
-  },
-  summaryCard: {
-    borderRadius: 30,
-    overflow: "hidden",
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.08)",
-  },
-  cardContent: {
-    padding: 20,
-  },
-  summaryRow: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  summaryItem: {
-    flex: 1,
-  },
-  summaryLabel: {
-    fontSize: 12,
-    color: "rgba(15, 23, 42, 0.6)",
-    marginBottom: 6,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  summaryValue: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  exportButton: {
-    borderRadius: 20,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(56, 189, 248, 0.4)",
-    marginBottom: 14,
-  },
-  exportBlur: {
-    padding: 16,
+  loading: {
     alignItems: "center",
-    backgroundColor: "rgba(56, 189, 248, 0.1)",
+    paddingVertical: space.xxxl,
+    gap: space.sm,
   },
-  exportButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#38bdf8",
+  loadingText: {
+    ...type.label,
+    fontWeight: "500",
+    color: colors.textSecondary,
   },
-  printButton: {
-    borderRadius: 20,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(16, 185, 129, 0.4)",
-    marginBottom: 24,
+  retry: {
+    alignSelf: "center",
   },
-  printBlur: {
-    padding: 16,
-    alignItems: "center",
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
+  progress: {
+    marginTop: space.lg,
   },
-  printButtonText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#10b981",
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 16,
-  },
-  scheduleCard: {
-    borderRadius: 24,
-    overflow: "hidden",
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.06)",
-    backgroundColor: "rgba(255, 255, 255, 0.4)",
-    padding: 16,
-  },
-  paidCard: {
-    borderColor: "rgba(16, 185, 129, 0.15)",
-    backgroundColor: "rgba(16, 185, 129, 0.03)",
-  },
-  bulletMaturityCard: {
-    borderColor: "rgba(245, 158, 11, 0.4)",
-    backgroundColor: "rgba(245, 158, 11, 0.06)",
-  },
-  cardHeader: {
+  progressMeta: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(0, 0, 0, 0.04)",
-    paddingBottom: 10,
+    gap: space.md,
+    marginTop: space.sm,
   },
-  cardHeaderLeft: {
+  progressText: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
+  },
+  actions: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    gap: space.md,
+    marginTop: space.lg,
   },
-  monthBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  monthBadgeText: {
-    color: "#ffffff",
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  installmentDate: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 2,
-  },
-  installmentStatus: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  cardHeaderRight: {
-    alignItems: "flex-end",
-  },
-  emiLabel: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: "rgba(15, 23, 42, 0.4)",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  emiValue: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#10b981",
-  },
-  cardDetailsGrid: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  detailCol: {
+  actionBtn: {
     flex: 1,
+    paddingHorizontal: space.md,
   },
-  detailColLabel: {
+  sectionGap: {
+    marginTop: space.xxl,
+  },
+  legend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.lg,
+    marginBottom: space.md,
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.xs + 2,
+  },
+  legendText: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textSecondary,
+  },
+  groupCard: {
+    marginBottom: space.md,
+    paddingBottom: space.xs,
+  },
+  groupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    minHeight: HIT + 12,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  groupText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  groupYear: {
+    ...type.headline,
+    color: colors.text,
+  },
+  groupMeta: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  colHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    paddingTop: space.md,
+    paddingBottom: space.sm,
+  },
+  colLabel: {
+    ...type.overline,
     fontSize: 10,
-    fontWeight: "700",
-    color: "rgba(15, 23, 42, 0.4)",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-    marginBottom: 4,
+    color: colors.textMuted,
   },
-  detailColVal: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0f172a",
+  colWhen: {
+    flex: 1.25,
+    minWidth: 0,
   },
-  lastRow: {
-    marginBottom: 24,
+  colAmount: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: "right",
   },
-  principalText: {
-    color: "#10b981",
-  },
-  interestText: {
-    color: "#f59e0b",
-  },
-  balanceText: {
-    color: "#e11d48",
-    fontWeight: "700",
-  },
-  printButton: {
-    borderRadius: 20,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(16, 185, 129, 0.4)",
-    marginBottom: 24,
-  },
-  printBlur: {
-    padding: 16,
+  row: {
+    flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
+    gap: space.sm,
+    minHeight: 52,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: "transparent",
   },
-  printButtonText: {
-    fontSize: 16,
+  rowDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  rowPaid: {
+    backgroundColor: colors.surfaceMuted,
+  },
+  rowCurrent: {
+    backgroundColor: colors.indigoSoft,
+    borderLeftColor: colors.indigo,
+  },
+  rowMaturity: {
+    backgroundColor: colors.warningSoft,
+    borderLeftColor: colors.warningFill,
+  },
+  rowDate: {
+    ...type.label,
     fontWeight: "700",
-    color: "#10b981",
+    color: colors.text,
+  },
+  rowMetaLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
+  },
+  rowMeta: {
+    ...type.caption,
+    fontSize: 11,
+    fontWeight: "500",
+    color: colors.textMuted,
+  },
+  rowMetaCurrent: {
+    color: colors.indigo,
+    fontWeight: "700",
+  },
+  rowMetaMaturity: {
+    color: colors.warning,
+    fontWeight: "700",
+  },
+  amount: {
+    ...type.label,
+    fontVariant: ["tabular-nums"],
+    color: colors.text,
+  },
+  amountMuted: {
+    color: colors.textSecondary,
+  },
+  balance: {
+    fontWeight: "700",
+    flex: 1.3,
   },
 });

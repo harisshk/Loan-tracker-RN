@@ -1,32 +1,80 @@
-import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
-    Alert,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import SidePanelDrawer from "../components/SidePanelDrawer";
+  Card,
+  Chip,
+  colors,
+  EmptyState,
+  Gap,
+  HeaderAction,
+  IconBadge,
+  kindColors,
+  Pill,
+  PressableScale,
+  ProgressBar,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  Segmented,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from "../components/ui/kit";
 import {
-    calculateEMIBreakdown,
-    getBulletMaturityDate,
+  calculateEMIBreakdown,
+  getBulletMaturityDate,
+  getMonthsElapsed,
+  getNextInstalment,
+  parseLocalDate,
 } from "../utils/emiCalculator";
+import { daysFromToday, formatINR, formatINRCompact, formatPercent, toNumber } from "../utils/format";
 import { deleteLoan, getLoans, getPayments } from "../utils/storage";
 
 // ── Sort option definitions ───────────────────────────────────────────────────
 const SORT_OPTIONS = [
-  { id: "nextDue", label: "📅 Due Date", desc: false },
-  { id: "interestDesc", label: "📈 Rate ↓", desc: true },
-  { id: "interestAsc", label: "📉 Rate ↑", desc: false },
-  { id: "principalDesc", label: "💰 Principal ↓", desc: true },
-  { id: "principalAsc", label: "💰 Principal ↑", desc: false },
+  { id: "nextDue", label: "Due date", icon: "calendar-outline", desc: false },
+  { id: "interestDesc", label: "Highest rate", icon: "trending-up-outline", desc: true },
+  { id: "interestAsc", label: "Lowest rate", icon: "trending-down-outline", desc: false },
+  { id: "principalDesc", label: "Largest amount", icon: "arrow-down-outline", desc: true },
+  { id: "principalAsc", label: "Smallest amount", icon: "arrow-up-outline", desc: false },
 ];
+
+const TONES = {
+  critical: { text: colors.danger, soft: colors.dangerSoft },
+  warning: { text: colors.warning, soft: colors.warningSoft },
+  neutral: { text: colors.textSecondary, soft: colors.surfaceSunken },
+  positive: { text: colors.primary, soft: colors.primarySoft },
+};
+
+const ordinal = (n) => {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+};
+
+/** Decorative icon guessed from the loan name (same mapping as the Home loans list). */
+const iconFor = (name, isBullet) => {
+  const n = (name || "").toLowerCase();
+  if (/gold|jewel/.test(n)) return "diamond-outline";
+  if (/home|house|housing|flat/.test(n)) return "home-outline";
+  if (/car|auto|vehicle|creta/.test(n)) return "car-outline";
+  if (/bike|scooter/.test(n)) return "bicycle-outline";
+  if (/edu|student|study/.test(n)) return "school-outline";
+  if (/business|shop/.test(n)) return "briefcase-outline";
+  if (/personal/.test(n)) return "person-outline";
+  return isBullet ? "hourglass-outline" : "wallet-outline";
+};
+
+const formatDate = (date) => {
+  if (!date) return "N/A";
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
 
 export default function Loans() {
   const router = useRouter();
@@ -34,23 +82,30 @@ export default function Loans() {
   const [payments, setPayments] = useState([]);
   const [sortId, setSortId] = useState("nextDue");
   const [refreshing, setRefreshing] = useState(false);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(null);
+  const [tab, setTab] = useState("active");
 
-  const loadLoans = async () => {
-    const loansData = await getLoans();
-    const paymentsData = await getPayments();
-    setLoans(loansData);
-    setPayments(paymentsData);
-  };
-
-  useEffect(() => {
-    loadLoans();
+  const loadLoans = useCallback(async () => {
+    try {
+      const loansData = await getLoans();
+      const paymentsData = await getPayments();
+      setLoans(loansData);
+      setPayments(paymentsData);
+      setError(null);
+    } catch (e) {
+      console.error("Error loading loans:", e);
+      setError("Couldn't load your loans. Pull down to try again.");
+    } finally {
+      setLoaded(true);
+    }
   }, []);
 
+  // Runs on first focus too, so no separate mount effect is needed.
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       loadLoans();
-    }, []),
+    }, [loadLoans]),
   );
 
   const onRefresh = async () => {
@@ -60,57 +115,31 @@ export default function Loans() {
   };
 
   const handleDeleteLoan = (loanId, loanName) => {
-    Alert.alert(
-      "Delete Loan",
-      `Are you sure you want to delete "${loanName}"?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteLoan(loanId);
-            await loadLoans();
-          },
+    Alert.alert("Delete Loan", `Are you sure you want to delete "${loanName}"?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          await deleteLoan(loanId);
+          await loadLoans();
         },
-      ],
-    );
-  };
-
-  const formatCurrency = (amount) =>
-    `₹${parseFloat(amount || 0).toLocaleString("en-IN", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    })}`;
-
-  const formatDate = (date) => {
-    if (!date) return "N/A";
-    return new Date(date).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
+      },
+    ]);
   };
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const getNextDueDate = (loan) => {
     if (!loan.startDate) return new Date(9999, 0);
-    const start  = new Date(loan.startDate);
-    const today  = new Date();
     const tenure = parseInt(loan.tenure) || 0;
 
     if (loan.loanType === "bullet") {
       return getBulletMaturityDate(loan.startDate, tenure);
     }
 
-    const monthsDiff =
-      (today.getFullYear() - start.getFullYear()) * 12 +
-      (today.getMonth() - start.getMonth());
-    if (monthsDiff >= tenure) return new Date(9999, 0); // completed
-
-    const nextDue = new Date(start);
-    nextDue.setMonth(nextDue.getMonth() + monthsDiff + 1);
-    return nextDue;
+    const next = getNextInstalment(loan.startDate, tenure, new Date());
+    if (!next) return new Date(9999, 0); // completed
+    return next.date;
   };
 
   const getRemainingBreakdown = (loan) => {
@@ -122,15 +151,7 @@ export default function Loans() {
 
     if (!loan.startDate) return { displayAmount: principal, breakdown: null };
 
-    const startDate = new Date(loan.startDate);
-    const today = new Date();
-    let monthsElapsed =
-      (today.getFullYear() - startDate.getFullYear()) * 12 +
-      (today.getMonth() - startDate.getMonth());
-    if (today.getDate() >= startDate.getDate()) {
-      monthsElapsed += 1;
-    }
-    monthsElapsed = Math.max(0, monthsElapsed);
+    const monthsElapsed = getMonthsElapsed(loan.startDate, new Date());
 
     const extraPayments = payments.filter((p) => p.loanId === loan.id);
     const breakdown = calculateEMIBreakdown(
@@ -141,6 +162,7 @@ export default function Loans() {
       emiAmount,
       loanType,
       extraPayments,
+      loan.startDate,
     );
 
     return { displayAmount: breakdown.remainingPrincipalAmount, breakdown };
@@ -164,426 +186,353 @@ export default function Loans() {
     }
   });
 
+  // ── Per-row display data ─────────────────────────────────────────────────────
+  const rows = sorted.map((loan) => {
+    const isBullet = loan.loanType === "bullet";
+    const isClosed = loan.status === "closed";
+    const tenure = parseInt(loan.tenure) || 0;
+    const principal = toNumber(loan.principal);
+    const rate = toNumber(loan.interest);
+    const nextDue = getNextDueDate(loan);
+    const hasNextDue = nextDue.getFullYear() !== 9999;
+    const { displayAmount: remaining } = getRemainingBreakdown(loan);
+
+    // EMIs whose (clamped) due date has arrived, same count as the loan detail
+    const monthsElapsed = loan.startDate ? getMonthsElapsed(loan.startDate, new Date()) : 0;
+    const paymentsMade = Math.min(monthsElapsed, tenure);
+    const emisLeft = Math.max(0, tenure - paymentsMade);
+
+    const progress = isBullet
+      ? tenure > 0
+        ? (paymentsMade / tenure) * 100
+        : 0
+      : principal > 0
+        ? ((principal - remaining) / principal) * 100
+        : 0;
+
+    const days = hasNextDue ? daysFromToday(nextDue) : null;
+    const emiDay = !isBullet && loan.startDate ? parseLocalDate(loan.startDate).getDate() : null;
+
+    const meta = isBullet
+      ? `Bullet · ${formatPercent(rate, 2)} · matures ${hasNextDue ? formatDate(nextDue) : "N/A"}`
+      : `EMI ${formatINR(loan.emiAmount)}${emiDay ? ` · ${ordinal(emiDay)}` : ""} · ${formatPercent(rate, 2)}`;
+
+    let status = null;
+    if (isClosed) {
+      status = { label: "Closed", tone: "neutral", icon: "checkmark-circle-outline" };
+    } else if (!isBullet && !hasNextDue) {
+      status = { label: "All EMIs paid", tone: "positive", icon: "checkmark-circle-outline" };
+    } else if (isBullet && days !== null && days < 0) {
+      status = { label: `Matured ${-days}d ago`, tone: "critical", icon: "alert-circle-outline" };
+    } else if (isBullet && days !== null && days <= 30) {
+      status = {
+        label: days === 0 ? "Matures today" : `Matures in ${days}d`,
+        tone: days <= 7 ? "warning" : "neutral",
+        icon: "time-outline",
+      };
+    } else if (!isBullet && days !== null && days <= 7) {
+      status = {
+        label: days === 0 ? "EMI today" : `EMI in ${days}d`,
+        tone: days <= 1 ? "warning" : "neutral",
+        icon: "time-outline",
+      };
+    } else if (!isBullet && emisLeft > 0 && emisLeft <= 3) {
+      status = { label: `${emisLeft} EMI${emisLeft === 1 ? "" : "s"} left`, tone: "positive" };
+    }
+
+    return {
+      loan,
+      isBullet,
+      isClosed,
+      hasNextDue,
+      remaining,
+      principal,
+      progress,
+      meta,
+      status,
+      emi: toNumber(loan.emiAmount),
+      progressLabel: isBullet
+        ? `${formatPercent(progress, 0)} of term`
+        : `${formatPercent(progress, 0)} repaid`,
+    };
+  });
+
+  const activeRows = rows.filter((r) => !r.isClosed);
+  const closedRows = rows.filter((r) => r.isClosed);
+  const showClosed = closedRows.length > 0 && tab === "closed";
+  const visibleRows = showClosed ? closedRows : activeRows;
+
+  const outstanding = activeRows.reduce((s, r) => s + r.remaining, 0);
+  const monthlyEmis = activeRows
+    .filter((r) => !r.isBullet && r.hasNextDue)
+    .reduce((s, r) => s + r.emi, 0);
+
+  const openLoan = (loan) =>
+    router.push({
+      pathname: "/loan-detail",
+      params: {
+        id: loan.id,
+        loanName: loan.loanName,
+        principal: loan.principal,
+        interest: loan.interest,
+        emiAmount: loan.emiAmount,
+        tenure: loan.tenure,
+        startDate: loan.startDate,
+        loanType: loan.loanType || "emi",
+      },
+    });
+
+  const subtitle =
+    loans.length === 0
+      ? undefined
+      : `${activeRows.length} active${closedRows.length ? ` · ${closedRows.length} closed` : ""}`;
+
   return (
-    <LinearGradient
-      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
-      style={styles.container}
-    >
-      <SidePanelDrawer
-        isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
-      />
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+    <Screen onRefresh={onRefresh} refreshing={refreshing}>
+      <ScreenHeader
+        title="All loans"
+        subtitle={subtitle}
+        back
+        actions={
+          <HeaderAction icon="add" label="Add loan" variant="primary" onPress={() => router.push("/add-loan")} />
         }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <TouchableOpacity onPress={() => setIsDrawerOpen(true)}>
-              <Ionicons name="menu-outline" size={24} color="#0f172a" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>All Loans</Text>
-          </View>
-          <TouchableOpacity onPress={() => router.push("/add-loan")}>
-            <Text style={styles.addButton}>+ Add</Text>
-          </TouchableOpacity>
+      />
+
+      {!loaded ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={colors.primaryFill} />
         </View>
+      ) : error && loans.length === 0 ? (
+        <Card>
+          <EmptyState icon="cloud-offline-outline" title="Something went wrong" message={error} />
+        </Card>
+      ) : loans.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon="wallet-outline"
+            title="No loans yet"
+            message="Add your first loan to track EMIs, interest and payoff dates."
+            actionLabel="Add loan"
+            onAction={() => router.push("/add-loan")}
+          />
+        </Card>
+      ) : (
+        <>
+          {/* Summary */}
+          <Card>
+            <StatRow>
+              <StatTile label="Outstanding" value={formatINRCompact(outstanding)} caption="principal" />
+              <StatTile label="EMIs / month" value={formatINRCompact(monthlyEmis)} caption="active loans" />
+              <StatTile
+                label="Active"
+                value={String(activeRows.length)}
+                caption={`loan${activeRows.length === 1 ? "" : "s"}`}
+              />
+            </StatRow>
+          </Card>
 
-        {/* ── Sort Bar ── */}
-        {loans.length > 0 && (
-          <BlurView intensity={18} tint="light" style={styles.sortCard}>
-            <View style={styles.sortCardInner}>
-              <Text style={styles.sortLabel}>SORT BY</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.sortRow}
-              >
-                {SORT_OPTIONS.map((opt) => (
-                  <TouchableOpacity
-                    key={opt.id}
-                    style={[
-                      styles.sortBtn,
-                      sortId === opt.id && styles.sortBtnActive,
-                    ]}
-                    onPress={() => setSortId(opt.id)}
-                    activeOpacity={0.75}
-                  >
-                    <Text
-                      style={[
-                        styles.sortBtnText,
-                        sortId === opt.id && styles.sortBtnTextActive,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
+          <Gap />
+
+          {closedRows.length > 0 ? (
+            <Segmented
+              options={[
+                { key: "active", label: `Active (${activeRows.length})` },
+                { key: "closed", label: `Closed (${closedRows.length})` },
+              ]}
+              value={showClosed ? "closed" : "active"}
+              onChange={setTab}
+              style={styles.segmented}
+            />
+          ) : null}
+
+          {visibleRows.length > 1 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.sortRow}
+              style={styles.sortScroll}
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <Chip
+                  key={opt.id}
+                  label={opt.label}
+                  icon={opt.icon}
+                  selected={sortId === opt.id}
+                  onPress={() => setSortId(opt.id)}
+                />
+              ))}
+            </ScrollView>
+          ) : null}
+
+          <SectionHeader title={showClosed ? "Closed loans" : "Active loans"} count={visibleRows.length} />
+
+          {visibleRows.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon="checkmark-done-outline"
+                title="No active loans"
+                message="All your loans are closed. Add a new one any time."
+                actionLabel="Add loan"
+                onAction={() => router.push("/add-loan")}
+              />
+            </Card>
+          ) : (
+            <>
+              <Card padded={false}>
+                {visibleRows.map((row, i) => (
+                  <LoanRow
+                    key={row.loan.id}
+                    row={row}
+                    first={i === 0}
+                    onPress={() => openLoan(row.loan)}
+                    onLongPress={() => handleDeleteLoan(row.loan.id, row.loan.loanName)}
+                  />
                 ))}
-              </ScrollView>
-            </View>
-          </BlurView>
-        )}
+              </Card>
+              <Text style={styles.footnote}>Press and hold a loan to delete it.</Text>
+            </>
+          )}
+        </>
+      )}
+    </Screen>
+  );
+}
 
-        {/* Loans List */}
-        {sorted.length === 0 ? (
-          <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-            <View style={styles.emptyContent}>
-              <Text style={styles.emptyText}>No loans yet</Text>
-              <Text style={styles.emptySubtext}>
-                Tap the + button to add your first loan
-              </Text>
-            </View>
-          </BlurView>
-        ) : (
-          sorted.map((loan) => {
-            const nextDue = getNextDueDate(loan);
-            const nextDueStr =
-              nextDue.getFullYear() === 9999
-                ? "Completed"
-                : formatDate(nextDue);
+function LoanRow({ row, first, onPress, onLongPress }) {
+  const { loan, isBullet, isClosed, remaining, principal, progress, meta, status, progressLabel } = row;
+  const kind = isBullet ? kindColors.bullet : kindColors.emi;
+  const tone = status ? TONES[status.tone] : null;
+  const barColor = isClosed
+    ? colors.textMuted
+    : status?.tone === "critical"
+      ? colors.dangerFill
+      : isBullet
+        ? kind.fill
+        : colors.primaryFill;
 
-            const { displayAmount: remaining, breakdown } =
-              getRemainingBreakdown(loan);
-
-            const startDate = new Date(loan.startDate);
-            const today = new Date();
-            let monthsElapsed =
-              (today.getFullYear() - startDate.getFullYear()) * 12 +
-              (today.getMonth() - startDate.getMonth());
-            // Count only fully completed months — no +1 for current in-progress month
-            monthsElapsed = Math.max(0, monthsElapsed);
-            const paymentsMade = Math.min(monthsElapsed, parseInt(loan.tenure));
-
-            const bulletTotalDue =
-              breakdown?.totalAmount ?? parseFloat(loan.principal) ?? 0;
-            const bulletInterestDue = breakdown?.totalInterest ?? 0;
-
-            // Days until next due (for urgency indicator)
-            const daysUntil = Math.ceil((nextDue - new Date()) / 86400000);
-            const isUrgent = daysUntil <= 7 && nextDue.getFullYear() !== 9999;
-            const isWarning =
-              daysUntil <= 30 && !isUrgent && nextDue.getFullYear() !== 9999;
-            const dueBorderColor = isUrgent
-              ? "#e11d48"
-              : isWarning
-                ? "#f59e0b"
-                : "rgba(0,0,0,0.08)";
-
-            return (
-              <BlurView
-                key={loan.id}
-                intensity={20}
-                tint="light"
-                style={[
-                  styles.loanCard,
-                  loan.status === "closed" && { opacity: 0.6 },
-                  (isUrgent || isWarning) && {
-                    borderColor: dueBorderColor,
-                    borderWidth: 1.5,
-                  },
-                ]}
-              >
-                <TouchableOpacity
-                  style={styles.cardContent}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/loan-detail",
-                      params: {
-                        id: loan.id,
-                        loanName: loan.loanName,
-                        principal: loan.principal,
-                        interest: loan.interest,
-                        emiAmount: loan.emiAmount,
-                        tenure: loan.tenure,
-                        startDate: loan.startDate,
-                        loanType: loan.loanType || "emi",
-                      },
-                    })
-                  }
-                  onLongPress={() => handleDeleteLoan(loan.id, loan.loanName)}
-                  activeOpacity={0.7}
-                >
-                  {/* Loan header */}
-                  <View style={styles.loanHeader}>
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 8,
-                      }}
-                    >
-                      <Text style={styles.loanName}>{loan.loanName}</Text>
-                      {loan.loanType === "bullet" && (
-                        <View style={styles.bulletBadge}>
-                          <Text style={styles.bulletBadgeText}>BULLET</Text>
-                        </View>
-                      )}
-                      {loan.status === "closed" && (
-                        <View style={styles.closedBadge}>
-                          <Text style={styles.closedBadgeText}>CLOSED</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.loanAmount}>
-                      {formatCurrency(remaining)}
-                    </Text>
-                    <Text style={styles.loanAmountLabel}>
-                      {loan.loanType === "bullet"
-                        ? "Principal Outstanding"
-                        : "Remaining Principal"}
-                    </Text>
-                  </View>
-
-                  {/* Due date urgency strip */}
-                  {nextDue.getFullYear() !== 9999 && (
-                    <View
-                      style={[
-                        styles.duePill,
-                        {
-                          backgroundColor: isUrgent
-                            ? "rgba(225,29,72,0.1)"
-                            : isWarning
-                              ? "rgba(245,158,11,0.1)"
-                              : "rgba(56,189,248,0.1)",
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.duePillText,
-                          {
-                            color: isUrgent
-                              ? "#e11d48"
-                              : isWarning
-                                ? "#f59e0b"
-                                : "#38bdf8",
-                          },
-                        ]}
-                      >
-                        {isUrgent ? "🔴" : isWarning ? "🟡" : "📅"}
-                        {"  "}
-                        {loan.loanType === "bullet"
-                          ? "Matures"
-                          : "Next Due"}:{" "}
-                        <Text style={{ fontWeight: "700" }}>{nextDueStr}</Text>
-                        {nextDue.getFullYear() !== 9999 && (
-                          <Text style={{ fontWeight: "400", opacity: 0.7 }}>
-                            {"  "}(
-                            {daysUntil > 0 ? `${daysUntil}d away` : "Today!"})
-                          </Text>
-                        )}
-                      </Text>
-                    </View>
-                  )}
-
-                  {/* Detail rows */}
-                  <View style={styles.loanDetails}>
-                    {loan.loanType === "bullet" ? (
-                      <>
-                        <View style={styles.detailRow}>
-                          <Text style={styles.detailLabel}>Principal</Text>
-                          <Text style={styles.detailValue}>
-                            {formatCurrency(loan.principal)}
-                          </Text>
-                        </View>
-                        <View style={styles.detailRow}>
-                          <Text style={styles.detailLabel}>
-                            Interest ({loan.interest}%)
-                          </Text>
-                          <Text
-                            style={[styles.detailValue, { color: "#f59e0b" }]}
-                          >
-                            {formatCurrency(bulletInterestDue)}
-                          </Text>
-                        </View>
-                        <View style={styles.detailRow}>
-                          <Text style={styles.detailLabel}>
-                            Total Due at Maturity
-                          </Text>
-                          <Text
-                            style={[
-                              styles.detailValue,
-                              { color: "#e11d48", fontWeight: "700" },
-                            ]}
-                          >
-                            {formatCurrency(bulletTotalDue)}
-                          </Text>
-                        </View>
-                      </>
-                    ) : (
-                      <>
-                        <View style={styles.detailRow}>
-                          <Text style={styles.detailLabel}>EMI Amount</Text>
-                          <Text style={styles.detailValue}>
-                            {formatCurrency(loan.emiAmount)}
-                          </Text>
-                        </View>
-                        <View style={styles.detailRow}>
-                          <Text style={styles.detailLabel}>Interest Rate</Text>
-                          <Text style={styles.detailValue}>
-                            {loan.interest}%
-                          </Text>
-                        </View>
-                        <View style={styles.detailRow}>
-                          <Text style={styles.detailLabel}>Progress</Text>
-                          <Text style={styles.detailValue}>
-                            {paymentsMade} / {loan.tenure} EMIs
-                          </Text>
-                        </View>
-                      </>
-                    )}
-                  </View>
-
-                  <View style={styles.startDateContainer}>
-                    <Text style={styles.startDateLabel}>
-                      Started: {formatDate(loan.startDate)}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              </BlurView>
-            );
-          })
-        )}
-      </ScrollView>
-    </LinearGradient>
+  return (
+    <PressableScale
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={[styles.row, !first && styles.rowDivider]}
+      accessibilityLabel={`${loan.loanName}. ${meta}. ${formatINR(remaining)} principal left. ${progressLabel}${
+        status ? `. ${status.label}` : ""
+      }`}
+      accessibilityHint="Opens loan details. Press and hold to delete."
+    >
+      <View style={styles.rowTop}>
+        <IconBadge
+          name={iconFor(loan.loanName, isBullet)}
+          color={isClosed ? colors.textMuted : kind.text}
+          backgroundColor={isClosed ? colors.surfaceSunken : kind.soft}
+        />
+        <View style={styles.rowBody}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {loan.loanName}
+          </Text>
+          <Text style={styles.rowMeta} numberOfLines={1}>
+            {meta}
+          </Text>
+        </View>
+        <View style={styles.rowTrail}>
+          <Text style={[styles.rowAmount, isClosed && styles.rowAmountClosed]} numberOfLines={1}>
+            {formatINR(remaining)}
+          </Text>
+          <Text style={styles.rowAmountCaption}>of {formatINRCompact(principal)}</Text>
+        </View>
+      </View>
+      <View style={styles.rowBottom}>
+        <ProgressBar segments={[{ value: progress, color: barColor }]} height={5} style={styles.bar} />
+        <Text style={styles.rowProgressText}>{progressLabel}</Text>
+        {status && tone ? (
+          <Pill label={status.label} icon={status.icon} color={tone.text} backgroundColor={tone.soft} />
+        ) : null}
+      </View>
+    </PressableScale>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60 },
-
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  loading: {
+    paddingVertical: space.xxxl * 2,
     alignItems: "center",
-    marginBottom: 20,
   },
-  headerTitle: { fontSize: 34, fontWeight: "700", color: "#0f172a" },
-  addButton: { fontSize: 18, fontWeight: "600", color: "#10b981" },
-
-  // Sort bar
-  sortCard: {
-    borderRadius: 20,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-    marginBottom: 18,
+  segmented: {
+    marginBottom: space.md,
   },
-  sortCardInner: { padding: 14 },
-  sortLabel: {
-    fontSize: 10,
+  sortScroll: {
+    marginHorizontal: -space.lg,
+    marginBottom: space.xl,
+  },
+  sortRow: {
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+  },
+  row: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md + 2,
+    gap: space.sm + 2,
+  },
+  rowDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderStrong,
+  },
+  rowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+  },
+  rowBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  rowTitle: {
+    ...type.body,
     fontWeight: "700",
-    color: "rgba(15,23,42,0.4)",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 10,
+    color: colors.text,
   },
-  sortRow: { flexDirection: "row", gap: 8 },
-  sortBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
-    backgroundColor: "#fff",
-  },
-  sortBtnActive: {
-    backgroundColor: "rgba(16,185,129,0.12)",
-    borderColor: "#10b981",
-  },
-  sortBtnText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "rgba(15,23,42,0.55)",
-  },
-  sortBtnTextActive: { color: "#10b981" },
-
-  loanCard: {
-    borderRadius: 30,
-    overflow: "hidden",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-  },
-  cardContent: { padding: 24 },
-
-  loanHeader: { marginBottom: 12 },
-  loanName: { fontSize: 22, fontWeight: "700", color: "#0f172a" },
-  loanAmount: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: "#10b981",
+  rowMeta: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
     marginTop: 2,
   },
-  loanAmountLabel: {
+  rowTrail: {
+    alignItems: "flex-end",
+  },
+  rowAmount: {
+    ...type.amountSmall,
+    color: colors.text,
+  },
+  rowAmountClosed: {
+    color: colors.textSecondary,
+  },
+  rowAmountCaption: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  rowBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    paddingLeft: 52,
+  },
+  bar: {
+    flex: 1,
+  },
+  rowProgressText: {
+    ...type.caption,
     fontSize: 11,
-    color: "rgba(15,23,42,0.45)",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-    marginTop: 2,
-    marginBottom: 10,
+    color: colors.textSecondary,
+    minWidth: 54,
   },
-
-  bulletBadge: {
-    backgroundColor: "rgba(245,158,11,0.15)",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  bulletBadgeText: { fontSize: 10, fontWeight: "700", color: "#f59e0b" },
-  closedBadge: {
-    backgroundColor: "rgba(100,116,139,0.15)",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  closedBadgeText: { fontSize: 10, fontWeight: "700", color: "#64748b" },
-
-  duePill: {
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 14,
-  },
-  duePillText: { fontSize: 13, lineHeight: 18 },
-
-  loanDetails: { gap: 10, marginBottom: 16 },
-  detailRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  detailLabel: { fontSize: 14, color: "rgba(15,23,42,0.6)" },
-  detailValue: { fontSize: 16, fontWeight: "600", color: "#0f172a" },
-
-  startDateContainer: {
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.05)",
-  },
-  startDateLabel: { fontSize: 12, color: "rgba(15,23,42,0.4)" },
-
-  emptyCard: {
-    borderRadius: 30,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-  },
-  emptyContent: { padding: 48, alignItems: "center" },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: "#0f172a",
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: "rgba(15,23,42,0.6)",
+  footnote: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textSecondary,
     textAlign: "center",
+    marginTop: space.md,
   },
 });

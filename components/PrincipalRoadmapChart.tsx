@@ -9,7 +9,10 @@ import {
   View,
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
-import { calculateEMIBreakdown } from "../utils/emiCalculator";
+import {
+  calculateEMIBreakdown,
+  getMonthsElapsed,
+} from "../utils/emiCalculator";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -38,9 +41,6 @@ const fcDynamicAxis = (v: number) => {
   }
   return `${val}`;
 };
-
-const TODAY = new Date();
-TODAY.setHours(0, 0, 0, 0);
 
 interface PrincipalRoadmapChartProps {
   loans: any[];
@@ -85,12 +85,14 @@ export default function PrincipalRoadmapChart({
     );
   }, [loans]);
 
-  // Prep active loan initial states
-  const initialLoanStates = useMemo(() => {
+  // Prep active loan initial states (as of today)
+  const { initialLoanStates, asOf } = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const parseSafe = (val: any) =>
       parseFloat(String(val || "0").replace(/,/g, "")) || 0;
 
-    return emiLoans.map((loan) => {
+    const states = emiLoans.map((loan) => {
       const principal = parseSafe(loan.principal);
       const interest = parseFloat(loan.interest) || 0;
       const tenure =
@@ -98,15 +100,10 @@ export default function PrincipalRoadmapChart({
       const emiAmount = parseSafe(loan.emiAmount);
       const loanType = loan.loanType || "emi";
 
-      let monthsElapsed = 0;
-      if (loan.startDate) {
-        const start = new Date(loan.startDate);
-        // Count only fully completed EMI months — no +1 for current in-progress month
-        monthsElapsed =
-          (TODAY.getFullYear() - start.getFullYear()) * 12 +
-          (TODAY.getMonth() - start.getMonth());
-        monthsElapsed = Math.max(0, monthsElapsed);
-      }
+      // EMIs already due as of today (same count as the Loans/Dashboard screens)
+      const monthsElapsed = loan.startDate
+        ? getMonthsElapsed(loan.startDate, today)
+        : 0;
 
       const extraPayments = payments.filter((p) => p.loanId === loan.id);
       const bd = (calculateEMIBreakdown as any)(
@@ -117,6 +114,7 @@ export default function PrincipalRoadmapChart({
         emiAmount || null,
         loanType,
         extraPayments,
+        loan.startDate || null,
       );
 
       return {
@@ -124,12 +122,16 @@ export default function PrincipalRoadmapChart({
         name: loan.loanName,
         principal,
         interest,
+        startDate: loan.startDate || null,
+        tenure,
+        emisPaid: Math.min(monthsElapsed, tenure),
         tenureRemaining: Math.max(0, tenure - monthsElapsed),
         emiAmount,
         remainingPrincipal: bd.remainingPrincipalAmount,
         closed: bd.remainingPrincipalAmount <= 5,
       };
     });
+    return { initialLoanStates: states, asOf: today };
   }, [emiLoans, payments]);
 
   // Run Cascade Simulation & Build Graph Points
@@ -151,7 +153,7 @@ export default function PrincipalRoadmapChart({
     let currentExtraBudget = extraMonthlyBudget;
     let baseExtraInput = extraMonthlyBudget;
 
-    const currentMonthLabel = TODAY.toLocaleDateString("en-IN", {
+    const currentMonthLabel = asOf.toLocaleDateString("en-IN", {
       month: "short",
       year: "numeric",
     });
@@ -166,10 +168,10 @@ export default function PrincipalRoadmapChart({
 
     pointsList.push({
       index: 0,
-      label: TODAY.toLocaleDateString("en-IN", { month: "short" }),
+      label: asOf.toLocaleDateString("en-IN", { month: "short" }),
       monthName: currentMonthLabel,
-      year: TODAY.getFullYear(),
-      monthIndex: TODAY.getMonth(),
+      year: asOf.getFullYear(),
+      monthIndex: asOf.getMonth(),
       totalPrincipal: Math.round(initialTotalPrincipal),
       activeEMI: initialActiveEMI,
       extraApplied: currentExtraBudget,
@@ -180,7 +182,9 @@ export default function PrincipalRoadmapChart({
 
     while (targetStates.some((l) => !l.closed) && m < MAX_SIM_MONTHS) {
       m++;
-      const date = new Date(TODAY.getFullYear(), TODAY.getMonth() + m, 1);
+      const date = new Date(asOf.getFullYear(), asOf.getMonth() + m, 1);
+      // Each point is the balance at the end of its month
+      const monthEnd = new Date(asOf.getFullYear(), asOf.getMonth() + m + 1, 0);
       const monthShort = date.toLocaleDateString("en-IN", { month: "short" });
       const monthLabel = date.toLocaleDateString("en-IN", {
         month: "short",
@@ -189,28 +193,39 @@ export default function PrincipalRoadmapChart({
 
       targetStates.forEach((l) => {
         if (l.closed) return;
+        // EMIs falling due since the previous point (normally one; the first
+        // step also picks up any EMI still due later this month)
+        let emisDue = l.startDate
+          ? Math.min(l.tenure, getMonthsElapsed(l.startDate, monthEnd)) -
+            l.emisPaid
+          : 1;
+        if (l.tenureRemaining <= 0) emisDue = Math.max(emisDue, 1);
+
         const r = l.interest / 12 / 100;
-        const interestPortion = l.remainingPrincipal * r;
-        const principalPortion = Math.max(0, l.emiAmount - interestPortion);
-        l.remainingPrincipal = Math.max(
-          0,
-          l.remainingPrincipal - principalPortion,
-        );
-        l.tenureRemaining -= 1;
+        for (let i = 0; i < emisDue && !l.closed; i++) {
+          const interestPortion = l.remainingPrincipal * r;
+          const principalPortion = Math.max(0, l.emiAmount - interestPortion);
+          l.remainingPrincipal = Math.max(
+            0,
+            l.remainingPrincipal - principalPortion,
+          );
+          l.emisPaid += 1;
+          l.tenureRemaining -= 1;
 
-        if (l.remainingPrincipal <= 5 || l.tenureRemaining <= 0) {
-          l.remainingPrincipal = 0;
-          l.closed = true;
+          if (l.remainingPrincipal <= 5 || l.tenureRemaining <= 0) {
+            l.remainingPrincipal = 0;
+            l.closed = true;
 
-          events.push({
-            loanName: l.name,
-            monthIndex: m,
-            label: monthLabel,
-            freedEMI: l.emiAmount,
-            newTotalExtra: currentExtraBudget + l.emiAmount,
-          });
+            events.push({
+              loanName: l.name,
+              monthIndex: m,
+              label: monthLabel,
+              freedEMI: l.emiAmount,
+              newTotalExtra: currentExtraBudget + l.emiAmount,
+            });
 
-          currentExtraBudget += l.emiAmount;
+            currentExtraBudget += l.emiAmount;
+          }
         }
       });
 
@@ -279,7 +294,7 @@ export default function PrincipalRoadmapChart({
       closureEvents: events,
       dynamicCaption: caption,
     };
-  }, [initialLoanStates, selectedLoanId, extraMonthlyBudget]);
+  }, [initialLoanStates, asOf, selectedLoanId, extraMonthlyBudget]);
 
   // Clean X-Axis sampling: plot all data points for smooth line, but show 4-5 well-spaced X-axis labels
   const chartData = useMemo(() => {

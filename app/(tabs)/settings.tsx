@@ -1,26 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
-  TextInput,
-  Platform,
-  ActivityIndicator,
-  NativeModules,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getLoans } from '../../utils/storage';
-import { getGmailConfig, saveGmailTokens, clearGmailTokens, saveGmailSearchQuery, syncGmailTransactions } from '../../utils/gmail';
-import Config from '../../utils/Config';
-import { clearAuthUser } from '../../utils/auth';
+import Constants from 'expo-constants';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Alert, NativeModules, StyleSheet, Text, TextInput, View } from 'react-native';
 import SidePanelDrawer from '../../components/SidePanelDrawer';
+import EdgeSwipeOpener from '../../components/ui/EdgeSwipe';
+import {
+  Button,
+  Card,
+  colors,
+  Gap,
+  HeaderAction,
+  HIT,
+  IconBadge,
+  ListRow,
+  PressableScale,
+  radius,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  space,
+  type,
+} from '../../components/ui/kit';
+import { clearAuthUser, getAuthUser } from '../../utils/auth';
+import { clearGmailTokens, getGmailConfig, saveGmailSearchQuery, saveGmailTokens, syncGmailTransactions } from '../../utils/gmail';
+import { getLoans } from '../../utils/storage';
 
 const isGoogleSigninSupported = !!NativeModules?.RNGoogleSignin;
 const GoogleSignin = isGoogleSigninSupported
@@ -35,19 +40,71 @@ if (isGoogleSigninSupported && GoogleSignin) {
   });
 }
 
+type IconName = keyof typeof Ionicons.glyphMap;
+
+interface NavItem {
+  title: string;
+  subtitle: string;
+  icon: IconName;
+  color: string;
+  soft: string;
+  route: string;
+}
+
+const PLAN_TOOLS: NavItem[] = [
+  { title: 'Repayment roadmap', subtitle: 'Your EMIs and balance, month by month', icon: 'map-outline', color: colors.indigo, soft: colors.indigoSoft, route: '/roadmap' },
+  { title: 'Debt-free calculator', subtitle: 'See how prepaying shortens your loans', icon: 'flag-outline', color: colors.primary, soft: colors.primarySoft, route: '/debt-free' },
+  { title: 'Financial plan', subtitle: 'Net worth and savings targets', icon: 'trending-up-outline', color: colors.info, soft: colors.infoSoft, route: '/financial-plan' },
+  { title: 'Compare loans', subtitle: 'Rates, EMIs and tenures side by side', icon: 'git-compare-outline', color: colors.violet, soft: colors.violetSoft, route: '/compare-loans' },
+  { title: 'Maturity alerts', subtitle: 'Upcoming policy and loan dates', icon: 'timer-outline', color: colors.warning, soft: colors.warningSoft, route: '/maturity-alerts' },
+];
+
+const MONEY: NavItem[] = [
+  { title: 'Loans', subtitle: 'Active and closed loans', icon: 'wallet-outline', color: colors.indigo, soft: colors.indigoSoft, route: '/loans' },
+  { title: 'Insurance', subtitle: 'Health, term and vehicle policies', icon: 'shield-checkmark-outline', color: colors.info, soft: colors.infoSoft, route: '/insurances' },
+  { title: 'Payment history', subtitle: 'Every EMI and prepayment recorded', icon: 'receipt-outline', color: colors.primary, soft: colors.primarySoft, route: '/history' },
+  { title: 'Spends', subtitle: 'Expenses, income and budget', icon: 'pie-chart-outline', color: colors.pink, soft: colors.pinkSoft, route: '/spend-tracker' },
+];
+
+const appVersion = Constants.expoConfig?.version;
+
 export default function MoreScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [currency] = useState(Config.DEFAULT_CURRENCY || '₹');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [showShortcutsGuide, setShowShortcutsGuide] = useState(false);
+  const [showKeyEditor, setShowKeyEditor] = useState(false);
+  const [showGmail, setShowGmail] = useState(false);
+  const [authUser, setAuthUser] = useState<{ email?: string; name?: string } | null>(null);
 
   // Gmail states
   const [gmailConfig, setGmailConfig] = useState({ email: '', query: '', isConnected: false });
   const [gmailQuery, setGmailQuery] = useState('');
   const [isGmailSyncing, setIsGmailSyncing] = useState(false);
+
+  const loadSettings = useCallback(async () => {
+    const savedKey = await AsyncStorage.getItem('@user_gemini_api_key');
+    const envKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+    if (savedKey) {
+      setApiKey(savedKey);
+    } else if (envKey) {
+      setApiKey(envKey);
+    }
+
+    const gConfig = await getGmailConfig();
+    setGmailConfig(gConfig);
+    setGmailQuery(gConfig.query);
+
+    const user = await getAuthUser();
+    setAuthUser(user);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSettings();
+    }, [loadSettings])
+  );
 
   const handleGoogleLogin = async () => {
     if (!isGoogleSigninSupported) {
@@ -62,7 +119,7 @@ export default function MoreScreen() {
       const response = await GoogleSignin.signIn();
       const tokens = await GoogleSignin.getTokens();
       const accessToken = tokens.accessToken;
-      
+
       const anyResponse = response as any;
       const user = anyResponse.data ? anyResponse.data.user : anyResponse.user;
       const email = user.email;
@@ -99,7 +156,7 @@ export default function MoreScreen() {
           console.warn('Initial post-login sync failed:', syncErr);
         }
       }, 500);
-      
+
       const config = await getGmailConfig();
       setGmailConfig(config);
       setGmailQuery(config.query);
@@ -108,25 +165,6 @@ export default function MoreScreen() {
       console.error('Google login error:', e);
       Alert.alert('Connection Failed', 'Failed to retrieve email profile from Google.');
     }
-  };
-
-  useEffect(() => {
-    loadSettings();
-  }, []);
-  useFocusEffect(React.useCallback(() => { loadSettings(); }, []));
-
-  const loadSettings = async () => {
-    const savedKey = await AsyncStorage.getItem('@user_gemini_api_key');
-    const envKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-    if (savedKey) {
-      setApiKey(savedKey);
-    } else if (envKey) {
-      setApiKey(envKey);
-    }
-
-    const gConfig = await getGmailConfig();
-    setGmailConfig(gConfig);
-    setGmailQuery(gConfig.query);
   };
 
   const saveApiKey = async (val: string) => {
@@ -187,8 +225,8 @@ export default function MoreScreen() {
           setGmailConfig(config);
           setGmailQuery(config.query);
           Alert.alert('Disconnected', 'Successfully disconnected Gmail account.');
-        }
-      }
+        },
+      },
     ]);
   };
 
@@ -211,19 +249,19 @@ export default function MoreScreen() {
 
   const handleResetData = () => {
     Alert.alert(
-      '☢️ Nuclear Reset',
+      'Erase all data',
       'This will PERMANENTLY delete all loans, payments, and insurance data. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'DELETE EVERYTHING', 
+        {
+          text: 'Delete everything',
           style: 'destructive',
           onPress: async () => {
             await AsyncStorage.clear();
             Alert.alert('Wiped', 'All data has been cleared.');
             router.replace('/');
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -237,944 +275,463 @@ export default function MoreScreen() {
         onPress: async () => {
           await clearAuthUser();
           router.replace('/login');
-        }
-      }
+        },
+      },
     ]);
   };
 
-  const financialCalculators = [
-    { label: 'Repayment Roadmap', icon: 'map-outline', route: '/roadmap', color: '#ec4899', desc: 'Snowball & Avalanche schedules', tag: 'Strategy' },
-    { label: 'Debt-Free Calculator', icon: 'flag-outline', route: '/debt-free', color: '#0284c7', desc: 'Accelerate payoff timelines', tag: 'Milestones' },
-    { label: 'Financial Plan', icon: 'trending-up', route: '/financial-plan', color: '#059669', desc: 'Net worth & freedom targets', tag: 'Wealth' },
-    { label: 'Loan Comparison', icon: 'git-compare-outline', route: '/compare-loans', color: '#7c3aed', desc: 'Compare rates & EMI tenures', tag: 'Analytics' },
-    { label: 'Maturity Alerts', icon: 'timer-outline', route: '/maturity-alerts', color: '#d97706', desc: 'Upcoming policy & loan dates', tag: 'Reminders' },
-    { label: 'All Insurances', icon: 'shield-checkmark-outline', route: '/insurances', color: '#0891b2', desc: 'Manage health, term & auto policies', tag: 'Coverage' },
-  ];
+  const go = (route: string) => router.push(route as any);
+
+  const profileEmail = authUser?.email || gmailConfig.email || '';
+  const profileName = authUser?.name || (profileEmail ? profileEmail.split('@')[0] : '');
+  const signedIn = !!authUser;
+  const initial = (profileName || profileEmail || '?').trim().charAt(0).toUpperCase();
+  const hasKey = !!apiKey.trim();
+
+  const renderNavCard = (items: NavItem[]) => (
+    <Card padded={false}>
+      {items.map((item, i) => (
+        <ListRow
+          key={item.route}
+          title={item.title}
+          subtitle={item.subtitle}
+          leading={<IconBadge name={item.icon} color={item.color} backgroundColor={item.soft} size={36} iconSize={18} />}
+          onPress={() => go(item.route)}
+          divider={i > 0}
+        />
+      ))}
+    </Card>
+  );
 
   return (
-    <LinearGradient colors={['#f8fafc', '#f1f5f9', '#ffffff']} style={styles.container}>
+    <>
       <SidePanelDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
-      
-      <ScrollView 
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 80 }]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Top Header */}
-        <View style={styles.topBar}>
-          <TouchableOpacity 
-            onPress={() => setIsDrawerOpen(true)} 
-            style={styles.drawerTriggerBtn}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="menu" size={22} color="#0f172a" />
-          </TouchableOpacity>
+      <EdgeSwipeOpener onOpen={() => setIsDrawerOpen(true)} />
+      <Screen>
+        <ScreenHeader
+          title="More"
+          subtitle="Tools, data and settings"
+          actions={<HeaderAction icon="menu-outline" label="Open menu" onPress={() => setIsDrawerOpen(true)} />}
+        />
 
-          <View style={styles.headerTitles}>
-            <Text style={styles.title}>More & Hub</Text>
-            <Text style={styles.subtitle}>Tools, Automations & System Settings</Text>
+        {/* Profile */}
+        <Card>
+          <View style={styles.profileRow}>
+            <View style={styles.avatar} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+              {signedIn ? (
+                <Text style={styles.avatarText}>{initial}</Text>
+              ) : (
+                <Ionicons name="person-outline" size={22} color={colors.indigo} />
+              )}
+            </View>
+            <View style={styles.profileText}>
+              <Text style={styles.profileName} numberOfLines={1}>
+                {signedIn ? profileName || 'Signed in' : 'Not signed in'}
+              </Text>
+              <Text style={styles.profileEmail} numberOfLines={1}>
+                {signedIn ? profileEmail || 'No email on file' : 'Sign in to sync your data across devices'}
+              </Text>
+            </View>
           </View>
+          <Button
+            label={signedIn ? 'Sign out' : 'Sign in'}
+            icon={signedIn ? 'log-out-outline' : 'log-in-outline'}
+            variant="secondary"
+            onPress={signedIn ? handleLogout : () => router.replace('/login')}
+            style={styles.profileButton}
+          />
+        </Card>
 
-          <View style={styles.proBadge}>
-            <Ionicons name="shield-checkmark" size={12} color="#059669" />
-            <Text style={styles.proBadgeText}>PRO</Text>
-          </View>
-        </View>
+        <Gap />
+        <SectionHeader title="Plan & tools" />
+        {renderNavCard(PLAN_TOOLS)}
 
-        {/* AI Copilot Spotlight Banner */}
-        <TouchableOpacity 
-          style={styles.aiSpotlightCard}
-          onPress={() => router.push('/ai-advisor' as any)}
-          activeOpacity={0.88}
-        >
-          <LinearGradient
-            colors={['#4f46e5', '#6366f1', '#8b5cf6']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.aiSpotlightGradient}
-          >
-            <View style={styles.aiSpotlightContent}>
-              <View style={styles.aiIconBadge}>
-                <Ionicons name="sparkles" size={22} color="#fff" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={styles.aiTagRow}>
-                  <Text style={styles.aiTagText}>GENAI FINANCIAL COPILOT</Text>
-                  <View style={styles.livePulseDot} />
-                </View>
-                <Text style={styles.aiSpotlightTitle}>AI Advisor & Strategy</Text>
-                <Text style={styles.aiSpotlightDesc}>
-                  Ask anything about loan payoffs, interest reduction, and monthly budgets.
-                </Text>
-              </View>
-              <View style={styles.aiLaunchBtn}>
-                <Ionicons name="arrow-forward" size={18} color="#fff" />
-              </View>
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
+        <Gap />
+        <SectionHeader title="Money" />
+        {renderNavCard(MONEY)}
 
-        {/* Financial Tools & Calculators Bento Grid */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={[styles.sectionIconPill, { backgroundColor: 'rgba(2, 132, 199, 0.1)' }]}>
-              <Ionicons name="grid-outline" size={14} color="#0284c7" />
-            </View>
-            <Text style={styles.sectionTitle}>Financial Intelligence & Tools</Text>
-          </View>
-
-          <View style={styles.toolsBentoGrid}>
-            {financialCalculators.map((tool) => (
-              <TouchableOpacity
-                key={tool.route}
-                style={styles.bentoCard}
-                onPress={() => router.push(tool.route as any)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.bentoCardTop}>
-                  <View style={[styles.toolIconWrap, { backgroundColor: tool.color + '15' }]}>
-                    <Ionicons name={tool.icon as any} size={18} color={tool.color} />
-                  </View>
-                  <View style={[styles.bentoTag, { borderColor: tool.color + '30', backgroundColor: tool.color + '10' }]}>
-                    <Text style={[styles.bentoTagText, { color: tool.color }]}>{tool.tag}</Text>
-                  </View>
-                </View>
-                <Text style={styles.bentoTitle}>{tool.label}</Text>
-                <Text style={styles.bentoDesc} numberOfLines={2}>{tool.desc}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* AI Intelligence Config Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={[styles.sectionIconPill, { backgroundColor: 'rgba(124, 58, 237, 0.1)' }]}>
-              <Ionicons name="hardware-chip-outline" size={14} color="#7c3aed" />
-            </View>
-            <Text style={styles.sectionTitle}>AI Intelligence Engine</Text>
-            {apiKey ? (
-              <View style={styles.activeTag}>
-                <Text style={styles.activeTagText}>CONNECTED</Text>
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.cleanCard}>
-            <View style={styles.cardHeader}>
-              <View style={[styles.iconWrap, { backgroundColor: 'rgba(124, 58, 237, 0.1)' }]}>
-                <Ionicons name="key-outline" size={18} color="#7c3aed" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardMainTitle}>Gemini Pro / Flash API Key</Text>
-                <Text style={styles.cardSubTitle}>Powers smart debt payoff advice & transaction parsing</Text>
-              </View>
-            </View>
-
-            <View style={styles.inputContainer}>
-              <TextInput
-                style={styles.keyInput}
-                placeholder="Paste your Gemini API key (AIzaSy...)"
-                placeholderTextColor="#94a3b8"
-                value={apiKey}
-                onChangeText={saveApiKey}
-                secureTextEntry={!showKey}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <TouchableOpacity 
-                onPress={() => setShowKey(!showKey)} 
-                style={styles.inputEyeBtn}
-                activeOpacity={0.7}
-              >
-                <Ionicons name={showKey ? 'eye-off-outline' : 'eye-outline'} size={18} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.actionRow}>
-              <TouchableOpacity 
-                onPress={handleSaveApiKeyExplicit} 
-                style={styles.primarySaveBtn}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
-                <Text style={styles.primarySaveBtnText}>Save Key</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.featureChipsRow}>
-              <View style={styles.featureChip}>
-                <Ionicons name="flash-outline" size={12} color="#0284c7" />
-                <Text style={styles.featureChipText}>Gemini 1.5 Flash</Text>
-              </View>
-              <View style={styles.featureChip}>
-                <Ionicons name="lock-closed-outline" size={12} color="#059669" />
-                <Text style={styles.featureChipText}>Encrypted on Device</Text>
-              </View>
-            </View>
-
-            <Text style={styles.helperLinkText}>
-              Get a free API key at <Text style={{ color: '#4f46e5', fontWeight: '700' }}>aistudio.google.com</Text>
-            </Text>
-          </View>
-        </View>
-
-        {/* Email Automation Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={[styles.sectionIconPill, { backgroundColor: 'rgba(234, 67, 53, 0.1)' }]}>
-              <Ionicons name="mail" size={14} color="#ea4335" />
-            </View>
-            <Text style={styles.sectionTitle}>Email Automation (Gmail)</Text>
-          </View>
-
-          <View style={styles.cleanCard}>
-            <View style={styles.cardHeader}>
-              <View style={[styles.iconWrap, { backgroundColor: 'rgba(234, 67, 53, 0.1)' }]}>
-                <Ionicons name="mail-open-outline" size={18} color="#ea4335" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardMainTitle}>Gmail Transaction Ingestion</Text>
-                <Text style={styles.cardSubTitle}>Sync bank debit & EMI alerts automatically</Text>
-              </View>
-            </View>
-
-            {gmailConfig.isConnected ? (
-              <View style={styles.connectedContainer}>
-                <View style={styles.connectedEmailRow}>
-                  <Ionicons name="checkmark-circle" size={16} color="#059669" />
-                  <Text style={styles.connectedLabel}>Active Account: </Text>
-                  <Text style={styles.connectedEmailText}>{gmailConfig.email}</Text>
-                </View>
-
-                <Text style={styles.inputLabel}>Query Filter Expression</Text>
+        {/* AI */}
+        <Gap />
+        <SectionHeader title="AI" />
+        <Card padded={false}>
+          <ListRow
+            title="AI Advisor"
+            subtitle="Ask about payoffs, interest and budgets"
+            leading={<IconBadge name="sparkles-outline" color={colors.violet} backgroundColor={colors.violetSoft} size={36} iconSize={18} />}
+            onPress={() => go('/ai-advisor')}
+          />
+          <ExpandRow
+            title="Gemini API key"
+            subtitle="Powers the advisor and transaction parsing"
+            icon="key-outline"
+            color={colors.textSecondary}
+            soft={colors.surfaceSunken}
+            status={hasKey ? 'Saved' : 'Not set'}
+            statusColor={hasKey ? colors.primary : colors.warning}
+            expanded={showKeyEditor}
+            onToggle={() => setShowKeyEditor((v) => !v)}
+          />
+          {showKeyEditor ? (
+            <View style={styles.panel}>
+              <Text style={styles.inputLabel}>API key</Text>
+              <View style={styles.inputWrap}>
                 <TextInput
-                  style={styles.keyInput}
-                  placeholder='subject:"transaction" "Rs."'
-                  placeholderTextColor="#94a3b8"
-                  value={gmailQuery}
-                  onChangeText={handleSaveGmailQuery}
+                  style={styles.input}
+                  placeholder="Paste your Gemini API key (AIzaSy...)"
+                  placeholderTextColor={colors.textMuted}
+                  value={apiKey}
+                  onChangeText={saveApiKey}
+                  secureTextEntry={!showKey}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  accessibilityLabel="Gemini API key"
                 />
-
-                <View style={styles.gmailActionsRow}>
-                  <TouchableOpacity 
-                    style={[styles.syncEmailBtn, isGmailSyncing && { opacity: 0.7 }]} 
-                    onPress={handleGmailSync}
-                    disabled={isGmailSyncing}
-                    activeOpacity={0.8}
-                  >
-                    {isGmailSyncing ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <>
-                        <Ionicons name="sync-outline" size={16} color="#fff" />
-                        <Text style={styles.syncEmailBtnText}>Sync Emails Now</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity 
-                    style={styles.disconnectBtn} 
-                    onPress={handleDisconnectGmail}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="power-outline" size={16} color="#dc2626" />
-                    <Text style={styles.disconnectBtnText}>Disconnect</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View style={styles.disconnectedContainer}>
-                <Text style={styles.featureDescText}>
-                  Connect your Google account to automatically import and categorize bank debit SMS and EMI email alerts.
-                </Text>
-
-                <TouchableOpacity 
-                  style={styles.connectGoogleBtn} 
-                  onPress={handleGoogleLogin}
-                  activeOpacity={0.85}
+                <PressableScale
+                  onPress={() => setShowKey(!showKey)}
+                  style={styles.eyeBtn}
+                  accessibilityLabel={showKey ? 'Hide API key' : 'Show API key'}
                 >
-                  <Ionicons name="logo-google" size={18} color="#fff" />
-                  <Text style={styles.connectGoogleText}>Connect Google Account</Text>
-                </TouchableOpacity>
+                  <Ionicons name={showKey ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.textMuted} />
+                </PressableScale>
               </View>
-            )}
-          </View>
-        </View>
-
-        {/* SMS & Supabase Automation */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={[styles.sectionIconPill, { backgroundColor: 'rgba(236, 72, 153, 0.1)' }]}>
-              <Ionicons name="cloud-done" size={14} color="#ec4899" />
+              <Text style={styles.hint}>
+                Stored only on this device. Get a free key at <Text style={styles.hintStrong}>aistudio.google.com</Text>
+              </Text>
+              <Button label="Save key" icon="checkmark" onPress={handleSaveApiKeyExplicit} style={styles.panelButton} />
             </View>
-            <Text style={styles.sectionTitle}>SMS & Cloud Webhooks</Text>
-          </View>
+          ) : null}
+        </Card>
 
-          <View style={styles.cleanCard}>
-            <View style={styles.cloudBadgeRow}>
-              <View style={styles.cloudStatusPill}>
-                <View style={styles.pulsingDot} />
-                <Text style={styles.cloudStatusText}>Supabase Sync Active</Text>
-              </View>
-              <Text style={styles.cloudMetaText}>Encrypted TLS 1.3</Text>
-            </View>
-
-            <TouchableOpacity 
-              style={styles.accordionHeader} 
-              onPress={() => setShowShortcutsGuide(!showShortcutsGuide)}
-              activeOpacity={0.7}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                <Ionicons name="phone-portrait-outline" size={18} color="#0284c7" />
-                <Text style={styles.accordionTitle}>iOS Shortcuts SMS Integration Guide</Text>
-              </View>
-              <Ionicons 
-                name={showShortcutsGuide ? 'chevron-up' : 'chevron-down'} 
-                size={18} 
-                color="#64748b" 
-              />
-            </TouchableOpacity>
-
-            {showShortcutsGuide && (
-              <View style={styles.guideContainer}>
-                <Text style={styles.guideStepText}>
-                  <Text style={styles.guideBold}>1.</Text> Create an iOS Automation: &quot;When SMS is received&quot;{"\n"}
-                  <Text style={styles.guideBold}>2.</Text> Filter bank alerts & parse transaction amount/merchant{"\n"}
-                  <Text style={styles.guideBold}>3.</Text> Add &quot;Get contents of URL&quot; HTTP action{"\n"}
-                  <Text style={styles.guideBold}>4.</Text> Endpoint: <Text style={styles.codeSnippet}>[SUPABASE_URL]/rest/v1/transactions</Text>{"\n"}
-                  <Text style={styles.guideBold}>5.</Text> Method: <Text style={styles.codeSnippet}>POST</Text>{"\n"}
-                  <Text style={styles.guideBold}>6.</Text> Headers:{"\n"}
-                  {'   '}• apikey: [anonKey]{"\n"}
-                  {'   '}• Authorization: Bearer [anonKey]{"\n"}
-                  {'   '}• Content-Type: application/json{"\n"}
-                  <Text style={styles.guideBold}>7.</Text> JSON Payload:{"\n"}
-                  <Text style={styles.codeSnippet}>{'{"amount": 500, "type": "debit", "category": "Food"}'}</Text>
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Data & Export Management */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={[styles.sectionIconPill, { backgroundColor: 'rgba(5, 150, 105, 0.1)' }]}>
-              <Ionicons name="server-outline" size={14} color="#059669" />
-            </View>
-            <Text style={styles.sectionTitle}>Data Management</Text>
-          </View>
-
-          <TouchableOpacity 
-            style={styles.actionCard} 
+        {/* Data */}
+        <Gap />
+        <SectionHeader title="Data" />
+        <Card padded={false}>
+          <ListRow
+            title="Backup & restore"
+            subtitle="Save or restore a JSON backup file"
+            leading={<IconBadge name="cloud-upload-outline" color={colors.indigo} backgroundColor={colors.indigoSoft} size={36} iconSize={18} />}
+            onPress={() => go('/sync')}
+          />
+          <ListRow
+            title="Export loans as CSV"
+            subtitle="Loan list in spreadsheet format"
+            leading={<IconBadge name="document-text-outline" color={colors.info} backgroundColor={colors.infoSoft} size={36} iconSize={18} />}
             onPress={handleExportCSV}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.iconWrap, { backgroundColor: 'rgba(2, 132, 199, 0.1)' }]}>
-              <Ionicons name="document-text-outline" size={18} color="#0284c7" />
+            divider
+          />
+          <ExpandRow
+            title="Gmail import"
+            subtitle={gmailConfig.isConnected ? gmailConfig.email : 'Import bank debit and EMI alert emails'}
+            icon="mail-outline"
+            color={colors.danger}
+            soft={colors.dangerSoft}
+            status={gmailConfig.isConnected ? 'On' : 'Off'}
+            statusColor={gmailConfig.isConnected ? colors.primary : colors.textMuted}
+            expanded={showGmail}
+            onToggle={() => setShowGmail((v) => !v)}
+          />
+          {showGmail ? (
+            <View style={styles.panel}>
+              {gmailConfig.isConnected ? (
+                <>
+                  <View style={styles.connectedRow}>
+                    <Ionicons name="checkmark-circle" size={16} color={colors.primary} />
+                    <Text style={styles.connectedText} numberOfLines={1}>
+                      Connected as <Text style={styles.connectedEmail}>{gmailConfig.email}</Text>
+                    </Text>
+                  </View>
+                  <Text style={styles.inputLabel}>Search query</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder='subject:"transaction" "Rs."'
+                      placeholderTextColor={colors.textMuted}
+                      value={gmailQuery}
+                      onChangeText={handleSaveGmailQuery}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      accessibilityLabel="Gmail search query"
+                    />
+                  </View>
+                  <Text style={styles.hint}>Only emails matching this Gmail search are imported.</Text>
+                  <View style={styles.buttonRow}>
+                    <Button
+                      label="Sync now"
+                      icon="sync-outline"
+                      onPress={handleGmailSync}
+                      loading={isGmailSyncing}
+                      style={styles.flexButton}
+                    />
+                    <Button
+                      label="Disconnect"
+                      icon="power-outline"
+                      variant="danger"
+                      onPress={handleDisconnectGmail}
+                      style={styles.flexButton}
+                    />
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.panelText}>
+                    Connect your Google account to automatically import and categorise bank debit and EMI alert emails.
+                  </Text>
+                  <Button
+                    label="Connect Google account"
+                    icon="logo-google"
+                    onPress={handleGoogleLogin}
+                    style={styles.panelButton}
+                  />
+                </>
+              )}
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.actionCardTitle}>Export Loans to CSV</Text>
-              <Text style={styles.actionCardSubtitle}>Download all loan records in spreadsheet format</Text>
+          ) : null}
+          <ExpandRow
+            title="SMS via iOS Shortcuts"
+            subtitle="Send bank SMS alerts to your account"
+            icon="phone-portrait-outline"
+            color={colors.info}
+            soft={colors.infoSoft}
+            expanded={showShortcutsGuide}
+            onToggle={() => setShowShortcutsGuide(!showShortcutsGuide)}
+          />
+          {showShortcutsGuide ? (
+            <View style={styles.panel}>
+              <Text style={styles.guideText}>
+                <Text style={styles.guideBold}>1.</Text> Create an iOS Automation: &quot;When SMS is received&quot;{'\n'}
+                <Text style={styles.guideBold}>2.</Text> Filter bank alerts & parse transaction amount/merchant{'\n'}
+                <Text style={styles.guideBold}>3.</Text> Add &quot;Get contents of URL&quot; HTTP action{'\n'}
+                <Text style={styles.guideBold}>4.</Text> Endpoint: <Text style={styles.code}>[SUPABASE_URL]/rest/v1/transactions</Text>{'\n'}
+                <Text style={styles.guideBold}>5.</Text> Method: <Text style={styles.code}>POST</Text>{'\n'}
+                <Text style={styles.guideBold}>6.</Text> Headers:{'\n'}
+                {'   '}• apikey: [anonKey]{'\n'}
+                {'   '}• Authorization: Bearer [anonKey]{'\n'}
+                {'   '}• Content-Type: application/json{'\n'}
+                <Text style={styles.guideBold}>7.</Text> JSON Payload:{'\n'}
+                <Text style={styles.code}>{'{"amount": 500, "type": "debit", "category": "Food"}'}</Text>
+              </Text>
             </View>
-            <Ionicons name="download-outline" size={18} color="#64748b" />
-          </TouchableOpacity>
+          ) : null}
+        </Card>
 
-          <TouchableOpacity 
-            style={styles.actionCard} 
-            onPress={() => router.push('/sync')}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.iconWrap, { backgroundColor: 'rgba(124, 58, 237, 0.1)' }]}>
-              <Ionicons name="cloud-upload-outline" size={18} color="#7c3aed" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.actionCardTitle}>Cloud Backup & JSON Sync</Text>
-              <Text style={styles.actionCardSubtitle}>Export snapshot or restore historical database</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Account & Session */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={[styles.sectionIconPill, { backgroundColor: 'rgba(100, 116, 139, 0.1)' }]}>
-              <Ionicons name="person-outline" size={14} color="#64748b" />
-            </View>
-            <Text style={styles.sectionTitle}>Account & Session</Text>
-          </View>
-
-          <TouchableOpacity 
-            style={styles.actionCard} 
-            onPress={handleLogout}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.iconWrap, { backgroundColor: 'rgba(100, 116, 139, 0.1)' }]}>
-              <Ionicons name="log-out-outline" size={18} color="#475569" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.actionCardTitle}>Sign Out</Text>
-              <Text style={styles.actionCardSubtitle}>End active session on this device</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Danger Zone */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <View style={[styles.sectionIconPill, { backgroundColor: 'rgba(225, 29, 72, 0.1)' }]}>
-              <Ionicons name="warning-outline" size={14} color="#e11d48" />
-            </View>
-            <Text style={[styles.sectionTitle, { color: '#e11d48' }]}>Danger Zone</Text>
-          </View>
-
-          <TouchableOpacity 
-            style={[styles.actionCard, styles.dangerZoneCard]} 
+        {/* App */}
+        <Gap />
+        <SectionHeader title="App" />
+        <Card padded={false}>
+          <ListRow
+            title="Velo Flow"
+            subtitle="Loans, insurance and spends in one place"
+            leading={<IconBadge name="layers-outline" color={colors.primary} backgroundColor={colors.primarySoft} size={36} iconSize={18} />}
+            value={appVersion ? `v${appVersion}` : undefined}
+            valueColor={colors.textSecondary}
+          />
+          <ListRow
+            title="Erase all data"
+            subtitle="Delete every loan, payment and policy on this device"
+            leading={<IconBadge name="trash-outline" color={colors.danger} backgroundColor={colors.dangerSoft} size={36} iconSize={18} />}
             onPress={handleResetData}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.iconWrap, { backgroundColor: 'rgba(225, 29, 72, 0.1)' }]}>
-              <Ionicons name="trash-outline" size={18} color="#e11d48" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.actionCardTitle, { color: '#e11d48' }]}>Nuclear Data Wipe</Text>
-              <Text style={styles.dangerSubText}>Permanently purge all local loans, spends & insurance</Text>
-            </View>
-            <Ionicons name="alert-circle-outline" size={18} color="#e11d48" />
-          </TouchableOpacity>
-        </View>
+            accessibilityHint="Asks for confirmation before deleting"
+            divider
+          />
+        </Card>
+      </Screen>
+    </>
+  );
+}
 
-        {/* Footer & Version */}
-        <View style={styles.footerWrap}>
-          <Text style={styles.footerVersion}>Velo Flow v2.4.0 • Elite Edition</Text>
-          <Text style={styles.footerLegal}>All Data Encrypted & Stored Locally</Text>
-        </View>
-      </ScrollView>
-    </LinearGradient>
+interface ExpandRowProps {
+  title: string;
+  subtitle: string;
+  icon: IconName;
+  color: string;
+  soft: string;
+  status?: string;
+  statusColor?: string;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+/** List row that shows/hides an inline settings panel below it. */
+function ExpandRow({ title, subtitle, icon, color, soft, status, statusColor, expanded, onToggle }: ExpandRowProps) {
+  return (
+    <PressableScale
+      onPress={onToggle}
+      style={[styles.expandRow, styles.rowDivider]}
+      accessibilityLabel={[title, subtitle, status].filter(Boolean).join(', ')}
+      accessibilityState={{ expanded }}
+    >
+      <IconBadge name={icon} color={color} backgroundColor={soft} size={36} iconSize={18} />
+      <View style={styles.expandText}>
+        <Text style={styles.expandTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={styles.expandSubtitle} numberOfLines={1}>
+          {subtitle}
+        </Text>
+      </View>
+      {status ? <Text style={[styles.status, statusColor ? { color: statusColor } : null]}>{status}</Text> : null}
+      <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
+    </PressableScale>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: 18,
-  },
-  topBar: {
+  profileRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
-    gap: 12,
+    gap: space.md,
   },
-  drawerTriggerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.indigoSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  headerTitles: {
+  avatarText: {
+    ...type.headline,
+    color: colors.indigo,
+  },
+  profileText: {
     flex: 1,
+    minWidth: 0,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0f172a',
-    letterSpacing: -0.3,
+  profileName: {
+    ...type.headline,
+    color: colors.text,
   },
-  subtitle: {
-    fontSize: 12,
-    color: '#64748b',
+  profileEmail: {
+    ...type.label,
     fontWeight: '500',
+    color: colors.textMuted,
     marginTop: 2,
   },
-  proBadge: {
+  profileButton: {
+    marginTop: space.lg,
+  },
+  expandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(5, 150, 105, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(5, 150, 105, 0.25)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md + 2,
+    minHeight: 60,
   },
-  proBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#059669',
-    letterSpacing: 0.5,
+  rowDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderStrong,
   },
-  aiSpotlightCard: {
-    marginBottom: 22,
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#4f46e5',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  aiSpotlightGradient: {
-    padding: 16,
-  },
-  aiSpotlightContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  aiIconBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  aiTagRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 2,
-  },
-  aiTagText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: 'rgba(255, 255, 255, 0.9)',
-    letterSpacing: 0.8,
-  },
-  livePulseDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#86efac',
-  },
-  aiSpotlightTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  aiSpotlightDesc: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  aiLaunchBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  section: {
-    marginBottom: 22,
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-    gap: 8,
-  },
-  sectionIconPill: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+  expandText: {
     flex: 1,
+    minWidth: 0,
   },
-  activeTag: {
-    backgroundColor: 'rgba(5, 150, 105, 0.1)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  activeTagText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  toolsBentoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  bentoCard: {
-    width: '48.3%',
-    backgroundColor: '#ffffff',
-    borderRadius: 18,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  bentoCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  toolIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bentoTag: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  bentoTagText: {
-    fontSize: 9,
+  expandTitle: {
+    ...type.body,
     fontWeight: '700',
-    textTransform: 'uppercase',
+    color: colors.text,
   },
-  bentoTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 3,
-  },
-  bentoDesc: {
-    fontSize: 10,
-    color: '#64748b',
-    lineHeight: 14,
-  },
-  cleanCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
-  },
-  iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardMainTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  cardSubTitle: {
-    fontSize: 11,
-    color: '#64748b',
+  expandSubtitle: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textMuted,
     marginTop: 2,
   },
-  inputContainer: {
-    position: 'relative',
-    marginTop: 4,
+  status: {
+    ...type.label,
+    color: colors.textMuted,
   },
-  keyInput: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    paddingRight: 40,
-    fontSize: 13,
-    color: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  panel: {
+    paddingHorizontal: space.lg,
+    paddingBottom: space.lg,
+    paddingTop: space.xs,
+    backgroundColor: colors.surface,
   },
-  inputEyeBtn: {
-    position: 'absolute',
-    right: 12,
-    top: 13,
+  panelText: {
+    ...type.label,
+    fontWeight: '500',
+    color: colors.textSecondary,
   },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-  },
-  primarySaveBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#4f46e5',
-    paddingVertical: 11,
-    borderRadius: 12,
-  },
-  primarySaveBtnText: {
-    color: '#ffffff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  featureChipsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  featureChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#f1f5f9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  featureChipText: {
-    fontSize: 10,
-    color: '#475569',
-    fontWeight: '600',
-  },
-  helperLinkText: {
-    fontSize: 11,
-    color: '#64748b',
-    marginTop: 12,
-    textAlign: 'center',
-  },
-  connectedContainer: {
-    marginTop: 4,
-  },
-  connectedEmailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(5, 150, 105, 0.08)',
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(5, 150, 105, 0.2)',
-    marginBottom: 12,
-  },
-  connectedLabel: {
-    fontSize: 11,
-    color: '#64748b',
-  },
-  connectedEmailText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#059669',
+  panelButton: {
+    marginTop: space.md,
   },
   inputLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748b',
-    marginBottom: 6,
-    marginLeft: 2,
+    ...type.label,
+    color: colors.textSecondary,
+    marginBottom: space.xs + 2,
   },
-  gmailActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
-  },
-  syncEmailBtn: {
-    flex: 1.4,
+  inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#ea4335',
-    paddingVertical: 12,
-    borderRadius: 12,
+    minHeight: 50,
+    paddingLeft: space.md + 2,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
   },
-  syncEmailBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  disconnectBtn: {
+  input: {
     flex: 1,
-    flexDirection: 'row',
+    ...type.body,
+    color: colors.text,
+    paddingVertical: space.md,
+    paddingRight: space.md,
+  },
+  eyeBtn: {
+    width: HIT,
+    height: HIT,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    paddingVertical: 12,
-    borderRadius: 12,
   },
-  disconnectBtnText: {
-    color: '#dc2626',
+  hint: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textMuted,
+    marginTop: space.xs + 2,
+  },
+  hintStrong: {
+    color: colors.indigo,
     fontWeight: '700',
-    fontSize: 12,
   },
-  disconnectedContainer: {
-    marginTop: 4,
-  },
-  featureDescText: {
-    fontSize: 12,
-    color: '#64748b',
-    lineHeight: 18,
-    marginBottom: 14,
-  },
-  connectGoogleBtn: {
+  connectedRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#ea4335',
-    paddingVertical: 13,
-    borderRadius: 14,
+    gap: space.xs + 2,
+    marginBottom: space.md,
   },
-  connectGoogleText: {
-    color: '#fff',
+  connectedText: {
+    ...type.label,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  connectedEmail: {
     fontWeight: '700',
-    fontSize: 13,
+    color: colors.text,
   },
-  cloudBadgeRow: {
+  buttonRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#f8fafc',
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginBottom: 12,
+    gap: space.sm,
+    marginTop: space.md,
   },
-  cloudStatusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  flexButton: {
+    flex: 1,
+    paddingHorizontal: space.md,
   },
-  pulsingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#059669',
-  },
-  cloudStatusText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  cloudMetaText: {
-    fontSize: 10,
-    color: '#64748b',
-    fontWeight: '600',
-  },
-  accordionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  accordionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  guideContainer: {
-    marginTop: 10,
-    backgroundColor: '#f8fafc',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  guideStepText: {
-    fontSize: 11,
-    color: '#475569',
-    lineHeight: 18,
+  guideText: {
+    ...type.label,
+    fontWeight: '500',
+    lineHeight: 22,
+    color: colors.textSecondary,
   },
   guideBold: {
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: '800',
+    color: colors.text,
   },
-  codeSnippet: {
-    color: '#0284c7',
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    fontSize: 10,
-  },
-  actionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    padding: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginBottom: 8,
-    gap: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  actionCardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  actionCardSubtitle: {
-    fontSize: 11,
-    color: '#64748b',
-    marginTop: 2,
-  },
-  dangerZoneCard: {
-    backgroundColor: '#fff1f2',
-    borderColor: '#fecdd3',
-  },
-  dangerSubText: {
-    fontSize: 11,
-    color: '#e11d48',
-    marginTop: 2,
-  },
-  footerWrap: {
-    alignItems: 'center',
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  footerVersion: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#94a3b8',
-    letterSpacing: 0.3,
-  },
-  footerLegal: {
-    fontSize: 10,
-    color: '#cbd5e1',
-    marginTop: 4,
+  code: {
+    fontFamily: 'Menlo',
+    fontSize: 12,
+    color: colors.indigo,
+    backgroundColor: colors.surfaceSunken,
   },
 });

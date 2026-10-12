@@ -60,35 +60,54 @@ export async function registerForPushNotificationsAsync() {
   }
 }
 
-// Schedule a monthly local notification for an EMI loan
+// Reminders are scheduled as individual dates (the day before each due date) so they
+// follow month-end clamping and stop when a loan ends. iOS keeps at most 64 pending
+// local notifications, so only the next few occurrences are scheduled; they are
+// refreshed whenever loans change and once a day from the dashboard.
+const EMI_REMINDERS_AHEAD = 3;
+const PREMIUM_REMINDERS_AHEAD = 2;
+
+const dayBefore = (date, hour) => new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1, hour, 0, 0);
+
+async function scheduleAt(notifications, date, content) {
+  if (!(date > new Date())) return null;
+  return notifications.scheduleNotificationAsync({
+    content,
+    trigger: { type: notifications.SchedulableTriggerInputTypes?.DATE ?? 'date', date },
+  });
+}
+
+// Schedule reminders for an EMI loan's next few EMIs, or a bullet loan's maturity
 export async function scheduleEMIReminder(loan) {
-  if (!loan.startDate || !loan.emiAmount) return;
+  if (!loan.startDate) return;
 
   const notifications = getNotifications();
   if (!notifications) return null;
 
-  const startDate = new Date(loan.startDate);
-  const dueDay = startDate.getDate();
-
-  let targetDay = dueDay - 1;
-  if (targetDay <= 0) targetDay = 28; // Safe fallback for 1st-of-month due dates
+  const { getInstalmentDate, getNextInstalment, getBulletMaturityDate } = require('./emiCalculator');
 
   try {
-    const identifier = await notifications.scheduleNotificationAsync({
-      content: {
-        title: '💰 EMI Reminder',
-        body: `Your EMI for ${loan.loanName} of ₹${parseFloat(loan.emiAmount).toLocaleString('en-IN')} is due tomorrow!`,
+    if (loan.loanType === 'bullet') {
+      const maturity = getBulletMaturityDate(loan.startDate, loan.tenure);
+      const at = new Date(maturity.getFullYear(), maturity.getMonth(), maturity.getDate() - 3, 10, 0, 0);
+      return await scheduleAt(notifications, at, {
+        title: 'Loan maturing soon',
+        body: `${loan.loanName} matures in 3 days. Plan to renew or close it.`,
         data: { loanId: loan.id },
-      },
-      trigger: {
-        type: 'calendar',
-        day: targetDay,
-        hour: 15,
-        minute: 0,
-        repeats: true,
-      },
-    });
-    return identifier;
+      });
+    }
+
+    if (!loan.emiAmount) return;
+    const next = getNextInstalment(loan.startDate, loan.tenure, new Date());
+    if (!next) return;
+    const last = Math.min(parseInt(loan.tenure, 10) || 0, next.number + EMI_REMINDERS_AHEAD - 1);
+    for (let k = next.number; k <= last; k++) {
+      await scheduleAt(notifications, dayBefore(getInstalmentDate(loan.startDate, k), 10), {
+        title: 'EMI due tomorrow',
+        body: `${loan.loanName}: ₹${parseFloat(loan.emiAmount).toLocaleString('en-IN')} will be debited tomorrow.`,
+        data: { loanId: loan.id },
+      });
+    }
   } catch (e) {
     console.warn('EMI reminder scheduling failed:', e.message);
   }
@@ -106,51 +125,29 @@ export async function cancelAllLoanNotifications() {
   }
 }
 
-// Schedule local notifications for an insurance policy
+// Schedule reminders for an insurance policy's next premiums
 export async function scheduleInsuranceReminder(insurance) {
   if (!insurance.startDate || !insurance.premiumAmount) return;
 
   const notifications = getNotifications();
   if (!notifications) return;
 
-  const startDate = new Date(insurance.startDate);
-  const dueDay = startDate.getDate();
-  const baseMonth = startDate.getMonth() + 1; // 1–12
-
-  let targetDay = dueDay - 1;
-  if (targetDay <= 0) targetDay = 28;
-
-  const body = `Your ${insurance.frequency} ${insurance.name} premium of ₹${parseFloat(insurance.premiumAmount).toLocaleString('en-IN')} is due tomorrow!`;
+  const { getNextPremiumDate, getPremiumStepMonths, addMonthsClamped, parseLocalDate } = require('./emiCalculator');
+  const body = `${insurance.name}: ₹${parseFloat(insurance.premiumAmount).toLocaleString('en-IN')} premium is due tomorrow.`;
 
   try {
-    if (insurance.frequency === 'monthly') {
-      await notifications.scheduleNotificationAsync({
-        content: { title: '🛡️ Insurance Premium Due!', body },
-        trigger: { type: 'calendar', day: targetDay, hour: 10, minute: 0, repeats: true },
+    const next = getNextPremiumDate(insurance.startDate, insurance.frequency, new Date());
+    if (!next) return;
+    const start = parseLocalDate(insurance.startDate);
+    const step = getPremiumStepMonths(insurance.frequency);
+    const n0 = Math.round(((next.getFullYear() - start.getFullYear()) * 12 + (next.getMonth() - start.getMonth())) / step);
+    for (let i = 0; i < PREMIUM_REMINDERS_AHEAD; i++) {
+      const due = addMonthsClamped(start, (n0 + i) * step);
+      await scheduleAt(notifications, dayBefore(due, 10), {
+        title: 'Insurance premium due tomorrow',
+        body,
+        data: { insuranceId: insurance.id },
       });
-    } else {
-      // Build the list of months for this frequency
-      let targetMonths = [];
-      switch (insurance.frequency) {
-        case 'yearly':
-          targetMonths = [baseMonth];
-          break;
-        case 'half-yearly':
-          targetMonths = [baseMonth, ((baseMonth + 5) % 12) + 1];
-          break;
-        case 'quarterly':
-          targetMonths = [0, 3, 6, 9].map(offset => ((baseMonth - 1 + offset) % 12) + 1);
-          break;
-        default:
-          targetMonths = [baseMonth];
-      }
-
-      for (const month of targetMonths) {
-        await notifications.scheduleNotificationAsync({
-          content: { title: '🛡️ Insurance Premium Due!', body },
-          trigger: { type: 'calendar', month, day: targetDay, hour: 10, minute: 0, repeats: true },
-        });
-      }
     }
   } catch (e) {
     console.warn('Insurance reminder scheduling failed:', e.message);

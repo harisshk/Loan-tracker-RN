@@ -1,40 +1,60 @@
-import React, { useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { getInsurances, updateInsurance } from '../utils/storage';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import {
+  Button,
+  Card,
+  Chip,
+  colors,
+  Field,
+  Gap,
+  PressableScale,
+  radius,
+  Screen,
+  ScreenHeader,
+  Segmented,
+  space,
+  type,
+} from '../components/ui/kit';
+import { parseLocalDate, toLocalISOString } from '../utils/emiCalculator';
+import { deleteInsurance, getInsurances, updateInsurance } from '../utils/storage';
+
+const FREQUENCIES = [
+  { key: 'yearly', label: 'Yearly' },
+  { key: 'half-yearly', label: 'Half-yearly' },
+  { key: 'quarterly', label: 'Quarterly' },
+  { key: 'monthly', label: 'Monthly' },
+];
+
+const INSURANCE_TYPES = [
+  { id: 'life',     label: 'Life',     icon: 'heart-outline' },
+  { id: 'health',   label: 'Health',   icon: 'medkit-outline' },
+  { id: 'vehicle',  label: 'Vehicle',  icon: 'car-outline' },
+  { id: 'property', label: 'Property', icon: 'home-outline' },
+  { id: 'other',    label: 'Other',    icon: 'document-text-outline' },
+];
 
 export default function EditInsurance() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const insets = useSafeAreaInsets();
 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
   const [formData, setFormData] = useState({
     name: '',
     insuranceType: 'life',
     premiumAmount: '',
     frequency: 'yearly',
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: toLocalISOString(new Date()),
   });
 
   const loadData = useCallback(async () => {
+    // `loading` starts true, so there's no need to set it again here.
     try {
-      setLoading(true);
       const allInsurances = await getInsurances();
       const found = allInsurances.find(ins => ins.id === params.id);
       if (found) {
@@ -43,7 +63,7 @@ export default function EditInsurance() {
           insuranceType: found.insuranceType || 'life',
           premiumAmount: found.premiumAmount ? String(found.premiumAmount) : '',
           frequency: found.frequency || 'yearly',
-          startDate: found.startDate || new Date().toISOString().split('T')[0],
+          startDate: found.startDate || toLocalISOString(new Date()),
         });
       } else {
         // Fallback to params
@@ -52,7 +72,7 @@ export default function EditInsurance() {
           insuranceType: params.insuranceType || 'life',
           premiumAmount: params.premiumAmount ? String(params.premiumAmount) : '',
           frequency: params.frequency || 'yearly',
-          startDate: params.startDate || new Date().toISOString().split('T')[0],
+          startDate: params.startDate || toLocalISOString(new Date()),
         });
       }
     } catch (e) {
@@ -69,33 +89,28 @@ export default function EditInsurance() {
     params.startDate,
   ]);
 
-  React.useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const frequencies = [
-    { id: 'yearly', label: 'Yearly' },
-    { id: 'half-yearly', label: 'Half-Yearly' },
-    { id: 'quarterly', label: 'Quarterly' },
-    { id: 'monthly', label: 'Monthly' },
-  ];
-
-  const insuranceTypes = [
-    { id: 'life',     label: '❤️ Life' },
-    { id: 'health',   label: '🏥 Health' },
-    { id: 'vehicle',  label: '🚗 Vehicle' },
-    { id: 'property', label: '🏠 Property' },
-    { id: 'other',    label: '📋 Other' },
-  ];
+  // Runs on first focus (and again only if the screen is re-focused).
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData]),
+  );
 
   const handleSave = async () => {
     const sanitizedAmount = String(formData.premiumAmount).replace(/,/g, '');
     if (!formData.name || !sanitizedAmount || parseFloat(sanitizedAmount) <= 0 || !formData.startDate || !formData.frequency) {
-      Alert.alert('Error', 'Please fill all required fields with valid values');
+      setErrors({
+        name: formData.name ? undefined : 'Enter a policy name',
+        premiumAmount:
+          sanitizedAmount && parseFloat(sanitizedAmount) > 0 ? undefined : 'Enter a premium greater than ₹0',
+        startDate: formData.startDate ? undefined : 'Pick a start date',
+      });
       return;
     }
+    setErrors({});
 
     try {
+      setSaving(true);
       const dataToUpdate = { ...formData, premiumAmount: sanitizedAmount };
       await updateInsurance(params.id, dataToUpdate);
       Alert.alert('Success', 'Insurance policy updated successfully', [
@@ -104,164 +119,195 @@ export default function EditInsurance() {
     } catch (e) {
       console.error(e);
       Alert.alert('Error', 'Failed to update insurance policy');
+    } finally {
+      setSaving(false);
     }
+  };
+
+  // Same confirmation as the policy list.
+  const handleDelete = () => {
+    const name = formData.name || params.name || 'this policy';
+    Alert.alert(
+      'Delete Insurance',
+      `Are you sure you want to delete "${name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteInsurance(params.id);
+              router.back();
+            } catch (e) {
+              console.error(e);
+              Alert.alert('Error', 'Failed to delete insurance policy');
+            }
+          },
+        },
+      ]
+    );
   };
 
   if (loading) {
     return (
-      <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      </LinearGradient>
+      <Screen scroll={false}>
+        <ScreenHeader title="Edit insurance" back />
+        <View style={styles.loading}>
+          <ActivityIndicator color={colors.primaryFill} />
+        </View>
+      </Screen>
     );
   }
 
+  const startLabel = parseLocalDate(formData.startDate).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
   return (
-    <LinearGradient colors={['#f8fafc', '#f1f5f9', '#e2e8f0']} style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) + 10 }]} keyboardShouldPersistTaps="handled">
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Text style={styles.backButton}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Edit Insurance</Text>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.flex}
+    >
+      <Screen
+        footer={<Button label="Update insurance" icon="checkmark" onPress={handleSave} loading={saving} />}
+      >
+        <ScreenHeader title="Edit insurance" subtitle={formData.name || undefined} back />
+
+        <Card>
+          <Field
+            label="Policy name"
+            placeholder="e.g. Car insurance, LIC term"
+            value={formData.name}
+            onChangeText={(text) => setFormData({ ...formData, name: text })}
+            error={errors.name}
+          />
+
+          <Text style={styles.label}>Policy type</Text>
+          <View style={styles.chips}>
+            {INSURANCE_TYPES.map((t) => (
+              <Chip
+                key={t.id}
+                label={t.label}
+                icon={t.icon}
+                selected={formData.insuranceType === t.id}
+                onPress={() => setFormData({ ...formData, insuranceType: t.id })}
+              />
+            ))}
           </View>
 
-          <BlurView intensity={20} tint="light" style={styles.formCard}>
-            <View style={styles.formContent}>
+          <Field
+            label="Premium amount"
+            prefix="₹"
+            placeholder="0"
+            keyboardType="numeric"
+            value={formData.premiumAmount}
+            onChangeText={(text) => setFormData({ ...formData, premiumAmount: text.replace(/,/g, '') })}
+            error={errors.premiumAmount}
+          />
 
-              {/* Name */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Policy Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Car Insurance, LIC Term"
-                  placeholderTextColor="rgba(15, 23, 42, 0.4)"
-                  value={formData.name}
-                  onChangeText={(text) => setFormData({ ...formData, name: text })}
-                />
-              </View>
+          <Text style={styles.label}>Premium frequency</Text>
+          <Segmented
+            options={FREQUENCIES}
+            value={formData.frequency}
+            onChange={(f) => setFormData({ ...formData, frequency: f })}
+            style={styles.segmented}
+          />
 
-              {/* Insurance Type */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Insurance Type *</Text>
-                <View style={styles.typeSelectorRow}>
-                  {insuranceTypes.map((t) => (
-                    <TouchableOpacity
-                      key={t.id}
-                      style={[
-                        styles.typeButton,
-                        formData.insuranceType === t.id && styles.typeButtonActive,
-                      ]}
-                      onPress={() => setFormData({ ...formData, insuranceType: t.id })}
-                    >
-                      <Text style={[
-                        styles.typeButtonText,
-                        formData.insuranceType === t.id && styles.typeButtonTextActive,
-                      ]}>{t.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+          <Text style={styles.label}>Start date</Text>
+          <PressableScale
+            onPress={() => setShowDatePicker(true)}
+            style={[styles.dateRow, !!errors.startDate && styles.dateRowError]}
+            accessibilityLabel={`Start date, ${startLabel}`}
+            accessibilityHint="Opens a date picker"
+          >
+            <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
+            <Text style={styles.dateText}>{startLabel}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+          </PressableScale>
+          <Text style={errors.startDate ? styles.error : styles.hint}>
+            {errors.startDate || 'Used to work out your upcoming premium due dates.'}
+          </Text>
 
-              {/* Premium Amount */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Premium Amount (₹) *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0.00"
-                  placeholderTextColor="rgba(15, 23, 42, 0.4)"
-                  keyboardType="numeric"
-                  value={formData.premiumAmount}
-                  onChangeText={(text) => setFormData({ ...formData, premiumAmount: text.replace(/,/g, '') })}
-                />
-              </View>
+          {showDatePicker && (
+            <DateTimePicker
+              value={parseLocalDate(formData.startDate)}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={(event, selectedDate) => {
+                setShowDatePicker(Platform.OS === 'ios');
+                if (selectedDate) {
+                  const y = selectedDate.getFullYear();
+                  const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+                  const d = String(selectedDate.getDate()).padStart(2, '0');
+                  setFormData({ ...formData, startDate: `${y}-${m}-${d}` });
+                }
+              }}
+            />
+          )}
+        </Card>
 
-              {/* Frequency Selector */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Payment Frequency *</Text>
-                <View style={styles.typeSelectorRow}>
-                  {frequencies.map((f) => (
-                    <TouchableOpacity
-                      key={f.id}
-                      style={[
-                        styles.typeButton,
-                        formData.frequency === f.id && styles.typeButtonActive,
-                      ]}
-                      onPress={() => setFormData({ ...formData, frequency: f.id })}
-                    >
-                      <Text style={[
-                        styles.typeButtonText,
-                        formData.frequency === f.id && styles.typeButtonTextActive,
-                      ]}>{f.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+        <Gap />
 
-              {/* Start Date */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Start Date / Due Date Base *</Text>
-                <TouchableOpacity
-                  style={styles.dateButton}
-                  onPress={() => setShowDatePicker(true)}
-                >
-                  <Text style={styles.dateButtonText}>
-                    {new Date(formData.startDate).toLocaleDateString('en-IN', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    })}
-                  </Text>
-                </TouchableOpacity>
-                <Text style={styles.helperText}>Used to calculate your upcoming premium due dates.</Text>
-              </View>
-
-              {showDatePicker && (
-                <DateTimePicker
-                  value={new Date(formData.startDate)}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={(event, selectedDate) => {
-                    setShowDatePicker(Platform.OS === 'ios');
-                    if (selectedDate) {
-                      const y = selectedDate.getFullYear();
-                      const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
-                      const d = String(selectedDate.getDate()).padStart(2, '0');
-                      setFormData({ ...formData, startDate: `${y}-${m}-${d}` });
-                    }
-                  }}
-                />
-              )}
-            </View>
-          </BlurView>
-
-          <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            <Text style={styles.saveButtonText}>Update Insurance</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+        <Button label="Delete policy" icon="trash-outline" variant="danger" onPress={handleDelete} />
+      </Screen>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 40 },
-  header: { marginBottom: 24 },
-  backButton: { fontSize: 16, fontWeight: '600', color: '#10b981', marginBottom: 12 },
-  headerTitle: { fontSize: 34, fontWeight: '700', color: '#0f172a' },
-  formCard: { borderRadius: 30, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.08)', marginBottom: 20 },
-  formContent: { padding: 24, gap: 20 },
-  inputGroup: { gap: 8 },
-  label: { fontSize: 14, fontWeight: '600', color: 'rgba(15, 23, 42, 0.8)', textTransform: 'uppercase', letterSpacing: 0.5 },
-  helperText: { fontSize: 12, color: 'rgba(15, 23, 42, 0.5)' },
-  input: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.08)', borderRadius: 16, padding: 16, fontSize: 16, color: '#0f172a' },
-  dateButton: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.08)', borderRadius: 16, padding: 16 },
-  dateButtonText: { fontSize: 16, color: '#0f172a' },
-  typeSelectorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  typeButton: { flex: 1, minWidth: '45%', paddingVertical: 12, alignItems: 'center', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.1)', backgroundColor: '#ffffff' },
-  typeButtonActive: { backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: '#10b981' },
-  typeButtonText: { fontSize: 14, fontWeight: '600', color: '#0f172a' },
-  typeButtonTextActive: { color: '#10b981' },
-  saveButton: { backgroundColor: '#2563eb', borderRadius: 20, padding: 18, alignItems: 'center', shadowColor: '#2563eb', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
-  saveButtonText: { fontSize: 18, fontWeight: '700', color: '#ffffff' },
+  flex: {
+    flex: 1,
+    backgroundColor: colors.page,
+  },
+  loading: {
+    paddingVertical: space.xxxl * 2,
+    alignItems: 'center',
+  },
+  label: {
+    ...type.label,
+    color: colors.textSecondary,
+    marginBottom: space.xs + 2,
+  },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+    marginBottom: space.lg,
+  },
+  segmented: {
+    marginBottom: space.lg,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    minHeight: 50,
+    paddingHorizontal: space.md + 2,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  dateRowError: {
+    borderColor: colors.dangerFill,
+  },
+  dateText: {
+    ...type.body,
+    color: colors.text,
+    flex: 1,
+  },
+  hint: {
+    ...type.caption,
+    fontWeight: '500',
+    color: colors.textMuted,
+    marginTop: space.xs,
+  },
+  error: {
+    ...type.caption,
+    color: colors.danger,
+    marginTop: space.xs,
+  },
 });

@@ -1,57 +1,94 @@
-import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { Calendar } from "react-native-calendars";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  Card,
+  colors,
+  EmptyState,
+  Gap,
+  IconBadge,
+  kindColors,
+  ListRow,
+  Pill,
+  Screen,
+  ScreenHeader,
+  SectionHeader,
+  space,
+  StatRow,
+  StatTile,
+  type,
+} from "../../components/ui/kit";
 import { getCategoryIcon } from "../../constants/categories";
 import {
-    calculateEMIBreakdown,
-    getBulletMaturityDate,
+  addMonthsClamped,
+  calculateEMIBreakdown,
+  getBulletMaturityDate,
+  getInstalmentDate,
+  getMonthsElapsed,
+  getPremiumStepMonths,
 } from "../../utils/emiCalculator";
+import { formatDateWithDay, formatINR, formatMonthYear } from "../../utils/format";
 import { getInsurances, getLoans, getPayments } from "../../utils/storage";
 import { getTransactions } from "../../utils/transactions";
 
+const toLocalISOString = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+const parseDateToLocal = (dateStr) => {
+  if (!dateStr) return new Date();
+  if (
+    dateStr.length >= 10 &&
+    dateStr.substring(0, 10).match(/^\d{4}-\d{2}-\d{2}$/)
+  ) {
+    const parts = dateStr.substring(0, 10).split("-");
+    return new Date(
+      parseInt(parts[0]),
+      parseInt(parts[1]) - 1,
+      parseInt(parts[2]),
+    );
+  }
+  return new Date(dateStr);
+};
+
+const formatCurrency = (amount) => formatINR(parseFloat(amount || 0));
+
+/** Calendar dot colours, one per kind of item (legend below the calendar). */
+const DOTS = {
+  emi: { key: "emi", color: kindColors.emi.fill, label: "EMI" },
+  bullet: { key: "bullet", color: kindColors.bullet.fill, label: "Bullet" },
+  insurance: { key: "insurance", color: kindColors.insurance.fill, label: "Insurance" },
+  spend: { key: "spend", color: colors.pinkFill, label: "Spend" },
+  credit_tx: { key: "credit_tx", color: colors.primaryFill, label: "Received" },
+};
+const DOT_ORDER = ["emi", "bullet", "insurance", "spend", "credit_tx"];
+
+const billMeta = (item) => {
+  if (item.type === "insurance") {
+    const freq = item.frequency || "";
+    const label = freq ? `${freq.charAt(0).toUpperCase()}${freq.slice(1)} premium` : "Premium";
+    return { kind: kindColors.insurance, label, short: "Insurance" };
+  }
+  if (item.type === "bullet") {
+    return { kind: kindColors.bullet, label: "Bullet repayment", short: "Bullet" };
+  }
+  return { kind: kindColors.emi, label: "Monthly EMI", short: "EMI" };
+};
+
 export default function CalendarScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const [loans, setLoans] = useState([]);
   const [payments, setPayments] = useState([]);
   const [insurances, setInsurances] = useState([]);
   const [spends, setSpends] = useState([]);
-  const [focusTrigger, setFocusTrigger] = useState(0);
   const [showSpendDetails, setShowSpendDetails] = useState(false);
-
-  const toLocalISOString = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  };
-
-  const parseDateToLocal = (dateStr) => {
-    if (!dateStr) return new Date();
-    if (
-      dateStr.length >= 10 &&
-      dateStr.substring(0, 10).match(/^\d{4}-\d{2}-\d{2}$/)
-    ) {
-      const parts = dateStr.substring(0, 10).split("-");
-      return new Date(
-        parseInt(parts[0]),
-        parseInt(parts[1]) - 1,
-        parseInt(parts[2]),
-      );
-    }
-    return new Date(dateStr);
-  };
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [calendarKey, setCalendarKey] = useState(0);
 
   // Default to current month using local timezone
   const todayDateString = toLocalISOString(new Date());
@@ -60,13 +97,7 @@ export default function CalendarScreen() {
     todayDateString.slice(0, 7),
   );
 
-  useFocusEffect(
-    useCallback(() => {
-      setFocusTrigger((prev) => prev + 1);
-    }, []),
-  );
-
-  const loadData = async (month) => {
+  const loadData = useCallback(async (month) => {
     try {
       const loansData = await getLoans();
       const paymentsData = await getPayments();
@@ -77,14 +108,21 @@ export default function CalendarScreen() {
 
       const spendsData = await getTransactions(month);
       setSpends(spendsData || []);
+      setLoadError(false);
     } catch (e) {
       console.error("Error loading calendar data:", e);
+      setLoadError(true);
+    } finally {
+      setLoaded(true);
     }
-  };
+  }, []);
 
-  useEffect(() => {
-    loadData(currentMonthStr);
-  }, [currentMonthStr, focusTrigger]);
+  // Reload whenever the screen gains focus or the visible month changes
+  useFocusEffect(
+    useCallback(() => {
+      loadData(currentMonthStr);
+    }, [loadData, currentMonthStr]),
+  );
 
   const scheduleMap = useMemo(() => {
     const map = {};
@@ -99,14 +137,7 @@ export default function CalendarScreen() {
       const emiAmount = parseFloat(loan.emiAmount) || 0;
       const extraPayments = payments.filter((p) => p.loanId === loan.id);
 
-      const startDate = parseDateToLocal(loan.startDate);
-      let monthsElapsed =
-        (today.getFullYear() - startDate.getFullYear()) * 12 +
-        (today.getMonth() - startDate.getMonth());
-      if (today.getDate() >= startDate.getDate()) {
-        monthsElapsed += 1;
-      }
-      monthsElapsed = Math.max(0, monthsElapsed);
+      const monthsElapsed = getMonthsElapsed(loan.startDate, today);
 
       const breakdown = calculateEMIBreakdown(
         principal,
@@ -116,15 +147,13 @@ export default function CalendarScreen() {
         emiAmount,
         loanType,
         extraPayments,
+        loan.startDate,
       );
 
       if (loanType === "emi") {
         for (let m = 0; m < tenure; m++) {
-          const due = new Date(
-            startDate.getFullYear(),
-            startDate.getMonth() + m,
-            startDate.getDate(),
-          );
+          // EMI #(m + 1), clamped to month end for 29th-31st start dates
+          const due = getInstalmentDate(loan.startDate, m + 1);
           const dateStr = toLocalISOString(due);
 
           const isPaid = m < monthsElapsed;
@@ -165,19 +194,11 @@ export default function CalendarScreen() {
       const freq = ins.frequency;
 
       let monthsToProject = 60;
-      let stepMonths = 12;
-
-      if (freq === "yearly") stepMonths = 12;
-      else if (freq === "half-yearly") stepMonths = 6;
-      else if (freq === "quarterly") stepMonths = 3;
-      else if (freq === "monthly") stepMonths = 1;
+      const stepMonths = getPremiumStepMonths(freq);
 
       for (let m = 0; m <= monthsToProject; m += stepMonths) {
-        const due = new Date(
-          startDate.getFullYear(),
-          startDate.getMonth() + m,
-          startDate.getDate(),
-        );
+        // start + n × step months, clamped to month end
+        const due = addMonthsClamped(startDate, m);
         const dateStr = toLocalISOString(due);
 
         const isPaid = due < today;
@@ -252,439 +273,355 @@ export default function CalendarScreen() {
     };
   }, [dayItems]);
 
+  // Totals for the visible month (summary card)
+  const monthSummary = useMemo(() => {
+    let scheduled = 0;
+    let stillDue = 0;
+    let spent = 0;
+    let billCount = 0;
+    Object.keys(scheduleMap).forEach((date) => {
+      if (!date.startsWith(currentMonthStr)) return;
+      scheduleMap[date].forEach((item) => {
+        const amt = parseFloat(item.amount) || 0;
+        if (item.type === "spend") {
+          spent += amt;
+        } else if (item.type !== "credit_tx") {
+          scheduled += amt;
+          billCount += 1;
+          if (!item.isPaid) stillDue += amt;
+        }
+      });
+    });
+    return { scheduled, stillDue, spent, billCount };
+  }, [scheduleMap, currentMonthStr]);
+
   const markedDates = useMemo(() => {
     const marks = {};
     Object.keys(scheduleMap).forEach((date) => {
-      const dayItems = scheduleMap[date];
-      const hasPending = dayItems.some((i) => !i.isPaid);
-      const hasSpend = dayItems.some((i) => i.type === "spend");
-
-      if (hasPending) {
-        marks[date] = {
-          marked: true,
-          dotColor: "#f59e0b",
-        };
-      } else if (hasSpend) {
-        marks[date] = {
-          marked: true,
-          dotColor: "#ef4444",
-        };
-      } else {
-        marks[date] = {
-          marked: true,
-          dotColor: "#10b981",
-        };
-      }
+      const kinds = new Set(scheduleMap[date].map((i) => i.type));
+      const dots = DOT_ORDER.filter((k) => kinds.has(k)).map((k) => ({
+        key: DOTS[k].key,
+        color: DOTS[k].color,
+        selectedDotColor: colors.textOnAccent,
+      }));
+      marks[date] = { dots };
     });
 
     if (selectedDate) {
-      if (marks[selectedDate]) {
-        marks[selectedDate] = {
-          ...marks[selectedDate],
-          selected: true,
-          selectedColor: "rgba(15, 23, 42, 0.1)",
-        };
-      } else {
-        marks[selectedDate] = {
-          selected: true,
-          selectedColor: "rgba(15, 23, 42, 0.1)",
-        };
-      }
+      marks[selectedDate] = {
+        ...(marks[selectedDate] || { dots: [] }),
+        selected: true,
+        selectedColor: colors.text,
+        selectedTextColor: colors.textOnAccent,
+      };
     }
     return marks;
   }, [scheduleMap, selectedDate]);
-
-  const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount || 0).toLocaleString("en-IN", {
-      maximumFractionDigits: 0,
-    })}`;
-  };
 
   const handleMonthChange = (month) => {
     setCurrentMonthStr(month.dateString.slice(0, 7));
   };
 
+  const jumpToToday = () => {
+    setSelectedDate(todayDateString);
+    setCurrentMonthStr(todayDateString.slice(0, 7));
+    setShowSpendDetails(false);
+    setCalendarKey((k) => k + 1);
+  };
+
   const selectedDateObj = parseDateToLocal(selectedDate);
-  const readableDay = selectedDateObj.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  const isToday = selectedDate === todayDateString;
+  const showTodayAction =
+    !isToday || currentMonthStr !== todayDateString.slice(0, 7);
+  const monthLabel = formatMonthYear(parseDateToLocal(`${currentMonthStr}-01`));
+  const agendaTitle = `${isToday ? "Today · " : ""}${formatDateWithDay(selectedDateObj)}`;
 
   return (
-    <LinearGradient
-      colors={["#f8fafc", "#f1f5f9", "#e2e8f0"]}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingTop: Math.max(insets.top, 20) + 10 },
-        ]}
-      >
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Calendar Schedule</Text>
-          <Text style={styles.headerSubtitle}>
-            View and track your monthly payments & spends
-          </Text>
-        </View>
+    <Screen>
+      <ScreenHeader
+        title="Calendar"
+        subtitle="EMIs, premiums and spends by day"
+      />
 
-        <BlurView intensity={20} tint="light" style={styles.calendarCard}>
-          <Calendar
-            current={selectedDate}
-            onDayPress={(day) => {
-              setSelectedDate(day.dateString);
-              setCurrentMonthStr(day.dateString.slice(0, 7));
-              setShowSpendDetails(false);
-            }}
-            onMonthChange={handleMonthChange}
-            markedDates={markedDates}
-            theme={{
-              calendarBackground: "transparent",
-              textSectionTitleColor: "rgba(15, 23, 42, 0.6)",
-              selectedDayBackgroundColor: "rgba(15, 23, 42, 0.1)",
-              selectedDayTextColor: "#0f172a",
-              todayTextColor: "#2563eb",
-              dayTextColor: "#0f172a",
-              textDisabledColor: "rgba(15, 23, 42, 0.2)",
-              arrowColor: "#0f172a",
-              monthTextColor: "#0f172a",
-              textDayFontWeight: "500",
-              textMonthFontWeight: "700",
-              textDayHeaderFontWeight: "600",
-            }}
+      {/* ── Month summary ─────────────────────────────────────── */}
+      <SectionHeader
+        title={monthLabel}
+        actionLabel="Today"
+        onAction={showTodayAction ? jumpToToday : undefined}
+      />
+      <Card>
+        {loaded ? (
+          <StatRow>
+            <StatTile
+              label="Scheduled"
+              value={formatCurrency(monthSummary.scheduled)}
+              caption={`${monthSummary.billCount} payment${monthSummary.billCount === 1 ? "" : "s"}`}
+            />
+            <StatTile
+              label="Still due"
+              value={formatCurrency(monthSummary.stillDue)}
+              tone={monthSummary.stillDue > 0 ? "warning" : "positive"}
+              caption={monthSummary.stillDue > 0 ? "Upcoming" : "All cleared"}
+            />
+            <StatTile
+              label="Spent"
+              value={formatCurrency(monthSummary.spent)}
+              caption="From spend log"
+            />
+          </StatRow>
+        ) : (
+          <View style={styles.summaryLoading}>
+            <ActivityIndicator color={colors.primaryFill} />
+          </View>
+        )}
+      </Card>
+
+      <Gap size={space.lg} />
+
+      {/* ── Calendar ──────────────────────────────────────────── */}
+      <Card padded={false} style={styles.calendarCard}>
+        <Calendar
+          key={`calendar-${calendarKey}`}
+          current={selectedDate}
+          onDayPress={(day) => {
+            setSelectedDate(day.dateString);
+            setCurrentMonthStr(day.dateString.slice(0, 7));
+            setShowSpendDetails(false);
+          }}
+          onMonthChange={handleMonthChange}
+          markingType="multi-dot"
+          markedDates={markedDates}
+          enableSwipeMonths
+          style={styles.calendar}
+          theme={{
+            calendarBackground: colors.surface,
+            textSectionTitleColor: colors.textMuted,
+            selectedDayBackgroundColor: colors.text,
+            selectedDayTextColor: colors.textOnAccent,
+            todayTextColor: colors.indigo,
+            dayTextColor: colors.text,
+            textDisabledColor: "rgba(15, 23, 42, 0.25)",
+            arrowColor: colors.text,
+            monthTextColor: colors.text,
+            textDayFontSize: 15,
+            textMonthFontSize: 17,
+            textDayHeaderFontSize: 12,
+            textDayFontWeight: "500",
+            textMonthFontWeight: "700",
+            textDayHeaderFontWeight: "600",
+          }}
+        />
+        <View style={styles.legend}>
+          {DOT_ORDER.map((k) => (
+            <View key={k} style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: DOTS[k].color }]} />
+              <Text style={styles.legendText}>{DOTS[k].label}</Text>
+            </View>
+          ))}
+        </View>
+      </Card>
+
+      <Gap />
+
+      {/* ── Selected-day agenda ───────────────────────────────── */}
+      <SectionHeader title={agendaTitle} count={loaded ? dayItems.length : undefined} />
+
+      {!loaded ? (
+        <Card>
+          <View style={styles.agendaLoading}>
+            <ActivityIndicator color={colors.primaryFill} />
+          </View>
+        </Card>
+      ) : loadError && dayItems.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon="cloud-offline-outline"
+            title="Couldn't load your schedule"
+            message="Switch tabs and come back to try again."
           />
-        </BlurView>
+        </Card>
+      ) : dayItems.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon="calendar-outline"
+            title="Nothing on this day"
+            message="No EMIs, premiums or spends recorded. Pick a day with a dot to see what's scheduled."
+          />
+        </Card>
+      ) : (
+        <Card padded={false}>
+          {/* Bills, EMIs, Insurances */}
+          {billItems.map((item, index) => {
+            const meta = billMeta(item);
+            const status = item.isPaid ? "Paid" : "Due";
+            return (
+              <ListRow
+                key={`${item.type}-${item.loanId}-${index}`}
+                divider={index > 0}
+                leading={
+                  <IconBadge
+                    name={meta.kind.icon}
+                    color={meta.kind.text}
+                    backgroundColor={meta.kind.soft}
+                  />
+                }
+                title={item.loanName}
+                subtitle={meta.label}
+                value={formatCurrency(item.amount)}
+                onPress={() =>
+                  item.type === "insurance"
+                    ? router.push("/insurances")
+                    : router.push({
+                        pathname: "/loan-detail",
+                        params: { id: item.loanId },
+                      })
+                }
+                accessibilityLabel={`${item.loanName}, ${meta.label}, ${formatCurrency(item.amount)}, ${status}`}
+                accessibilityHint={
+                  item.type === "insurance"
+                    ? "Opens insurance policies"
+                    : "Opens loan details"
+                }
+              >
+                <Pill
+                  label={status}
+                  icon={item.isPaid ? "checkmark-circle" : "time-outline"}
+                  color={item.isPaid ? colors.primary : colors.warning}
+                  backgroundColor={item.isPaid ? colors.primarySoft : colors.warningSoft}
+                />
+              </ListRow>
+            );
+          })}
 
-        <View style={styles.agendaContainer}>
-          <Text style={styles.agendaTitle}>Schedule for {readableDay}</Text>
-
-          {dayItems.length === 0 ? (
-            <BlurView intensity={15} tint="light" style={styles.emptyCard}>
-              <Ionicons
-                name="calendar-outline"
-                size={32}
-                color="#94a3b8"
-                style={{ marginBottom: 6 }}
-              />
-              <Text style={styles.emptyText}>
-                No events, payments, or spends recorded on this day.
-              </Text>
-            </BlurView>
-          ) : (
+          {/* Day spend total, expandable into individual spends */}
+          {dailySummary.spend > 0 ? (
             <>
-              {/* Total Day Spend Card */}
-              {dailySummary.spend > 0 && (
-                <View style={{ marginBottom: 10 }}>
-                  <TouchableOpacity
-                    style={styles.txCard}
-                    onPress={() => setShowSpendDetails(!showSpendDetails)}
-                    activeOpacity={0.8}
-                  >
-                    <View
-                      style={[
-                        styles.txIconWrap,
-                        { backgroundColor: "rgba(239, 68, 68, 0.12)" },
-                      ]}
-                    >
-                      <Ionicons
-                        name="wallet-outline"
-                        size={20}
-                        color="#ef4444"
+              <ListRow
+                divider={billItems.length > 0}
+                leading={
+                  <IconBadge
+                    name="wallet-outline"
+                    color={colors.pink}
+                    backgroundColor={colors.pinkSoft}
+                  />
+                }
+                title="Spent"
+                subtitle={`${spendItems.length} transaction${spendItems.length > 1 ? "s" : ""} · ${showSpendDetails ? "Hide" : "Show"} details`}
+                value={`-${formatCurrency(dailySummary.spend)}`}
+                valueColor={colors.danger}
+                chevron={false}
+                onPress={() => setShowSpendDetails(!showSpendDetails)}
+                accessibilityLabel={`Spent ${formatCurrency(dailySummary.spend)} across ${spendItems.length} transaction${spendItems.length > 1 ? "s" : ""}`}
+                accessibilityHint={
+                  showSpendDetails
+                    ? "Hides the individual transactions"
+                    : "Shows the individual transactions"
+                }
+              />
+              {showSpendDetails
+                ? spendItems.map((item, idx) => {
+                    const catInfo = getCategoryIcon(item.category);
+                    return (
+                      <ListRow
+                        key={item.id || idx}
+                        divider
+                        leading={
+                          <View style={styles.subLeading}>
+                            <IconBadge
+                              name={catInfo.name}
+                              color={catInfo.color}
+                              backgroundColor={catInfo.color + "18"}
+                              size={32}
+                              iconSize={16}
+                            />
+                          </View>
+                        }
+                        title={item.loanName || item.category}
+                        subtitle={item.category}
+                        value={`-${formatCurrency(item.amount)}`}
+                        valueColor={colors.danger}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/add-transaction",
+                            params: { id: item.id },
+                          })
+                        }
+                        accessibilityHint="Opens the transaction"
                       />
-                    </View>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={styles.txDesc} numberOfLines={1}>
-                        Total Day Spend
-                      </Text>
-                      <Text style={styles.txDate}>
-                        {spendItems.length} transaction
-                        {spendItems.length > 1 ? "s" : ""} · Tap to{" "}
-                        {showSpendDetails ? "hide" : "expand"}
-                      </Text>
-                    </View>
-                    <View style={{ alignItems: "flex-end" }}>
-                      <Text style={[styles.txAmount, { color: "#dc2626" }]}>
-                        -{formatCurrency(dailySummary.spend)}
-                      </Text>
-                      <View
-                        style={{ flexDirection: "row", alignItems: "center" }}
-                      >
-                        <Text style={styles.txCategory}>Outflow</Text>
-                        <Ionicons
-                          name={
-                            showSpendDetails ? "chevron-up" : "chevron-down"
-                          }
-                          size={12}
-                          color="#64748b"
-                          style={{ marginLeft: 3 }}
-                        />
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-
-                  {/* Optional expanded list of individual spends */}
-                  {showSpendDetails && (
-                    <View style={{ gap: 8, marginTop: 8, paddingLeft: 12 }}>
-                      {spendItems.map((item, idx) => {
-                        const catInfo = getCategoryIcon(item.category);
-                        return (
-                          <TouchableOpacity
-                            key={item.id || idx}
-                            style={styles.txCardCompact}
-                            onPress={() =>
-                              router.push({
-                                pathname: "/add-transaction",
-                                params: { id: item.id },
-                              })
-                            }
-                            activeOpacity={0.7}
-                          >
-                            <View
-                              style={[
-                                styles.txIconWrapSmall,
-                                { backgroundColor: catInfo.color + "18" },
-                              ]}
-                            >
-                              <Ionicons
-                                name={catInfo.name}
-                                size={16}
-                                color={catInfo.color}
-                              />
-                            </View>
-                            <View style={{ flex: 1, marginRight: 8 }}>
-                              <Text
-                                style={styles.txDescCompact}
-                                numberOfLines={1}
-                              >
-                                {item.loanName || item.category}
-                              </Text>
-                              <Text style={styles.txDateCompact}>
-                                {item.category}
-                              </Text>
-                            </View>
-                            <Text
-                              style={[
-                                styles.txAmountCompact,
-                                { color: "#dc2626" },
-                              ]}
-                            >
-                              -{formatCurrency(item.amount)}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Total Day Inflow Card */}
-              {dailySummary.credit > 0 && (
-                <View style={[styles.txCard, { marginBottom: 10 }]}>
-                  <View
-                    style={[
-                      styles.txIconWrap,
-                      { backgroundColor: "rgba(16, 185, 129, 0.12)" },
-                    ]}
-                  >
-                    <Ionicons name="cash-outline" size={20} color="#10b981" />
-                  </View>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.txDesc} numberOfLines={1}>
-                      Total Day Inflow
-                    </Text>
-                    <Text style={styles.txDate}>
-                      {creditItems.length} credit transaction(s)
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Text style={[styles.txAmount, { color: "#059669" }]}>
-                      +{formatCurrency(dailySummary.credit)}
-                    </Text>
-                    <Text style={styles.txCategory}>Inflow</Text>
-                  </View>
-                </View>
-              )}
-
-              {/* Bills, EMIs, Insurances */}
-              {billItems.map((item, index) => {
-                const isPaid = item.isPaid;
-                const iconName =
-                  item.type === "insurance"
-                    ? "shield-checkmark-outline"
-                    : item.type === "bullet"
-                      ? "trending-up-outline"
-                      : "wallet-outline";
-                const iconColor =
-                  item.type === "insurance"
-                    ? "#eab308"
-                    : item.type === "bullet"
-                      ? "#8b5cf6"
-                      : "#6366f1";
-                const categoryLabel =
-                  item.type === "insurance"
-                    ? "Insurance"
-                    : item.type === "bullet"
-                      ? "Bullet"
-                      : "EMI";
-
-                return (
-                  <View
-                    key={index}
-                    style={[styles.txCard, { marginBottom: 10 }]}
-                  >
-                    <View
-                      style={[
-                        styles.txIconWrap,
-                        { backgroundColor: iconColor + "18" },
-                      ]}
-                    >
-                      <Ionicons name={iconName} size={20} color={iconColor} />
-                    </View>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <Text style={styles.txDesc} numberOfLines={1}>
-                        {item.loanName}
-                      </Text>
-                      <Text style={styles.txDate}>
-                        {item.type === "insurance"
-                          ? `${(item.frequency || "").toUpperCase()} PREMIUM`
-                          : item.type === "bullet"
-                            ? "Bullet Repayment"
-                            : "Monthly EMI"}
-                        {isPaid ? " · Completed" : " · Due"}
-                      </Text>
-                    </View>
-                    <View style={{ alignItems: "flex-end" }}>
-                      <Text
-                        style={[
-                          styles.txAmount,
-                          { color: isPaid ? "#10b981" : "#f59e0b" },
-                        ]}
-                      >
-                        {formatCurrency(item.amount)}
-                      </Text>
-                      <View
-                        style={[
-                          styles.modeBadge,
-                          {
-                            backgroundColor: isPaid
-                              ? "rgba(16,185,129,0.08)"
-                              : "rgba(245,158,11,0.08)",
-                            marginTop: 2,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.modeBadgeText,
-                            { color: isPaid ? "#10b981" : "#f59e0b" },
-                          ]}
-                        >
-                          {categoryLabel}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                );
-              })}
+                    );
+                  })
+                : null}
             </>
-          )}
-        </View>
-      </ScrollView>
-    </LinearGradient>
+          ) : null}
+
+          {/* Day inflow total */}
+          {dailySummary.credit > 0 ? (
+            <ListRow
+              divider={billItems.length > 0 || dailySummary.spend > 0}
+              leading={
+                <IconBadge
+                  name="cash-outline"
+                  color={colors.primary}
+                  backgroundColor={colors.primarySoft}
+                />
+              }
+              title="Received"
+              subtitle={`${creditItems.length} credit transaction${creditItems.length > 1 ? "s" : ""}`}
+              value={`+${formatCurrency(dailySummary.credit)}`}
+              valueColor={colors.primary}
+            />
+          ) : null}
+        </Card>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 60, paddingBottom: 40 },
-  header: { marginBottom: 24 },
-  headerTitle: { fontSize: 34, fontWeight: "700", color: "#0f172a" },
-  headerSubtitle: {
-    fontSize: 14,
-    color: "rgba(15, 23, 42, 0.6)",
-    marginTop: 4,
+  summaryLoading: {
+    minHeight: 56,
+    alignItems: "center",
+    justifyContent: "center",
   },
   calendarCard: {
-    borderRadius: 30,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.08)",
-    marginBottom: 24,
-    paddingBottom: 10,
+    paddingTop: space.sm,
   },
-  agendaContainer: { gap: 4 },
-  agendaTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0f172a",
-    marginBottom: 12,
-    marginTop: 8,
+  calendar: {
+    paddingHorizontal: space.xs,
   },
-  emptyCard: {
-    padding: 24,
-    borderRadius: 20,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.04)",
+  legend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+    paddingBottom: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderStrong,
+    marginTop: space.sm,
   },
-  emptyText: {
-    color: "rgba(15, 23, 42, 0.5)",
-    fontSize: 13,
-    textAlign: "center",
-  },
-  txCard: {
+  legendItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#ffffff",
-    padding: 14,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.02,
-    shadowRadius: 4,
-    elevation: 1,
+    gap: 5,
   },
-  txIconWrap: {
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendText: {
+    ...type.caption,
+    fontWeight: "500",
+    color: colors.textSecondary,
+  },
+  agendaLoading: {
+    paddingVertical: space.xxl,
+    alignItems: "center",
+  },
+  subLeading: {
     width: 40,
-    height: 40,
-    borderRadius: 12,
-    justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
-  txDesc: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#0f172a",
-    marginBottom: 2,
-  },
-  txDate: { fontSize: 11, color: "#94a3b8" },
-  txAmount: { fontSize: 16, fontWeight: "700", marginBottom: 2 },
-  txCategory: { fontSize: 11, color: "#64748b", fontWeight: "500" },
-  txCardCompact: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#ffffff",
-    padding: 10,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
-  },
-  txIconWrapSmall: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 10,
-  },
-  txDescCompact: { fontSize: 13, fontWeight: "600", color: "#0f172a" },
-  txDateCompact: { fontSize: 10, color: "#94a3b8" },
-  txAmountCompact: { fontSize: 14, fontWeight: "700" },
-  modeBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
-  modeBadgeText: { fontSize: 9, fontWeight: "700" },
 });
