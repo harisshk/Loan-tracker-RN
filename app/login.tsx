@@ -60,7 +60,7 @@ interface AuthFieldProps {
   textContentType?: 'emailAddress' | 'password' | 'newPassword' | 'URL' | 'none';
   returnKeyType?: 'next' | 'go' | 'done';
   onSubmitEditing?: () => void;
-  inputRef?: React.Ref<TextInput>;
+  inputRef?: React.Ref<React.ComponentRef<typeof TextInput>>;
   editable?: boolean;
 }
 
@@ -127,7 +127,7 @@ function AuthField({
 export default function LoginScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const passwordRef = useRef<TextInput>(null);
+  const passwordRef = useRef<React.ComponentRef<typeof TextInput>>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);

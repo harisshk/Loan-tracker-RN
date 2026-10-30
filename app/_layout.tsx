@@ -72,7 +72,8 @@ export default function RootLayout() {
         <Stack.Screen name="roadmap" />
       </Stack>
       {(() => {
-        const isDarkScreen = segments[0] === 'login' || (segments[0] === '(tabs)' && segments[1] === 'ai-advisor');
+        const segs = segments as string[];
+        const isDarkScreen = segs[0] === 'login' || (segs[0] === '(tabs)' && segs[1] === 'ai-advisor');
         return <StatusBar style={isDarkScreen ? 'light' : 'dark'} />;
       })()}
     </SafeAreaProvider>

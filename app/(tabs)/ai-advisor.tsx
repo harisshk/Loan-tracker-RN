@@ -333,7 +333,7 @@ export default function AIAdvisor() {
     };
   }, []);
 
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [contextType, setContextType] = useState<"loans" | "spends">("loans");
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState("");

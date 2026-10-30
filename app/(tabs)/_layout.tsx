@@ -22,7 +22,7 @@ export default function TabLayout() {
             <Ionicons
               name={focused ? "home" : "home-outline"}
               size={20}
-              color={color}
+              color={color as string}
             />
           ),
         }}
@@ -35,7 +35,7 @@ export default function TabLayout() {
             <Ionicons
               name={focused ? "card" : "card-outline"}
               size={20}
-              color={color}
+              color={color as string}
             />
           ),
         }}
@@ -48,7 +48,7 @@ export default function TabLayout() {
             <Ionicons
               name={focused ? "analytics" : "analytics-outline"}
               size={20}
-              color={color}
+              color={color as string}
             />
           ),
         }}
@@ -61,7 +61,7 @@ export default function TabLayout() {
             <Ionicons
               name={focused ? "calendar" : "calendar-outline"}
               size={20}
-              color={color}
+              color={color as string}
             />
           ),
         }}
@@ -74,7 +74,7 @@ export default function TabLayout() {
             <Ionicons
               name={focused ? "grid" : "grid-outline"}
               size={20}
-              color={color}
+              color={color as string}
             />
           ),
         }}

@@ -184,7 +184,7 @@ function TxRow({
 }) {
   const cat = getCategoryIcon(item.category);
   const credit = isCreditTx(item);
-  const d = item.date ? new Date(item.date) : null;
+  const d = item.date ? new Date(item.date) : undefined;
   const validDate = d && !isNaN(d.getTime()) ? d : null;
   const title = item.description || item.category || 'Transaction';
 
@@ -387,7 +387,7 @@ export default function SpendTracker() {
         labels.push(label);
 
         const total = debitTxs.reduce((sum, t) => {
-          const txDate = t.date ? new Date(t.date) : null;
+          const txDate = t.date ? new Date(t.date) : undefined;
           if (txDate && txDate >= dayStart && txDate <= dayEnd) {
             return sum + (parseFloat(t.amount) || 0);
           }
@@ -409,7 +409,7 @@ export default function SpendTracker() {
         labels.push(`W${4 - i}`);
 
         const total = debitTxs.reduce((sum, t) => {
-          const txDate = t.date ? new Date(t.date) : null;
+          const txDate = t.date ? new Date(t.date) : undefined;
           if (txDate && txDate >= wStart && txDate <= wEnd) {
             return sum + (parseFloat(t.amount) || 0);
           }
@@ -433,7 +433,7 @@ export default function SpendTracker() {
         labels.push(label);
 
         const total = debitTxs.reduce((sum, t) => {
-          const txDate = t.date ? new Date(t.date) : null;
+          const txDate = t.date ? new Date(t.date) : undefined;
           if (txDate && txDate >= mStart && txDate <= mEnd) {
             return sum + (parseFloat(t.amount) || 0);
           }
@@ -728,7 +728,7 @@ export default function SpendTracker() {
   const filteredTransactions = transactions.filter((t: any) => {
     const desc = t.description || '';
     const cat = t.category || '';
-    const dateObj = t.date ? new Date(t.date) : null;
+    const dateObj = t.date ? new Date(t.date) : undefined;
 
     const matchesSearch = desc.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           cat.toLowerCase().includes(searchQuery.toLowerCase());
@@ -779,7 +779,7 @@ export default function SpendTracker() {
     const out: { key: string; title: string; spent: number; items: any[] }[] = [];
     const index = new Map<string, number>();
     sortedTransactions.forEach((t: any) => {
-      const d = t.date ? new Date(t.date) : null;
+      const d = t.date ? new Date(t.date) : undefined;
       const valid = d && !isNaN(d.getTime()) ? d : null;
       const key = valid ? dayKey(valid) : 'no-date';
       let i = index.get(key);
@@ -798,7 +798,7 @@ export default function SpendTracker() {
   // so the numbers up top match the period being viewed. Includes ALL debit spends in Outflow.
   const rangeStats = transactions.reduce(
     (acc: { income: number; expenses: number }, t: any) => {
-      const dateObj = t.date ? new Date(t.date) : null;
+      const dateObj = t.date ? new Date(t.date) : undefined;
       if (startDate && (!dateObj || dateObj < startOfDay(startDate))) return acc;
       if (endDate && (!dateObj || dateObj > endOfDay(endDate))) return acc;
       const amt = parseFloat(t.amount || 0);
@@ -941,7 +941,7 @@ export default function SpendTracker() {
             <Text style={styles.noticeActionText}>Retry</Text>
           </PressableScale>
         </View>
-      ) : null}
+      ) : undefined}
 
       {/* Month switcher */}
       <View style={styles.monthBar}>
@@ -1025,7 +1025,7 @@ export default function SpendTracker() {
             </View>
           )}
         </Card>
-      ) : null}
+      ) : undefined}
 
       {/* Summary: budget (always the current month) + totals for the selected period */}
       <Card padded={false}>
@@ -1039,7 +1039,7 @@ export default function SpendTracker() {
                 backgroundColor={budgetTone === 'critical' ? colors.dangerSoft : colors.warningSoft}
                 icon={budgetTone === 'critical' ? 'alert-circle' : 'warning-outline'}
               />
-            ) : null}
+            ) : undefined}
           </View>
 
           {isEditingLimit ? (
@@ -1144,7 +1144,7 @@ export default function SpendTracker() {
             })}
           </Card>
         </View>
-      ) : null}
+      ) : undefined}
 
       {/* Spend trend */}
       <View style={styles.section}>
@@ -1166,7 +1166,7 @@ export default function SpendTracker() {
               <Text style={styles.emptyInline}>No budgeted spends in this period yet.</Text>
             )}
           </Card>
-        ) : null}
+        ) : undefined}
       </View>
 
       {/* Search & filters */}
@@ -1205,7 +1205,7 @@ export default function SpendTracker() {
               <View style={styles.filterBadge}>
                 <Text style={styles.filterBadgeText}>{advancedFilterCount}</Text>
               </View>
-            ) : null}
+            ) : undefined}
           </PressableScale>
         </View>
 
@@ -1232,7 +1232,7 @@ export default function SpendTracker() {
               ))}
             </View>
           </Card>
-        ) : null}
+        ) : undefined}
 
         <View style={styles.listMetaRow}>
           <Text style={styles.listMeta} numberOfLines={1}>
@@ -1242,11 +1242,11 @@ export default function SpendTracker() {
             <PressableScale onPress={clearFilters} hitSlop={8} accessibilityLabel="Reset filters" style={styles.resetLink}>
               <Text style={styles.linkText}>Reset</Text>
             </PressableScale>
-          ) : null}
+          ) : undefined}
         </View>
         {sortedTransactions.length > 0 ? (
           <Text style={styles.hint}>Tap to edit · swipe left or long press to delete</Text>
-        ) : null}
+        ) : undefined}
       </View>
     </>
   );
@@ -1272,7 +1272,7 @@ export default function SpendTracker() {
               </Text>
               {groupByDay && group.spent > 0 ? (
                 <Text style={styles.daySpent}>{formatINR(group.spent)} spent</Text>
-              ) : null}
+              ) : undefined}
             </View>
             <Card padded={false} style={styles.dayCard}>
               {group.items.map((item: any, i: number) => (
@@ -1316,7 +1316,7 @@ export default function SpendTracker() {
             <View style={styles.footer}>
               <Button label="Delete all transactions" variant="danger" icon="trash-outline" onPress={handleDeleteAll} />
             </View>
-          ) : null
+          ) : undefined
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + space.sm, paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }]}
         showsVerticalScrollIndicator={false}
